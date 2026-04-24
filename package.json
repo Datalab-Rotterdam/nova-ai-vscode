@@ -2,7 +2,7 @@
   "name": "nova-ai-vscode",
   "displayName": "Nova AI",
   "description": "Use Nova AI models as native chat models in Visual Studio Code.",
-  "version": "0.1.0",
+  "version": "1.0.0-alpha.1",
   "publisher": "datalabrotterdam",
   "license": "Apache-2.0",
   "repository": {
