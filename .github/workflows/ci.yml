@@ -58,7 +58,7 @@ jobs:
     name: Publish alpha
     runs-on: ubuntu-latest
     needs: verify
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/alpha'
     permissions:
       contents: write
       issues: write
