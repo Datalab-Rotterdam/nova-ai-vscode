@@ -21,7 +21,6 @@ Native Nova AI chat models for VS Code.
 
 ## Settings
 
-- `nova.baseUrl`
 - `nova.defaultModel`
 - `nova.enableDiagnostics`
 

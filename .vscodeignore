@@ -1,0 +1,17 @@
+.github/**
+.idea/**
+.vscode/**
+.gitignore
+dist/**
+node_modules/**
+src/**
+tests/**
+webview/**
+.releaserc.json
+TEST_PLAN.md
+main-section.html
+tsconfig.json
+vite.webview.config.mts
+vitest.config.ts
+*.vsix
+npm-debug.log*

@@ -8,6 +8,7 @@ export const COMMAND_SIGN_IN = 'nova.signIn';
 export const COMMAND_SIGN_OUT = 'nova.signOut';
 export const COMMAND_REFRESH_MODELS = 'nova.refreshModels';
 export const COMMAND_OPEN_CHAT = 'nova.openChat';
+export const COMMAND_OPEN_SETTINGS = 'nova.openSettings';
 
 export const SECRET_API_KEY = 'nova.apiKey';
 export const STATE_ACCOUNT_SUMMARY = 'nova.accountSummary';
@@ -20,4 +21,3 @@ export const DEFAULT_BASE_URL = 'https://api.nova.datalabrotterdam.nl/v1';
 export const MODEL_CACHE_TTL_MS = 10 * 60 * 1000;
 export const DEFAULT_MAX_INPUT_TOKENS = 128_000;
 export const DEFAULT_MAX_OUTPUT_TOKENS = 4_096;
-

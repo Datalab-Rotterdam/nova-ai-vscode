@@ -2,8 +2,8 @@
   import { onMount } from 'svelte';
   import { detectThemeMode } from './theme';
   import type { SidebarRenderState, SidebarView, ThemeMode, VsCodeApi } from './types';
-  import AccountView from './views/AccountView.svelte';
-  import CreateApiKeyView from './views/CreateApiKeyView.svelte';
+  import ApiKeyView from './views/ApiKeyView.svelte';
+  import MainView from './views/MainView.svelte';
   import WelcomeView from './views/WelcomeView.svelte';
 
   export let initialState: SidebarRenderState;
@@ -11,7 +11,7 @@
 
   const state = initialState;
   let theme: ThemeMode = 'dark';
-  let currentView: SidebarView = state.snapshot.hasApiKey ? 'account' : 'welcome';
+  let currentView: SidebarView = state.snapshot.hasApiKey ? 'main' : 'welcome';
 
   onMount(() => {
     const updateTheme = () => {
@@ -35,11 +35,11 @@
 </svelte:head>
 
 <div class="shell" data-theme={theme}>
-  {#if currentView === 'account'}
-    <AccountView {state} {theme} {vscode} />
-  {:else if currentView === 'createApiKey'}
-    <CreateApiKeyView {state} {theme} {vscode} onBack={() => currentView = 'welcome'} />
+  {#if currentView === 'main'}
+    <MainView {state} {theme} {vscode} />
+  {:else if currentView === 'apiKey'}
+    <ApiKeyView {state} {theme} {vscode} onBack={() => currentView = 'welcome'} />
   {:else}
-    <WelcomeView {state} {theme} onGetStarted={() => currentView = 'createApiKey'} />
+    <WelcomeView {state} {theme} onGetStarted={() => currentView = 'apiKey'} />
   {/if}
 </div>

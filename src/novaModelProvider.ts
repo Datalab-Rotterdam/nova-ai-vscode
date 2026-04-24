@@ -5,7 +5,7 @@ import { getDefaultModelOverride } from './config';
 import { NovaDiagnostics } from './novaDiagnostics';
 import { isToolCallingRejected, mapNovaError } from './novaErrors';
 import { NovaSessionService } from './novaSessionService';
-import { estimateTokenCount, flattenMessage } from './tokenEstimator';
+import { estimateTokenCount } from './tokenEstimator';
 import type { NovaLanguageModelInfo, ToolCallingSupport } from './types';
 
 interface ModelCache {

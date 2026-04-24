@@ -9,7 +9,7 @@ export interface SidebarRenderState {
 
 export type ThemeMode = 'light' | 'dark' | 'high-contrast';
 
-export type SidebarView = 'welcome' | 'createApiKey' | 'account';
+export type SidebarView = 'welcome' | 'apiKey' | 'main';
 
 export interface VsCodeApi {
   postMessage(message: unknown): void;

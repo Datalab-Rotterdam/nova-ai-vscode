@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { DEFAULT_BASE_URL } from './constants';
 
 export function getBaseUrl(): string {
-  return vscode.workspace.getConfiguration('nova').get<string>('baseUrl', DEFAULT_BASE_URL);
+  return DEFAULT_BASE_URL;
 }
 
 export function getDefaultModelOverride(): string | undefined {
@@ -13,4 +13,3 @@ export function getDefaultModelOverride(): string | undefined {
 export function isDiagnosticsEnabled(): boolean {
   return vscode.workspace.getConfiguration('nova').get<boolean>('enableDiagnostics', false);
 }
-
