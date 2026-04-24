@@ -109,13 +109,16 @@
     }
   },
   "scripts": {
-    "compile": "npm run build:webview && tsc -p ./",
+    "clean": "node -e \"require('node:fs').rmSync('out', { recursive: true, force: true })\"",
+    "compile": "npm run clean && npm run build:webview && npm run typecheck && npm run build:extension",
+    "build:extension": "esbuild src/extension.ts --bundle --platform=node --format=cjs --target=node22 --external:vscode --outfile=out/extension.js --sourcemap",
     "build:webview": "vite build --config vite.webview.config.mts",
     "dev:webview": "vite build --watch --config vite.webview.config.mts",
     "package:vsix": "npm run compile && mkdir -p dist && vsce package --pre-release --out dist/nova-ai-vscode.vsix",
     "publish:marketplace": "vsce publish --pre-release --packagePath dist/nova-ai-vscode.vsix --pat \"$AZURE_DEVOPS_TOKEN\"",
     "publish:ovsx": "ovsx verify-pat datalabrotterdam --pat \"$OVSX_PAT\" && (ovsx create-namespace datalabrotterdam --pat \"$OVSX_PAT\" || true) && ovsx publish dist/nova-ai-vscode.vsix --pre-release --pat \"$OVSX_PAT\"",
     "verify": "npm test && npm run package:vsix",
+    "typecheck": "tsc -p ./ --noEmit",
     "watch": "tsc -watch -p ./",
     "test": "vitest run",
     "pretest": "npm run compile"
@@ -136,6 +139,7 @@
     "@types/vscode": "^1.116.0",
     "@vscode/vsce": "^3.9.1",
     "bootstrap-icons": "^1.13.1",
+    "esbuild": "^0.25.12",
     "ovsx": "^0.10.11",
     "sass": "^1.99.0",
     "semantic-release": "^25.0.3",
