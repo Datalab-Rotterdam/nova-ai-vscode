@@ -1,0 +1,125 @@
+{
+  "name": "nova-ai-vscode",
+  "displayName": "Nova AI",
+  "description": "Use Nova AI models as native chat models in Visual Studio Code.",
+  "version": "0.1.0",
+  "publisher": "datalabrotterdam",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.116.0"
+  },
+  "categories": [
+    "AI",
+    "Other"
+  ],
+  "keywords": [
+    "nova",
+    "ai",
+    "chat",
+    "language model"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onStartupFinished",
+    "onView:nova.sidebar",
+    "onCommand:nova.manage",
+    "onCommand:nova.signIn",
+    "onCommand:nova.signOut",
+    "onCommand:nova.refreshModels",
+    "onCommand:nova.openChat"
+  ],
+  "contributes": {
+    "languageModelChatProviders": [
+      {
+        "vendor": "nova-ai",
+        "displayName": "Nova AI",
+        "managementCommand": "nova.manage"
+      }
+    ],
+    "commands": [
+      {
+        "command": "nova.manage",
+        "title": "Nova AI: Manage Account",
+        "category": "Nova AI"
+      },
+      {
+        "command": "nova.signIn",
+        "title": "Nova AI: Sign In",
+        "category": "Nova AI"
+      },
+      {
+        "command": "nova.signOut",
+        "title": "Nova AI: Sign Out",
+        "category": "Nova AI"
+      },
+      {
+        "command": "nova.refreshModels",
+        "title": "Nova AI: Refresh Models",
+        "category": "Nova AI"
+      },
+      {
+        "command": "nova.openChat",
+        "title": "Nova AI: Open Chat",
+        "category": "Nova AI"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "nova",
+          "title": "Nova AI",
+          "icon": "resources/favicon.svg"
+        }
+      ]
+    },
+    "views": {
+      "nova": [
+        {
+          "type": "webview",
+          "id": "nova.sidebar",
+          "name": "Overview"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Nova AI",
+      "properties": {
+        "nova.baseUrl": {
+          "type": "string",
+          "default": "https://api.nova.datalabrotterdam.nl/v1",
+          "description": "Base URL for the Nova AI API."
+        },
+        "nova.defaultModel": {
+          "type": "string",
+          "default": "",
+          "description": "Optional model ID to prefer when showing Nova account state."
+        },
+        "nova.enableDiagnostics": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable verbose Nova AI diagnostics logging in the output panel."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "npm run build:webview && tsc -p ./",
+    "build:webview": "vite build --config vite.webview.config.mts",
+    "dev:webview": "vite build --watch --config vite.webview.config.mts",
+    "watch": "tsc -watch -p ./",
+    "test": "vitest run",
+    "pretest": "npm run compile"
+  },
+  "dependencies": {
+    "@datalabrotterdam/nova-sdk": "^1.2.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.7.2",
+    "@types/vscode": "^1.116.0",
+    "@sveltejs/vite-plugin-svelte": "^5.1.0",
+    "svelte": "^5.38.6",
+    "typescript": "^5.9.3",
+    "vite": "^6.3.5",
+    "vitest": "^3.2.4"
+  }
+}
