@@ -1,3 +1,10 @@
+# [1.0.0-alpha.2](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.1...v1.0.0-alpha.2) (2026-04-24)
+
+
+### Bug Fixes
+
+* package marketplace alpha with semver version ([78d9dd5](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/78d9dd580b8ec88a4cfa9ca19d4a22935a0376dd))
+
 # 1.0.0-alpha.1 (2026-04-24)
 
 
