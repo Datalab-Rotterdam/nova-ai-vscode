@@ -1,3 +1,10 @@
+# [1.0.0-alpha.5](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.4...v1.0.0-alpha.5) (2026-04-24)
+
+
+### Bug Fixes
+
+* publish customer readme update ([04d8ce9](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/04d8ce9f0fe72bd0a5a7834e18406aeee26c5d81))
+
 # [1.0.0-alpha.4](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.3...v1.0.0-alpha.4) (2026-04-24)
 
 
