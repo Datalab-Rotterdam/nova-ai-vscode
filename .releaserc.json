@@ -11,15 +11,9 @@
     "@semantic-release/release-notes-generator",
     "@semantic-release/changelog",
     [
-      "@semantic-release/npm",
-      {
-        "npmPublish": false
-      }
-    ],
-    [
       "@semantic-release/exec",
       {
-        "prepareCmd": "npm run package:vsix",
+        "prepareCmd": "node scripts/prepare-vsce-prerelease-version.mjs \"${nextRelease.version}\" && npm run package:vsix",
         "publishCmd": "npm run publish:marketplace && npm run publish:ovsx"
       }
     ],
