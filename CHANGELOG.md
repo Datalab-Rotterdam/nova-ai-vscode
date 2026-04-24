@@ -1,3 +1,10 @@
+# [1.0.0-alpha.3](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.2...v1.0.0-alpha.3) (2026-04-24)
+
+
+### Bug Fixes
+
+* add marketplace icon ([600e185](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/600e1852234e02cd5dd3f477a30ec352338f5c61))
+
 # [1.0.0-alpha.2](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.1...v1.0.0-alpha.2) (2026-04-24)
 
 
