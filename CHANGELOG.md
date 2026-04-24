@@ -1,3 +1,10 @@
+# [1.0.0-alpha.4](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.3...v1.0.0-alpha.4) (2026-04-24)
+
+
+### Bug Fixes
+
+* bundle nova sdk into extension ([c6bd73c](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/c6bd73c9d57161a8d9159bdac1eda4469b941b49))
+
 # [1.0.0-alpha.3](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.2...v1.0.0-alpha.3) (2026-04-24)
 
 
