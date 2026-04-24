@@ -5,6 +5,7 @@
 dist/**
 node_modules/**
 src/**
+scripts/**
 tests/**
 webview/**
 .releaserc.json
