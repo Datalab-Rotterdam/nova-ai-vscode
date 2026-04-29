@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { isDiagnosticsEnabled } from './config';
 
-export class NovaDiagnostics implements vscode.Disposable {
+export class Diagnostics implements vscode.Disposable {
   private readonly channel = vscode.window.createOutputChannel('Nova AI');
 
   public trace(message: string, data?: unknown): void {
