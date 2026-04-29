@@ -41,8 +41,8 @@ You can also use these commands from the Command Palette:
 
 ## Settings
 
-- `nova.defaultModel`: Optional model ID to prefer when showing Nova account state.
-- `nova.enableDiagnostics`: Enable verbose Nova AI diagnostics in the output panel.
+- `nova.enableDiagnostics`: Enable verbose Nova AI diagnostics logging in the output panel.
+- `nova.developer.parseModelCapabilities`: Parse capabilities returned by Nova AI into VS Code native model capability flags such as tool calling and image input.
 
 ## Privacy and Security
 

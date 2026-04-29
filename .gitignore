@@ -8,3 +8,5 @@ coverage/
 /old
 dist
 
+.DS_Store
+.env
