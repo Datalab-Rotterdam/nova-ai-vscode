@@ -1,7 +1,10 @@
 node_modules/
-out/
+out
 .vscode-test/
 coverage/
 *.vsix
 .idea
 .vscode
+/old
+dist
+

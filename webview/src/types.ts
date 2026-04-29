@@ -1,8 +1,8 @@
-import type { NovaLanguageModelInfo, NovaSessionSnapshot } from '../../src/types';
+import type { LanguageModelInfo, SessionSnapshot } from '../../src/core/types';
 
 export interface SidebarRenderState {
-  snapshot: NovaSessionSnapshot;
-  preferredModel?: NovaLanguageModelInfo;
+  snapshot: SessionSnapshot;
+  preferredModel?: LanguageModelInfo;
   logoUri?: string;
   backgroundVideoUri?: string;
 }

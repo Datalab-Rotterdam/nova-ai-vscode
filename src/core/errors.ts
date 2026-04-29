@@ -18,11 +18,9 @@ export function mapNovaError(error: unknown): Error {
 
     return new Error(message);
   }
-
   if (error instanceof Error) {
     return error;
   }
-
   return new Error('Nova AI request failed.');
 }
 
@@ -30,7 +28,6 @@ export function toUserMessage(error: unknown): string {
   if (error instanceof Error) {
     return error.message;
   }
-
   return 'Nova AI request failed.';
 }
 

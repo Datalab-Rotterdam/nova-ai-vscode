@@ -17,7 +17,6 @@ export const STATE_LAST_ERROR = 'nova.lastError';
 export const STATE_SELECTED_MODEL = 'nova.selectedModel';
 export const STATE_TOOL_CALLING_SUPPORT = 'nova.toolCallingSupport';
 
-export const DEFAULT_BASE_URL = 'https://api.nova.datalabrotterdam.nl/v1';
 export const MODEL_CACHE_TTL_MS = 10 * 60 * 1000;
 export const DEFAULT_MAX_INPUT_TOKENS = 128_000;
-export const DEFAULT_MAX_OUTPUT_TOKENS = 4_096;
+export const DEFAULT_MAX_OUTPUT_TOKENS = 16_384;

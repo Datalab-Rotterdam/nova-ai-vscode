@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { NovaAIError } from '@datalabrotterdam/nova-sdk';
-import { isToolCallingRejected, mapNovaError } from '../src/novaErrors';
+import { isToolCallingRejected, mapNovaError } from '../src/core/errors';
 
 describe('novaErrors', () => {
   it('maps auth errors to NoPermissions', () => {

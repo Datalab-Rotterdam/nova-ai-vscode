@@ -11,7 +11,7 @@
         COMMAND_OPEN_SETTINGS,
         COMMAND_REFRESH_MODELS,
         COMMAND_SIGN_OUT,
-    } from "../../../src/constants";
+    } from "../../../src/core/constants";
     import type {SidebarRenderState, ThemeMode, VsCodeApi} from "../types";
 
     export let state: SidebarRenderState;
