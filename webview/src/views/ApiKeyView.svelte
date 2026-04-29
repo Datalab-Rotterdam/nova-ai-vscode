@@ -2,7 +2,7 @@
   import arrowLeftIcon from 'bootstrap-icons/icons/arrow-left.svg?raw';
   import boxArrowUpRightIcon from 'bootstrap-icons/icons/box-arrow-up-right.svg?raw';
   import infoCircleIcon from 'bootstrap-icons/icons/info-circle.svg?raw';
-  import { COMMAND_SIGN_IN } from '../../../src/constants';
+  import { COMMAND_SIGN_IN } from '../../../src/core/constants';
   import type { SidebarRenderState, ThemeMode, VsCodeApi } from '../types';
 
   export let state: SidebarRenderState;
