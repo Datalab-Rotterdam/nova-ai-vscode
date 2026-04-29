@@ -1,3 +1,19 @@
+# [1.0.0-alpha.6](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.5...v1.0.0-alpha.6) (2026-04-29)
+
+
+### Bug Fixes
+
+* add marketplace icon ([3c56081](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/3c5608169f714a2b2ccfd112fde452ac312ace2f))
+* bundle nova sdk into extension ([2d5aec0](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/2d5aec065cad37a402316e1e97ebe6c602b0a711))
+* package marketplace alpha with semver version ([6de1991](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/6de199131366b7367d71abd5532d84f8a80b10ed))
+* publish customer readme update ([78b5129](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/78b51294fb617a414a8adb3081c76f3ba4648a8e))
+
+
+### Features
+
+* general cleanup + statusbar nova icon ([07b89c1](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/07b89c1a340898167c305ed48d2b03649e3b075c))
+* general cleanup + statusbar nova icon ([ec9d982](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/ec9d982bd22e452c15d5f31fd08cb9415a694d62))
+
 # [1.0.0-alpha.5](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.4...v1.0.0-alpha.5) (2026-04-24)
 
 
