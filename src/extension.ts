@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { ChatService } from './chat/ChatService';
 import {
     COMMAND_MANAGE,
     COMMAND_OPEN_CHAT,
@@ -16,6 +17,7 @@ import {SessionService} from './services/SessionService';
 import {toUserMessage} from './core/errors';
 import type {LanguageModelInfo} from './core/types';
 import {StatusBar} from './status/StatusBar';
+import { registerWorkspaceTools } from './tools/workspaceTools';
 import {ViewProvider} from './views';
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
@@ -23,11 +25,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     const sessionService = new SessionService(context, diagnostics);
     const statusBar = new StatusBar();
     const modelProvider = new ModelProvider(sessionService, diagnostics, statusBar);
-    const sidebarProvider = new ViewProvider(context.extensionUri, sessionService, modelProvider, diagnostics);
+    const chatService = new ChatService(context, sessionService, diagnostics);
+    const sidebarProvider = new ViewProvider(context.extensionUri, sessionService, modelProvider, chatService, diagnostics);
 
     context.subscriptions.push(
         diagnostics,
         statusBar,
+        ...registerWorkspaceTools(),
         sessionService.onDidChangeSession(() => void refreshStatusBar(sessionService, modelProvider, statusBar)),
         vscode.lm.registerLanguageModelChatProvider(NOVA_VENDOR, modelProvider),
         vscode.window.registerWebviewViewProvider(NOVA_SIDEBAR_VIEW_ID, sidebarProvider),
@@ -58,6 +62,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         }),
         vscode.commands.registerCommand(COMMAND_SIGN_OUT, async () => {
             await sessionService.signOut();
+            await chatService.clear();
             await sidebarProvider.refresh();
             await refreshStatusBar(sessionService, modelProvider, statusBar);
             void vscode.window.showInformationMessage('Nova AI signed out.');
@@ -78,34 +83,42 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                 const prepared = await prepareChatModel(sessionService, modelProvider);
                 if (!prepared) {
                     await focusSidebar(sidebarProvider);
-                    void vscode.window.showWarningMessage('Connect Nova AI before opening Chat with Nova models.');
+                    void vscode.window.showWarningMessage('Connect Nova AI before opening Nova Chat.');
                     return;
                 }
 
                 await refreshStatusBar(sessionService, modelProvider, statusBar);
-                await openChatView();
+                await focusSidebar(sidebarProvider);
             } catch (error) {
                 diagnostics.error('Nova chat open failed.', error);
                 void vscode.window.showErrorMessage(toUserMessage(error));
             }
         }),
-        vscode.commands.registerCommand(COMMAND_OPEN_SETTINGS, async () => {
-            await vscode.commands.executeCommand('workbench.action.openSettings', '@ext:datalabrotterdam.nova-ai-vscode');
+        vscode.commands.registerCommand(COMMAND_OPEN_SETTINGS, async (query?: string) => {
+            await vscode.commands.executeCommand('workbench.action.openSettings', query ?? '@ext:datalabrotterdam.nova-ai-vscode');
         }),
         vscode.workspace.onDidChangeConfiguration(async (event) => {
-            if (!event.affectsConfiguration('nova.developer.parseModelCapabilities')) {
+            const affectsModels = event.affectsConfiguration('nova.developer.parseModelCapabilities');
+            const affectsAgents = event.affectsConfiguration('nova.chat.customAgents');
+            if (!affectsModels && !affectsAgents) {
                 return;
             }
 
             try {
-                await modelProvider.refreshModels();
-                await refreshStatusBar(sessionService, modelProvider, statusBar);
+                if (affectsModels) {
+                    await modelProvider.refreshModels();
+                    await refreshStatusBar(sessionService, modelProvider, statusBar);
+                }
+                if (affectsAgents) {
+                    await sidebarProvider.refresh();
+                }
             } catch (error) {
-                diagnostics.error('Nova model capability refresh failed.', error);
+                diagnostics.error('Nova configuration refresh failed.', error);
             }
         })
     );
 
+    await chatService.initialize();
     await sessionService.validateExistingSession();
     await modelProvider.warmup();
     await refreshStatusBar(sessionService, modelProvider, statusBar);
@@ -142,9 +155,6 @@ async function prepareChatModel(
     const preferredModel = getPreferredModel(models, (await sessionService.getSnapshot()).selectedModelId);
     await sessionService.setSelectedModel(preferredModel.id);
 
-    // Force VS Code to discover the Nova provider models before opening the Chat view.
-    await vscode.lm.selectChatModels({vendor: NOVA_VENDOR});
-
     return true;
 }
 
@@ -159,17 +169,4 @@ async function refreshStatusBar(
 function getPreferredModel(models: readonly LanguageModelInfo[], selectedModelId?: string): LanguageModelInfo {
     return models.find((model) => model.id === selectedModelId)
         ?? models[0];
-}
-
-async function openChatView(): Promise<void> {
-    for (const command of ['workbench.action.chat.open', 'workbench.action.chat.newChat', 'workbench.panel.chat.view.copilot.focus']) {
-        try {
-            await vscode.commands.executeCommand(command);
-            return;
-        } catch {
-            continue;
-        }
-    }
-
-    void vscode.window.showWarningMessage('Unable to open the VS Code chat view from this version of VS Code.');
 }

@@ -1,12 +1,12 @@
 # Nova AI for Visual Studio Code
 
-Use Nova AI models directly in the Visual Studio Code Chat experience.
+Use Nova AI directly inside Visual Studio Code.
 
-Nova AI connects VS Code to the Nova model catalog, stores your API key in VS Code Secret Storage, and lets you use available Nova chat models from the editor.
+Nova AI connects VS Code to the Nova model catalog, stores your API key in VS Code Secret Storage, and gives you a built-in Nova chat panel in the sidebar. The panel can use workspace tools and MCP-exposed tools when they are available in VS Code.
 
 ## Requirements
 
-- Visual Studio Code with Chat support.
+- Visual Studio Code 1.116 or newer.
 - A Nova AI API key.
 
 Need access or setup details? See the [Nova AI documentation](https://docs.datalabrotterdam.nl/services/nova-ai).
@@ -17,7 +17,7 @@ Need access or setup details? See the [Nova AI documentation](https://docs.datal
 2. Open the Nova AI view from the Activity Bar.
 3. Select **Get Started**.
 4. Enter your Nova AI API key.
-5. Open VS Code Chat and choose a Nova model.
+5. Start chatting with Nova directly in the sidebar.
 
 After connecting, Nova AI will confirm that the extension is ready.
 
@@ -25,10 +25,20 @@ After connecting, Nova AI will confirm that the extension is ready.
 
 Open the Nova AI sidebar to manage your connection and models:
 
-- **Open Chat** opens the VS Code Chat view.
+- **Open Chat** focuses the built-in Nova chat panel.
 - **Refresh Models** reloads the available Nova model list.
 - **Settings** opens the Nova AI extension settings.
 - **Sign Out** removes the stored API key from VS Code Secret Storage.
+
+Inside the Nova chat panel you can:
+
+- Chat without relying on the GitHub-backed VS Code Chat sign-in flow.
+- Switch between discovered Nova models.
+- Reopen recent chats stored locally by the extension.
+- Read assistant replies with Markdown rendering.
+- Inspect thinking traces and tool calls when Nova or the tool flow provides them.
+- Use built-in workspace tools for reading files, listing directories, and searching text.
+- Use MCP-exposed tools when they are available through VS Code.
 
 You can also use these commands from the Command Palette:
 

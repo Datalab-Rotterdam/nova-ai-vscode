@@ -48,7 +48,21 @@ describe('sidebar webview document', () => {
           connectionHealth: 'signedOut',
           toolCallingSupport: 'unknown'
         },
-        logoUri: 'vscode-resource://logo.svg'
+        availableModels: [],
+        logoUri: 'vscode-resource://logo.svg',
+        chat: {
+          messages: [],
+          isResponding: false,
+          availableTools: [],
+          activeChatId: 'chat-1',
+          activeThinkingId: undefined,
+          activeToolId: undefined,
+          history: [],
+          activeMode: 'agent',
+          activeApprovalPolicy: 'safeOnly',
+          activeEnvironmentScope: 'local',
+          customAgents: []
+        }
       }
     });
 
@@ -84,6 +98,20 @@ describe('sidebar webview document', () => {
             validatedAt: '2026-04-24T00:00:00.000Z',
             baseUrl: 'https://api.example.test/v1'
           }
+        },
+        availableModels: [],
+        chat: {
+          messages: [],
+          isResponding: false,
+          availableTools: [],
+          activeChatId: 'chat-2',
+          activeThinkingId: undefined,
+          activeToolId: undefined,
+          history: [],
+          activeMode: 'agent',
+          activeApprovalPolicy: 'safeOnly',
+          activeEnvironmentScope: 'local',
+          customAgents: []
         }
       }
     });

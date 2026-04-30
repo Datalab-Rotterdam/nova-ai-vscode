@@ -1,7 +1,7 @@
 <script lang="ts">
     import {onMount} from 'svelte';
     import {detectThemeMode} from './theme';
-    import type {SidebarRenderState, SidebarView, ThemeMode, VsCodeApi} from './types';
+    import type {HostStateMessage, SidebarRenderState, SidebarView, ThemeMode, VsCodeApi} from './types';
     import ApiKeyView from './views/ApiKeyView.svelte';
     import MainView from './views/MainView.svelte';
     import WelcomeView from './views/WelcomeView.svelte';
@@ -9,13 +9,23 @@
     export let initialState: SidebarRenderState;
     export let vscode: VsCodeApi | undefined;
 
-    const state = initialState;
+    let state = initialState;
     let theme: ThemeMode = 'dark';
     let currentView: SidebarView = state.snapshot.hasApiKey ? 'main' : 'welcome';
 
     onMount(() => {
         const updateTheme = () => {
             theme = detectThemeMode(document.body);
+        };
+
+        const onMessage = (event: MessageEvent<HostStateMessage>) => {
+            if (event.data?.type !== 'state') {
+                return;
+            }
+
+            state = event.data.state;
+            currentView = state.snapshot.hasApiKey ? 'main' : 'welcome';
+            vscode?.setState?.(state);
         };
 
         updateTheme();
@@ -25,8 +35,12 @@
             attributes: true,
             attributeFilter: ['class']
         });
+        window.addEventListener('message', onMessage);
 
-        return () => observer.disconnect();
+        return () => {
+            observer.disconnect();
+            window.removeEventListener('message', onMessage);
+        };
     });
 </script>
 

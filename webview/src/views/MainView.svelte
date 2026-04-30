@@ -1,298 +1,453 @@
 <script lang="ts">
-    import arrowClockwiseIcon from "bootstrap-icons/icons/arrow-clockwise.svg?raw";
-    import arrowUpIcon from "bootstrap-icons/icons/arrow-up.svg?raw";
-    import boxArrowRightIcon from "bootstrap-icons/icons/box-arrow-right.svg?raw";
-    import chatDotsIcon from "bootstrap-icons/icons/chat-dots.svg?raw";
-    import clockHistoryIcon from "bootstrap-icons/icons/clock-history.svg?raw";
-    import gearIcon from "bootstrap-icons/icons/gear.svg?raw";
-    import pencilSquareIcon from "bootstrap-icons/icons/pencil-square.svg?raw";
-    import {
-        COMMAND_OPEN_CHAT,
-        COMMAND_OPEN_SETTINGS,
-        COMMAND_REFRESH_MODELS,
-        COMMAND_SIGN_OUT,
-    } from "../../../src/core/constants";
-    import type {SidebarRenderState, ThemeMode, VsCodeApi} from "../types";
+  import { tick } from 'svelte';
+  import arrowClockwiseIcon from 'bootstrap-icons/icons/arrow-clockwise.svg?raw';
+  import arrowLeftIcon from 'bootstrap-icons/icons/arrow-left.svg?raw';
+  import boxArrowRightIcon from 'bootstrap-icons/icons/box-arrow-right.svg?raw';
+  import gearIcon from 'bootstrap-icons/icons/gear.svg?raw';
+  import plusLgIcon from 'bootstrap-icons/icons/plus-lg.svg?raw';
+  import {
+    COMMAND_OPEN_SETTINGS,
+    COMMAND_REFRESH_MODELS,
+    COMMAND_SIGN_OUT
+  } from '../../../src/core/constants';
+  import ChatComposer from '../components/composer/ChatComposer.svelte';
+  import IconButton from '../components/common/IconButton.svelte';
+  import MessageList from '../components/messages/MessageList.svelte';
+  import SessionsList from '../components/sessions/SessionsList.svelte';
+  import type { SidebarRenderState, ThemeMode, VsCodeApi } from '../types';
 
-    export let state: SidebarRenderState;
-    export let theme: ThemeMode;
-    export let vscode: VsCodeApi | undefined;
+  export let state: SidebarRenderState;
+  export let theme: ThemeMode;
+  export let vscode: VsCodeApi | undefined;
 
-    const validatedAt = state.snapshot.accountSummary?.validatedAt
-        ? new Date(state.snapshot.accountSummary.validatedAt).toLocaleString()
-        : "Not validated yet";
+  type Screen = 'home' | 'thread';
 
-    const healthLabel =
-        state.snapshot.connectionHealth === "connected"
-            ? "Connected"
-            : state.snapshot.connectionHealth === "degraded"
-                ? "Attention needed"
-                : "Signed out";
-    state.snapshot.accountSummary?.providerNames.join(", ") || "Nova runtime";
-    const modelName =
-        state.preferredModel?.name ??
-        state.snapshot.selectedModelId ??
-        "Default model";
+  let prompt = '';
+  let transcript: HTMLDivElement | undefined;
+  let expanded = new Set<string>();
+  let screen: Screen = 'home';
+  let previousChatId = '';
+  let editingMessageId: string | undefined = undefined;
+  let contextMenu:
+    | { messageId: string; text: string; x: number; y: number }
+    | undefined = undefined;
 
-    function sendCommand(command: string) {
-        vscode?.postMessage({command});
+  $: chat = state.chat ?? {
+    messages: [],
+    isResponding: false,
+    availableTools: [],
+    activeChatId: '',
+    history: [],
+    activeMode: 'agent',
+    activeApprovalPolicy: 'safeOnly',
+    activeEnvironmentScope: 'local',
+    customAgents: []
+  };
+  $: availableModels = state.availableModels ?? [];
+  $: selectedModelId = state.snapshot.selectedModelId
+    ?? chat.history.find((item) => item.id === chat.activeChatId)?.modelId
+    ?? availableModels[0]?.id
+    ?? '';
+  $: activeChat = chat.history.find((item) => item.id === chat.activeChatId);
+  $: if (chat.messages.some((message) => message.error && (message.role === 'thinking' || message.role === 'tool'))) {
+    expanded = new Set([
+      ...expanded,
+      ...chat.messages
+        .filter((message) => message.error && (message.role === 'thinking' || message.role === 'tool'))
+        .map((message) => message.id)
+    ]);
+  }
+  $: if (chat.activeChatId !== previousChatId) {
+    if (chat.activeChatId && (chat.messages.length > 0 || screen === 'thread')) {
+      screen = 'thread';
     }
+    previousChatId = chat.activeChatId;
+  }
+  $: void scrollToBottom(chat.messages.length, chat.isResponding, screen);
+
+  const validatedAt = state.snapshot.accountSummary?.validatedAt
+    ? new Date(state.snapshot.accountSummary.validatedAt).toLocaleString()
+    : 'Not validated yet';
+
+  const healthLabel =
+    state.snapshot.connectionHealth === 'connected'
+      ? 'Connected'
+      : state.snapshot.connectionHealth === 'degraded'
+        ? 'Attention needed'
+        : 'Signed out';
+
+  function postMessage(message: Record<string, unknown>) {
+    vscode?.postMessage(message);
+  }
+
+  function submitPrompt() {
+    const trimmed = prompt.trim();
+    if (!trimmed || chat.isResponding) {
+      return;
+    }
+
+    screen = 'thread';
+    if (editingMessageId) {
+      postMessage({
+        command: 'nova.chat.editAndResubmit',
+        messageId: editingMessageId,
+        prompt: trimmed
+      });
+      editingMessageId = undefined;
+    } else {
+      postMessage({
+        command: 'nova.chat.submit',
+        prompt: trimmed
+      });
+    }
+    prompt = '';
+  }
+
+  function openChat(chatId: string) {
+    screen = 'thread';
+    postMessage({
+      command: 'nova.chat.switch',
+      chatId
+    });
+  }
+
+  function createChat() {
+    screen = 'thread';
+    editingMessageId = undefined;
+    postMessage({ command: 'nova.chat.create' });
+  }
+
+  function toggleExpanded(id: string) {
+    const next = new Set(expanded);
+    if (next.has(id)) {
+      next.delete(id);
+    } else {
+      next.add(id);
+    }
+    expanded = next;
+  }
+
+  function openUserContextMenu(message: { id: string; text: string }, event: MouseEvent) {
+    contextMenu = {
+      messageId: message.id,
+      text: message.text,
+      x: event.clientX,
+      y: event.clientY
+    };
+  }
+
+  function beginEditFromContextMenu() {
+    if (!contextMenu) {
+      return;
+    }
+    prompt = contextMenu.text;
+    editingMessageId = contextMenu.messageId;
+    contextMenu = undefined;
+  }
+
+  async function scrollToBottom(_count: number, _responding: boolean, currentScreen: Screen) {
+    await tick();
+    if (currentScreen === 'thread') {
+      transcript?.scrollTo({ top: transcript.scrollHeight, behavior: 'smooth' });
+    }
+  }
 </script>
 
 <section class="main-page" data-theme={theme}>
-    <header class="action-strip">
-        <span class="section-label">Tasks</span>
-        <button
-                class="icon-button"
-                title="Refresh models"
-                aria-label="Refresh models"
-                onclick={() => sendCommand(COMMAND_REFRESH_MODELS)}
-        >
-            {@html arrowClockwiseIcon}
-        </button>
-        <button
-                class="icon-button"
-                title="Open Nova AI settings"
-                aria-label="Open Nova settings"
-                onclick={() => sendCommand(COMMAND_OPEN_SETTINGS)}
-        >
-            {@html gearIcon}
-        </button>
-        <button
-                class="icon-button"
-                title="Sign out"
-                aria-label="Sign out"
-                onclick={() => sendCommand(COMMAND_SIGN_OUT)}
-        >
-            {@html boxArrowRightIcon}
-        </button>
-    </header>
-
-    <div class={`account-status ${state.snapshot.connectionHealth}`}>
-        <span>{healthLabel}</span>
-        <span>{validatedAt}</span>
+  {#if contextMenu}
+    <button class="context-overlay" onclick={() => contextMenu = undefined}></button>
+    <div class="context-menu" style={`left:${contextMenu.x}px;top:${contextMenu.y}px;`}>
+      <button onclick={beginEditFromContextMenu}>Edit and resubmit</button>
     </div>
-
-    <div class="task-list">
-        <div class="task-row notice-row">
-            <span class="row-icon" aria-hidden="true">{@html clockHistoryIcon}</span>
-            <span class="row-copy">
-        <strong>Work in progress</strong>
-        <small>Nova can now be used through Early Access in VS Code Chat.</small
-        >
-      </span>
+  {/if}
+  {#if screen === 'home'}
+    <div class="home-view">
+      <header class="top-toolbar">
+        <div class="title-copy">
+          <strong>Chat</strong>
+          <span>{healthLabel} · {validatedAt}</span>
         </div>
+        <div class="toolbar-actions">
+          <IconButton title="New chat" icon={plusLgIcon} onclick={createChat} />
+          <IconButton title="Refresh models" icon={arrowClockwiseIcon} onclick={() => postMessage({ command: COMMAND_REFRESH_MODELS })} />
+          <IconButton title="Extension settings" icon={gearIcon} onclick={() => postMessage({ command: COMMAND_OPEN_SETTINGS })} />
+          <IconButton title="Sign out" icon={boxArrowRightIcon} onclick={() => postMessage({ command: COMMAND_SIGN_OUT })} />
+        </div>
+      </header>
 
-        <button class="task-row" onclick={() => sendCommand(COMMAND_OPEN_CHAT)}>
-            <span class="row-icon" aria-hidden="true">{@html chatDotsIcon}</span>
-            <span class="row-copy">
-        <strong>Start a Nova chat</strong>
-        <small>{modelName}</small>
-      </span>
-            <span class="row-meta">Open</span>
-        </button>
-    </div>
-
-    <div class="empty-mark" aria-hidden="true">
-        {#if state.logoUri}
-            <img src={state.logoUri} alt=""/>
+      <div class="home-content">
+        {#if chat.history.length}
+          <SessionsList
+            activeChatId={chat.activeChatId}
+            sessions={chat.history}
+            onswitch={openChat}
+            onrename={(id) => postMessage({ command: 'nova.chat.rename', chatId: id })}
+            onarchive={(id) => postMessage({ command: 'nova.chat.archive', chatId: id })}
+            ondelete={(id) => postMessage({ command: 'nova.chat.delete', chatId: id })}
+          />
+        {:else}
+          <div class="empty-state">
+            <p class="empty-title">No chats yet.</p>
+            <p>Create a chat to start a dedicated conversation view.</p>
+            <button class="primary-action" onclick={createChat}>New chat</button>
+          </div>
         {/if}
+      </div>
     </div>
+  {:else}
+    <div class="thread-view">
+      <header class="thread-toolbar">
+        <div class="thread-heading">
+          <button class="back-button" onclick={() => screen = 'home'}>
+            <span aria-hidden="true">{@html arrowLeftIcon}</span>
+            <strong>Chat</strong>
+          </button>
+          <div class="thread-title">
+            <strong>{activeChat?.title ?? 'New chat'}</strong>
+            <span>{healthLabel} · {validatedAt}</span>
+          </div>
+        </div>
+        <div class="toolbar-actions">
+          <IconButton title="New chat" icon={plusLgIcon} onclick={createChat} />
+          <IconButton title="Refresh models" icon={arrowClockwiseIcon} onclick={() => postMessage({ command: COMMAND_REFRESH_MODELS })} />
+          <IconButton title="Extension settings" icon={gearIcon} onclick={() => postMessage({ command: COMMAND_OPEN_SETTINGS })} />
+        </div>
+      </header>
 
-    <button class="chat-opener" onclick={() => sendCommand(COMMAND_OPEN_CHAT)}>
-        <span class="opener-icon" aria-hidden="true">{@html pencilSquareIcon}</span>
-        <span>Ask Nova in VS Code Chat</span>
-        <span class="send-icon" aria-hidden="true">{@html arrowUpIcon}</span>
-    </button>
+      <div class="transcript" bind:this={transcript}>
+        {#if !chat.messages.length}
+          <div class="empty-state">
+            <p class="empty-title">Start this chat.</p>
+            <p>Once you send the first message, this conversation stays here and you can always go back to Chats.</p>
+          </div>
+        {:else}
+          <MessageList
+            messages={chat.messages}
+            {expanded}
+            ontoggleTrace={toggleExpanded}
+            activeToolId={chat.activeToolId}
+            onusercontextmenu={openUserContextMenu}
+          />
+        {/if}
+      </div>
 
-    <p class="ai-disclaimer">AI can make mistakes. Review important output.</p>
+      <div class="composer-dock">
+        {#if editingMessageId}
+          <div class="edit-banner">
+            <span>Editing previous message</span>
+            <button onclick={() => { editingMessageId = undefined; prompt = ''; }}>Cancel</button>
+          </div>
+        {/if}
+        <ChatComposer
+          value={prompt}
+          disabled={chat.isResponding}
+          editing={!!editingMessageId}
+          activeMode={chat.activeMode}
+          activeCustomAgentId={chat.activeCustomAgentId}
+          activeApprovalPolicy={chat.activeApprovalPolicy}
+          activeEnvironmentScope={chat.activeEnvironmentScope}
+          customAgents={chat.customAgents}
+          models={availableModels}
+          {selectedModelId}
+          toolCount={chat.availableTools.length}
+          oninput={(value) => prompt = value}
+          onsubmit={submitPrompt}
+          onselectMode={(mode) => postMessage({ command: 'nova.chat.selectMode', mode })}
+          onselectCustomAgent={(customAgentId) => postMessage({ command: 'nova.chat.selectCustomAgent', customAgentId })}
+          onconfigureAgents={() => postMessage({ command: 'nova.chat.configureAgents' })}
+          onopenModelPicker={() => postMessage({ command: 'nova.chat.pickModel' })}
+          onopenEnvironmentPicker={() => postMessage({ command: 'nova.chat.pickEnvironment' })}
+          onopenApprovalPicker={() => postMessage({ command: 'nova.chat.pickApprovalPolicy' })}
+        />
+      </div>
+    </div>
+  {/if}
 </section>
 
 <style lang="scss">
-  .main-page {
+  .main-page,
+  .home-view,
+  .thread-view {
+    position: relative;
     min-height: 100vh;
-    display: grid;
-    grid-template-rows: auto auto minmax(0, auto) 1fr auto auto;
-    gap: 8px;
-    padding: 14px 12px 12px;
-    box-sizing: border-box;
     background: var(--bg);
     color: var(--fg);
   }
 
-  .action-strip {
+  .home-view,
+  .thread-view {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: var(--space-5);
+    padding: var(--space-4);
+  }
+
+  .thread-view {
+    grid-template-rows: auto minmax(0, 1fr) auto;
+  }
+
+  .top-toolbar,
+  .thread-toolbar {
+    min-height: 34px;
     display: flex;
     align-items: center;
-    gap: 6px;
-    min-height: 30px;
+    justify-content: space-between;
+    gap: var(--space-4);
   }
 
-  .section-label {
-    flex: 1;
+  .thread-heading,
+  .title-copy,
+  .thread-title {
     min-width: 0;
-    overflow: hidden;
-    color: var(--fg);
-    font-size: 14px;
-    font-weight: 650;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .icon-button,
-  .row-icon,
-  .opener-icon,
-  .send-icon {
     display: grid;
-    place-items: center;
-    color: var(--muted);
-
-    :global(svg) {
-      width: 15px;
-      height: 15px;
-      fill: currentColor;
-    }
+    gap: var(--space-1);
   }
 
-  .icon-button {
-    width: 26px;
-    height: 26px;
-    flex: 0 0 auto;
+  .title-copy strong,
+  .thread-title strong,
+  .back-button strong {
+    font-size: 13px;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+
+  .title-copy span,
+  .thread-title span {
+    color: var(--muted);
+    font-size: var(--font-meta);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .toolbar-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .home-content,
+  .transcript {
+    min-height: 0;
+    overflow: auto;
+  }
+
+  .transcript {
+    padding-right: var(--space-2);
+  }
+
+  .back-button {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-3);
     padding: 0;
     border: 0;
     background: transparent;
-
-    &:hover {
-      background: var(--row-hover);
-      color: var(--fg);
-    }
+    color: var(--fg);
   }
 
-  .account-status {
-    display: flex;
-    justify-content: space-between;
-    gap: 12px;
-    color: var(--muted);
-    font-size: 12px;
-
-    &.connected span:first-child {
-      color: var(--vscode-testing-iconPassed, var(--fg));
-    }
-
-    &.degraded span:first-child {
-      color: var(--vscode-testing-iconQueued, var(--fg));
-    }
+  .back-button span :global(svg) {
+    width: 14px;
+    height: 14px;
+    fill: currentColor;
   }
 
-  .task-list {
-    display: grid;
-    align-content: start;
-    gap: 1px;
-  }
-
-  .task-row {
-    width: 100%;
-    display: grid;
-    grid-template-columns: 20px minmax(0, 1fr) auto;
+  .thread-heading {
+    grid-template-columns: auto minmax(0, 1fr);
     align-items: center;
-    gap: 8px;
-    min-height: 44px;
-    padding: 6px 4px;
+    gap: var(--space-4);
+  }
+
+  .composer-dock {
+    position: sticky;
+    bottom: 0;
+    padding-top: var(--space-2);
+    background: linear-gradient(to bottom, color-mix(in srgb, var(--bg) 0%, transparent), var(--bg) 22%);
+  }
+
+  .edit-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    margin-bottom: var(--space-2);
+    padding: var(--space-2) var(--space-4);
+    border: 1px solid var(--divider);
+    border-radius: var(--radius-md);
+    background: color-mix(in srgb, var(--selected-soft-bg) 70%, var(--bg));
+    color: var(--muted);
+    font-size: var(--font-meta);
+  }
+
+  .edit-banner button {
+    padding: 0;
     border: 0;
-    border-radius: 5px;
+    background: transparent;
+    color: var(--fg);
+  }
+
+  .context-overlay {
+    position: fixed;
+    inset: 0;
+    border: 0;
+    background: transparent;
+    z-index: 29;
+  }
+
+  .context-menu {
+    position: fixed;
+    z-index: 30;
+    min-width: 168px;
+    padding: var(--space-2);
+    border: 1px solid var(--divider);
+    border-radius: var(--radius-md);
+    background: var(--panel-elevated-bg);
+    box-shadow: var(--shadow-menu);
+  }
+
+  .context-menu button {
+    width: 100%;
+    min-height: var(--control-md);
+    padding: 0 var(--space-3);
+    border: 0;
+    border-radius: var(--radius-sm);
     background: transparent;
     color: var(--fg);
     text-align: left;
-
-    &:hover {
-      background: var(--row-hover);
-    }
   }
 
-  .notice-row {
-    background: color-mix(in srgb, var(--input-bg) 64%, transparent);
-    cursor: default;
+  .context-menu button:hover {
+    background: var(--hover-bg);
   }
 
-  .row-copy,
-  .row-copy strong,
-  .row-copy small,
-  .row-meta {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .row-copy {
+  .empty-state {
     display: grid;
-    gap: 2px;
-  }
-
-  .row-copy strong {
-    display: block;
-    font-size: 13px;
-    font-weight: 620;
-  }
-
-  .row-copy small,
-  .row-meta {
+    gap: var(--space-4);
+    padding: var(--space-7);
+    border: 1px dashed var(--divider);
+    border-radius: var(--radius-lg);
+    background: color-mix(in srgb, var(--panel-soft-bg) 72%, transparent);
     color: var(--muted);
   }
 
-  .row-meta {
-    font-size: 11px;
+  .empty-title {
+    margin: 0;
+    color: var(--fg);
+    font-size: 14px;
+    font-weight: 600;
   }
 
-  .empty-mark {
-    display: grid;
-    place-items: center;
-    opacity: 0.24;
+  .empty-state p {
+    margin: 0;
   }
 
-  .empty-mark img {
-    width: 54px;
-    height: 54px;
-    filter: grayscale(1);
-  }
-
-  .chat-opener {
-    min-height: 38px;
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 8px;
-    padding: 7px 8px;
-    border: 1px solid var(--input-border);
-    border-radius: 6px;
-    background: var(--input-bg);
-    color: var(--muted);
-    text-align: left;
-
-    &:hover {
-      background: var(--row-hover);
-      color: var(--fg);
-    }
-
-    span:nth-child(2) {
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-  }
-
-  .send-icon {
-    width: 24px;
-    height: 24px;
-    border-radius: 50%;
+  .primary-action {
+    width: fit-content;
+    min-height: var(--control-md);
+    padding: 0 var(--space-4);
+    border: 0;
+    border-radius: var(--radius-md);
     background: var(--accent);
     color: var(--accent-fg);
-  }
-
-  .ai-disclaimer {
-    margin: 0;
-    color: var(--muted);
-    font-size: 11px;
-    line-height: 1.35;
-    text-align: center;
   }
 </style>

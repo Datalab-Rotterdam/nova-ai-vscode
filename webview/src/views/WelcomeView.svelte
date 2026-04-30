@@ -21,7 +21,7 @@
 
   <div class="welcome-copy">
     <p class="welcome-title">Bring Nova AI into VS Code.</p>
-    <p>Connect your API key and use Nova AI from the native chat surface.</p>
+    <p>Connect your API key and chat with Nova directly in this sidebar, with workspace and MCP tools available when configured.</p>
   </div>
 
   <button class="get-started" onclick={onGetStarted}>Get Started</button>

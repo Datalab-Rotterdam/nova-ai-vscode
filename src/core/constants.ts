@@ -16,6 +16,7 @@ export const STATE_CONNECTION_HEALTH = 'nova.connectionHealth';
 export const STATE_LAST_ERROR = 'nova.lastError';
 export const STATE_SELECTED_MODEL = 'nova.selectedModel';
 export const STATE_TOOL_CALLING_SUPPORT = 'nova.toolCallingSupport';
+export const STATE_CHAT_HISTORY = 'nova.chatHistory';
 
 export const MODEL_CACHE_TTL_MS = 10 * 60 * 1000;
 export const DEFAULT_MAX_INPUT_TOKENS = 128_000;

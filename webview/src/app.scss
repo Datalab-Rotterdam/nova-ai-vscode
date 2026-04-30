@@ -3,16 +3,55 @@
   --bg: var(--vscode-sideBar-background);
   --fg: var(--vscode-sideBar-foreground);
   --muted: var(--vscode-descriptionForeground);
-  --border: var(--vscode-sideBar-border, color-mix(in srgb, var(--fg) 16%, transparent));
   --accent: var(--vscode-button-background);
   --accent-fg: var(--vscode-button-foreground);
   --danger: var(--vscode-errorForeground);
-  --row-hover: var(--vscode-list-hoverBackground);
+  --focus: var(--vscode-focusBorder);
+  --link: var(--vscode-textLink-foreground);
+
+  --panel-bg: color-mix(in srgb, var(--bg) 90%, black 10%);
+  --panel-elevated-bg: color-mix(in srgb, var(--bg) 82%, black 18%);
+  --panel-soft-bg: color-mix(in srgb, var(--bg) 74%, var(--input-bg, var(--bg)));
+  --selected-bg: color-mix(in srgb, var(--accent) 46%, var(--bg));
+  --selected-soft-bg: color-mix(in srgb, var(--accent) 22%, var(--bg));
+  --hover-bg: var(--vscode-list-hoverBackground, color-mix(in srgb, var(--fg) 10%, transparent));
+  --divider: var(--vscode-sideBar-border, color-mix(in srgb, var(--fg) 12%, transparent));
+  --trace-bg: color-mix(in srgb, var(--panel-elevated-bg) 84%, black 16%);
+  --trace-thinking-bg: color-mix(in srgb, var(--accent) 10%, var(--panel-elevated-bg));
+  --trace-error-bg: color-mix(in srgb, var(--danger) 10%, var(--panel-elevated-bg));
+
   --input-bg: var(--vscode-input-background);
-  --input-border: var(--vscode-input-border, var(--border));
   --input-fg: var(--vscode-input-foreground);
+  --input-border: var(--vscode-input-border, var(--divider));
   --secondary-bg: var(--vscode-button-secondaryBackground, transparent);
   --secondary-fg: var(--vscode-button-secondaryForeground, var(--fg));
+
+  --space-1: 2px;
+  --space-2: 4px;
+  --space-3: 6px;
+  --space-4: 8px;
+  --space-5: 8px;
+  --space-6: 10px;
+  --space-7: 14px;
+
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 12px;
+  --radius-pill: 999px;
+
+  --shadow-menu: 0 16px 40px rgba(0, 0, 0, 0.36);
+  --shadow-panel: 0 8px 18px rgba(0, 0, 0, 0.16);
+
+  --font-title: 12px;
+  --font-body: 11px;
+  --font-meta: 10px;
+  --font-label: 10px;
+
+  --control-xs: 22px;
+  --control-sm: 24px;
+  --control-md: 28px;
+  --control-lg: 32px;
 }
 
 html,
@@ -21,7 +60,7 @@ body {
   min-height: 100%;
   background: var(--bg);
   color: var(--fg);
-  font: 13px/1.5 var(--vscode-font-family);
+  font: var(--font-body) / 1.45 var(--vscode-font-family);
 }
 
 body {
@@ -33,13 +72,23 @@ body {
   min-height: 100vh;
 }
 
-button,
-input {
-  width: 100%;
-  border: 1px solid var(--border);
-  border-radius: 6px;
+* {
   box-sizing: border-box;
+}
+
+button,
+input,
+select,
+textarea {
   font: inherit;
+}
+
+button,
+input,
+select,
+textarea {
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-md);
 }
 
 button {
@@ -48,12 +97,166 @@ button {
 
 button:focus-visible,
 input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
 a:focus-visible,
 [tabindex]:focus-visible {
-  outline: 1px solid var(--vscode-focusBorder);
+  outline: 1px solid var(--focus);
   outline-offset: 2px;
 }
 
 a {
-  color: var(--vscode-textLink-foreground);
+  color: var(--link);
+}
+
+select,
+textarea,
+input {
+  background: var(--input-bg);
+  color: var(--input-fg);
+}
+
+textarea {
+  resize: vertical;
+  scrollbar-gutter: stable;
+}
+
+.ui-icon-button {
+  width: var(--control-xs);
+  height: var(--control-xs);
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+
+  &:hover {
+    background: var(--hover-bg);
+    color: var(--fg);
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
+  :global(svg) {
+    width: 14px;
+    height: 14px;
+    fill: currentColor;
+  }
+}
+
+.ui-pill-button {
+  min-height: var(--control-md);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--divider);
+  border-radius: var(--radius-md);
+  background: var(--panel-soft-bg);
+  color: var(--fg);
+
+  &.active {
+    background: var(--selected-bg);
+    border-color: transparent;
+    color: var(--accent-fg);
+  }
+
+  &.compact {
+    min-height: var(--control-sm);
+    padding-inline: var(--space-3);
+  }
+
+  :global(svg) {
+    width: 14px;
+    height: 14px;
+    fill: currentColor;
+  }
+
+  &:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--panel-soft-bg) 70%, var(--hover-bg));
+  }
+
+  &:disabled {
+    opacity: 0.55;
+    cursor: default;
+  }
+}
+
+.ui-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  color: var(--muted);
+  font-size: var(--font-label);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.ui-menu-surface {
+  position: absolute;
+  z-index: 20;
+  min-width: 220px;
+  padding: var(--space-3);
+  border: 1px solid var(--divider);
+  border-radius: var(--radius-lg);
+  background: var(--panel-elevated-bg);
+  box-shadow: var(--shadow-menu);
+}
+
+.ui-menu-divider {
+  height: 1px;
+  margin: var(--space-3) 0;
+  background: var(--divider);
+}
+
+.ui-menu-item {
+  width: 100%;
+  min-height: var(--control-md);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: 0 var(--space-4);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--fg);
+  text-align: left;
+
+  &:hover {
+    background: var(--hover-bg);
+  }
+
+  &.selected {
+    background: var(--selected-bg);
+    color: var(--accent-fg);
+  }
+
+  small {
+    color: inherit;
+    opacity: 0.76;
+  }
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--muted) 38%, transparent);
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
 }

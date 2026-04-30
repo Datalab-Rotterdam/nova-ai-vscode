@@ -1,7 +1,7 @@
 {
   "name": "nova-ai-vscode",
   "displayName": "Nova AI",
-  "description": "Use Nova AI models as native chat models in Visual Studio Code.",
+  "description": "Use Nova AI directly in Visual Studio Code with a built-in chat panel and tool support.",
   "version": "1.0.6",
   "publisher": "datalabrotterdam",
   "icon": "resources/icons/icon-512-rounded.png",
@@ -40,6 +40,77 @@
         "vendor": "nova-ai",
         "displayName": "Nova AI",
         "managementCommand": "nova.manage"
+      }
+    ],
+    "languageModelTools": [
+      {
+        "name": "nova_read_file",
+        "displayName": "Read File",
+        "toolReferenceName": "readFile",
+        "userDescription": "Read a file from the current workspace with line numbers.",
+        "modelDescription": "Read a file from the current workspace. Use this when you need to inspect source, configuration, or documentation. Input fields: filePath, startLine, endLine.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "filePath": {
+              "type": "string",
+              "description": "Absolute path or workspace-relative path of the file to read."
+            },
+            "startLine": {
+              "type": "number",
+              "description": "1-based line number to start reading from."
+            },
+            "endLine": {
+              "type": "number",
+              "description": "1-based line number to stop reading at."
+            }
+          },
+          "required": [
+            "filePath"
+          ]
+        }
+      },
+      {
+        "name": "nova_find_text",
+        "displayName": "Find Text",
+        "toolReferenceName": "findText",
+        "userDescription": "Search the workspace for exact text matches.",
+        "modelDescription": "Search the current workspace for exact text. Use includePattern to narrow the search to a folder or file glob when needed. Input fields: query, includePattern.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "Plain text to search for in the workspace."
+            },
+            "includePattern": {
+              "type": "string",
+              "description": "Optional glob pattern such as src/** or **/*.ts."
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      },
+      {
+        "name": "nova_list_directory",
+        "displayName": "List Directory",
+        "toolReferenceName": "listDirectory",
+        "userDescription": "List files and folders in a workspace directory.",
+        "modelDescription": "List the contents of a directory in the current workspace. Input field: path.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "description": "Absolute path or workspace-relative path of the directory."
+            }
+          },
+          "required": [
+            "path"
+          ]
+        }
       }
     ],
     "commands": [
@@ -109,6 +180,47 @@
             "type": "boolean",
             "default": false,
             "description": "Enable verbose Nova AI diagnostics logging in the output panel."
+          },
+          "nova.chat.customAgents": {
+            "type": "array",
+            "default": [],
+            "description": "Custom Nova chat agent presets.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "systemPrompt": {
+                  "type": "string"
+                },
+                "defaultModelId": {
+                  "type": "string"
+                },
+                "mode": {
+                  "type": "string",
+                  "enum": [
+                    "agent",
+                    "ask",
+                    "plan"
+                  ]
+                },
+                "toolsEnabled": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "id",
+                "label",
+                "systemPrompt"
+              ]
+            }
           }
         }
       },
@@ -151,6 +263,7 @@
     "@semantic-release/npm": "^13.1.5",
     "@semantic-release/release-notes-generator": "^14.1.0",
     "@sveltejs/vite-plugin-svelte": "^5.1.0",
+    "@types/markdown-it": "^14.1.2",
     "@types/node": "^24.7.2",
     "@types/vscode": "^1.116.0",
     "@vscode/vsce": "^3.9.1",
