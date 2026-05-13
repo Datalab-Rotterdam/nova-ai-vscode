@@ -260,7 +260,7 @@ export class ModelProvider implements vscode.LanguageModelChatProvider<LanguageM
         }
 
         if (!received.text && !received.toolCalls) {
-            throw new Error('The model returned an empty response. Try again or switch to a different model.');
+            throw new Error('The model returned an empty response. The model may be overloaded or the request may be malformed — try again.');
         }
     }
 
@@ -597,6 +597,17 @@ function toNovaMessages(messages: readonly vscode.LanguageModelChatRequestMessag
                 });
             }
 
+            continue;
+        }
+
+        // System role (LanguageModelChatMessageRole.System = 3) added in VS Code 1.120
+        if ((message.role as number) === 3) {
+            if (textParts.length) {
+                result.push({
+                    role: 'system',
+                    content: textParts.join('\n')
+                });
+            }
             continue;
         }
 
