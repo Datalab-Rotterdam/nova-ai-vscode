@@ -1,3 +1,11 @@
+# [1.0.0-alpha.8](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.7...v1.0.0-alpha.8) (2026-05-13)
+
+
+### Bug Fixes
+
+* added detection of stream and tool stalls ([ade8fa5](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/ade8fa53f5231fe8448de75bb2f4dbdf1dc73a7b))
+* tests to check for new defaults in context ([00194b7](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/00194b714eb69ca0a3404ff90178ee4742cb6c13))
+
 # [1.0.0-alpha.7](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.6...v1.0.0-alpha.7) (2026-05-13)
 
 
