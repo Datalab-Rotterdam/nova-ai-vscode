@@ -6,14 +6,14 @@ import type {
     ModelResponse,
     NovaAI
 } from '@datalabrotterdam/nova-sdk';
-import {COMMAND_MANAGE, DEFAULT_MAX_INPUT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS, MODEL_CACHE_TTL_MS} from '../core/constants';
-import {shouldParseModelCapabilities} from '../core/config';
-import {Diagnostics} from '../core/diagnostics';
-import {isToolCallingRejected, mapNovaError} from '../core/errors';
-import {SessionService} from '../services/SessionService';
-import {estimateTokenCount} from './tokenEstimator';
-import type {LanguageModelInfo, ToolCallingSupport} from '../core/types';
-import {StatusBar} from '../status/StatusBar';
+import { COMMAND_MANAGE, DEFAULT_MAX_INPUT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS, MODEL_CACHE_TTL_MS } from '../core/constants';
+import { shouldParseModelCapabilities } from '../core/config';
+import { Diagnostics } from '../core/diagnostics';
+import { isToolCallingRejected, mapNovaError } from '../core/errors';
+import { SessionService } from '../services/SessionService';
+import { estimateTokenCount } from './tokenEstimator';
+import type { LanguageModelInfo, ToolCallingSupport } from '../core/types';
+import { StatusBar } from '../status/StatusBar';
 
 interface ModelCache {
     models: LanguageModelInfo[];
@@ -203,7 +203,7 @@ export class ModelProvider implements vscode.LanguageModelChatProvider<LanguageM
         try {
             const stream = client.chat.completions.stream({
                 model: getPreferredModelId(models, snapshot.selectedModelId),
-                messages: [{role: 'user', content: 'Reply with ok.'}],
+                messages: [{ role: 'user', content: 'Reply with ok.' }],
                 max_tokens: 1,
                 tools: [
                     {
@@ -242,13 +242,14 @@ export class ModelProvider implements vscode.LanguageModelChatProvider<LanguageM
         const abortController = new AbortController();
         const subscription = token.onCancellationRequested(() => abortController.abort());
         const pendingToolCalls = new Map<number, PendingToolCall>();
+        const received = { text: false, toolCalls: false };
 
         try {
-            for await (const event of client.chat.completions.stream(request, {signal: abortController.signal})) {
-                this.handleStreamEvent(event, pendingToolCalls, progress);
+            for await (const event of client.chat.completions.stream(request, { signal: abortController.signal })) {
+                this.handleStreamEvent(event, pendingToolCalls, progress, received);
             }
 
-            flushToolCalls(pendingToolCalls, progress);
+            flushToolCalls(pendingToolCalls, progress, received);
         } catch (error) {
             if (abortController.signal.aborted) {
                 throw new Error('Nova AI request was cancelled.');
@@ -257,12 +258,17 @@ export class ModelProvider implements vscode.LanguageModelChatProvider<LanguageM
         } finally {
             subscription.dispose();
         }
+
+        if (!received.text && !received.toolCalls) {
+            throw new Error('The model returned an empty response. Try again or switch to a different model.');
+        }
     }
 
     private handleStreamEvent(
         event: ChatStreamEvent,
         pendingToolCalls: Map<number, PendingToolCall>,
-        progress: vscode.Progress<vscode.LanguageModelResponsePart>
+        progress: vscode.Progress<vscode.LanguageModelResponsePart>,
+        received?: { text: boolean; toolCalls: boolean }
     ): void {
         if (event.type !== 'chunk') {
             return;
@@ -271,6 +277,7 @@ export class ModelProvider implements vscode.LanguageModelChatProvider<LanguageM
         for (const choice of event.data.choices ?? []) {
             const content = choice.delta?.content;
             if (typeof content === 'string' && content.length) {
+                if (received) received.text = true;
                 progress.report(new vscode.LanguageModelTextPart(content));
             }
 
@@ -298,7 +305,7 @@ export class ModelProvider implements vscode.LanguageModelChatProvider<LanguageM
             }
 
             if (choice.finish_reason === 'tool_calls') {
-                flushToolCalls(pendingToolCalls, progress);
+                flushToolCalls(pendingToolCalls, progress, received);
             }
         }
     }
@@ -331,8 +338,11 @@ function toModelInfo(model: ModelResponse): LanguageModelInfo {
         'output_token_limit',
         'outputTokenLimit'
     ]);
+    // Use 25% of context window for output (not 50%) to leave more room for input.
+    // VS Code reserves the full maxOutputTokens slot, so models with small context windows
+    // would otherwise run out of input tokens for actual user prompts.
     const requestedMaxOutputTokens = explicitMaxOutputTokens
-        ?? (contextWindow ? Math.min(DEFAULT_MAX_OUTPUT_TOKENS, Math.max(1, Math.floor(contextWindow / 2))) : DEFAULT_MAX_OUTPUT_TOKENS);
+        ?? (contextWindow ? Math.min(DEFAULT_MAX_OUTPUT_TOKENS, Math.max(1, Math.floor(contextWindow / 4))) : DEFAULT_MAX_OUTPUT_TOKENS);
     const maxOutputTokens = contextWindow
         ? Math.min(requestedMaxOutputTokens, Math.max(1, contextWindow - 1))
         : requestedMaxOutputTokens;
@@ -517,7 +527,7 @@ function createModelOptionsPayload(
     model: LanguageModelInfo,
     modelOptions: vscode.ProvideLanguageModelChatResponseOptions['modelOptions']
 ): Record<string, unknown> {
-    const payload = isRecord(modelOptions) ? {...modelOptions} : {};
+    const payload = isRecord(modelOptions) ? { ...modelOptions } : {};
     if (!hasOutputTokenLimit(payload)) {
         payload.max_tokens = model.maxOutputTokens;
     }
@@ -593,7 +603,7 @@ function toNovaMessages(messages: readonly vscode.LanguageModelChatRequestMessag
         result.push({
             role: 'assistant',
             content: textParts.join('\n'),
-            ...(assistantToolCalls.length ? {tool_calls: assistantToolCalls} : {})
+            ...(assistantToolCalls.length ? { tool_calls: assistantToolCalls } : {})
         });
     }
 
@@ -602,7 +612,8 @@ function toNovaMessages(messages: readonly vscode.LanguageModelChatRequestMessag
 
 function flushToolCalls(
     pendingToolCalls: Map<number, PendingToolCall>,
-    progress: vscode.Progress<vscode.LanguageModelResponsePart>
+    progress: vscode.Progress<vscode.LanguageModelResponsePart>,
+    received?: { text: boolean; toolCalls: boolean }
 ): void {
     for (const [index, toolCall] of Array.from(pendingToolCalls.entries()).sort((left, right) => left[0] - right[0])) {
         if (!toolCall.name) {
@@ -613,9 +624,10 @@ function flushToolCalls(
         try {
             parsedInput = toolCall.argumentsText ? JSON.parse(toolCall.argumentsText) as object : {};
         } catch {
-            parsedInput = {raw: toolCall.argumentsText};
+            parsedInput = { raw: toolCall.argumentsText };
         }
 
+        if (received) received.toolCalls = true;
         progress.report(new vscode.LanguageModelToolCallPart(toolCall.id, toolCall.name, parsedInput));
         pendingToolCalls.delete(index);
     }

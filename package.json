@@ -27,6 +27,7 @@
   "activationEvents": [
     "onStartupFinished",
     "onView:nova.sidebar",
+    "onChatParticipant:nova-ai.nova",
     "onCommand:nova.manage",
     "onCommand:nova.signIn",
     "onCommand:nova.signOut",
@@ -35,6 +36,15 @@
     "onCommand:nova.openSettings"
   ],
   "contributes": {
+    "chatParticipants": [
+      {
+        "id": "nova-ai.nova",
+        "name": "nova",
+        "fullName": "Nova AI",
+        "description": "Chat with Nova AI models with full tool support",
+        "isSticky": true
+      }
+    ],
     "languageModelChatProviders": [
       {
         "vendor": "nova-ai",

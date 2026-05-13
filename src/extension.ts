@@ -17,6 +17,7 @@ import {toUserMessage} from './core/errors';
 import type {LanguageModelInfo} from './core/types';
 import {StatusBar} from './status/StatusBar';
 import {ViewProvider} from './views';
+import {registerAgentParticipant} from './chat/AgentParticipant';
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
     const diagnostics = new Diagnostics();
@@ -24,6 +25,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     const statusBar = new StatusBar();
     const modelProvider = new ModelProvider(sessionService, diagnostics, statusBar);
     const sidebarProvider = new ViewProvider(context.extensionUri, sessionService, modelProvider, diagnostics);
+
+    registerAgentParticipant(context);
 
     context.subscriptions.push(
         diagnostics,
