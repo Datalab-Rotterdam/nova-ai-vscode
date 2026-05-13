@@ -9,7 +9,7 @@ import type {
 import { COMMAND_MANAGE, DEFAULT_MAX_INPUT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS, MODEL_CACHE_TTL_MS } from '../core/constants';
 import { shouldParseModelCapabilities } from '../core/config';
 import { Diagnostics } from '../core/diagnostics';
-import { isToolCallingRejected, mapNovaError } from '../core/errors';
+import { isEmptyResponse, isToolCallingRejected, mapNovaError } from '../core/errors';
 import { SessionService } from '../services/SessionService';
 import { estimateTokenCount } from './tokenEstimator';
 import type { LanguageModelInfo, ToolCallingSupport } from '../core/types';
@@ -102,6 +102,15 @@ export class ModelProvider implements vscode.LanguageModelChatProvider<LanguageM
         await this.sessionService.setSelectedModel(model.id);
         this.statusBar?.updateRequest(messages, options.tools, model);
 
+        const toolNames = options.tools?.map((t) => t.name) ?? [];
+        this.diagnostics.trace('Nova chat request started.', {
+            modelId: model.id,
+            messageCount: messages.length,
+            toolCount: toolNames.length,
+            tools: toolNames,
+            toolMode: options.toolMode
+        });
+
         const request: ChatCompletionRequest & Record<string, unknown> = {
             model: model.id,
             messages: toNovaMessages(messages),
@@ -111,8 +120,17 @@ export class ModelProvider implements vscode.LanguageModelChatProvider<LanguageM
 
         try {
             await this.streamResponse(client, request, progress, token);
+            this.diagnostics.trace('Nova chat request completed.', {modelId: model.id});
         } catch (error) {
-            if (options.tools?.length && isToolCallingRejected(error)) {
+            const toolsRejected = options.tools?.length && isToolCallingRejected(error);
+            const toolsReturnedEmpty = options.tools?.length && isEmptyResponse(error);
+
+            if (toolsRejected || toolsReturnedEmpty) {
+                this.diagnostics.trace('Nova tool-calling unsupported, retrying without tools.', {
+                    modelId: model.id,
+                    reason: toolsRejected ? 'rejected' : 'empty-response',
+                    tools: toolNames
+                });
                 await this.sessionService.setToolCallingSupport('unsupported');
 
                 if (options.toolMode === vscode.LanguageModelChatToolMode.Required) {
@@ -125,9 +143,14 @@ export class ModelProvider implements vscode.LanguageModelChatProvider<LanguageM
                     ...createModelOptionsPayload(model, options.modelOptions)
                 };
                 await this.streamResponse(client, fallbackRequest, progress, token);
+                this.diagnostics.trace('Nova chat fallback request completed.', {modelId: model.id});
                 return;
             }
 
+            this.diagnostics.trace('Nova chat request failed.', {
+                modelId: model.id,
+                error: error instanceof Error ? error.message : String(error)
+            });
             throw mapNovaError(error);
         }
     }
@@ -243,24 +266,47 @@ export class ModelProvider implements vscode.LanguageModelChatProvider<LanguageM
         const subscription = token.onCancellationRequested(() => abortController.abort());
         const pendingToolCalls = new Map<number, PendingToolCall>();
         const received = { text: false, toolCalls: false };
+        const finishReasons: string[] = [];
+
+        this.diagnostics.trace('Nova stream opened.', {model: request.model});
 
         try {
             for await (const event of client.chat.completions.stream(request, { signal: abortController.signal })) {
+                if (event.type === 'chunk') {
+                    for (const choice of event.data.choices ?? []) {
+                        if (choice.finish_reason) {
+                            finishReasons.push(choice.finish_reason);
+                        }
+                    }
+                }
                 this.handleStreamEvent(event, pendingToolCalls, progress, received);
             }
 
             flushToolCalls(pendingToolCalls, progress, received);
         } catch (error) {
             if (abortController.signal.aborted) {
+                this.diagnostics.trace('Nova stream aborted by cancellation token.');
                 throw new Error('Nova AI request was cancelled.');
             }
+            this.diagnostics.trace('Nova stream error.', {
+                error: error instanceof Error ? error.message : String(error)
+            });
             throw error;
         } finally {
             subscription.dispose();
         }
 
+        this.diagnostics.trace('Nova stream closed.', {
+            receivedText: received.text,
+            receivedToolCalls: received.toolCalls,
+            finishReasons
+        });
+
         if (!received.text && !received.toolCalls) {
-            throw new Error('The model returned an empty response. The model may be overloaded or the request may be malformed — try again.');
+            throw Object.assign(
+                new Error('The model returned an empty response. The model may be overloaded or the request may be malformed — try again.'),
+                {isEmptyResponse: true}
+            );
         }
     }
 
