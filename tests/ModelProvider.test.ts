@@ -45,7 +45,7 @@ describe('ModelProvider', () => {
     expect(list).toHaveBeenCalledTimes(1);
   });
 
-  it('reserves the default output budget from the context window when no output limit is advertised', () => {
+  it('reserves a quarter of the context window for output when no output limit is advertised', () => {
     const model = providerInternals.toModelInfo({
       id: 'nova-pro',
       object: 'model',
@@ -55,8 +55,8 @@ describe('ModelProvider', () => {
       context_window: 8192
     });
 
-    expect(model.maxInputTokens).toBe(4096);
-    expect(model.maxOutputTokens).toBe(4096);
+    expect(model.maxInputTokens).toBe(6144);
+    expect(model.maxOutputTokens).toBe(2048);
   });
 
   it('uses vLLM max_model_len as the context window when no gateway context window is advertised', () => {
@@ -69,8 +69,8 @@ describe('ModelProvider', () => {
       max_model_len: 32768
     });
 
-    expect(model.maxInputTokens).toBe(16384);
-    expect(model.maxOutputTokens).toBe(16384);
+    expect(model.maxInputTokens).toBe(24576);
+    expect(model.maxOutputTokens).toBe(8192);
   });
 
   it('uses explicit output limits when splitting the context window', () => {
