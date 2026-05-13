@@ -1,3 +1,10 @@
+# [1.0.0-alpha.10](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.9...v1.0.0-alpha.10) (2026-05-13)
+
+
+### Bug Fixes
+
+* added more logging for errors that stream it returning empty response. ([e63c784](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/e63c784602df4fffc829d764eb909551d9629bb4))
+
 # [1.0.0-alpha.9](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.8...v1.0.0-alpha.9) (2026-05-13)
 
 
