@@ -1,3 +1,10 @@
+# [1.0.0-alpha.7](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.6...v1.0.0-alpha.7) (2026-05-13)
+
+
+### Bug Fixes
+
+* unable to select model in new versions > 1.120.0 ([7e1bb91](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/7e1bb9179546466ddaf32f0a35d7fe9b9ef2fe39))
+
 # [1.0.0-alpha.6](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.5...v1.0.0-alpha.6) (2026-04-29)
 
 
