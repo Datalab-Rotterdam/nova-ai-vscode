@@ -158,10 +158,15 @@ export class ModelProvider implements vscode.LanguageModelChatProvider<LanguageM
 
         try {
             const response = await client.models.list();
-            const models = response.data
+            const sorted = response.data
                 .filter((model) => model.enabled !== false)
                 .map((model) => toModelInfo(model))
                 .sort(sortModels);
+            const defaultIndex = sorted.findIndex((model) => supportsToolCalling(model.capabilities));
+            const models = sorted.map((model, index) => ({
+                ...model,
+                isDefault: index === defaultIndex
+            }));
             this.diagnostics.trace('Nova language models discovered.', models.map((model) => ({
                 id: model.id,
                 maxInputTokens: model.maxInputTokens,
@@ -303,6 +308,11 @@ function sortModels(left: LanguageModelInfo, right: LanguageModelInfo): number {
     return left.name.localeCompare(right.name);
 }
 
+function supportsToolCalling(capabilities: LanguageModelInfo['capabilities']): boolean {
+    const tc = capabilities.toolCalling;
+    return tc === undefined || tc === true || (typeof tc === 'number' && tc > 0);
+}
+
 function toModelInfo(model: ModelResponse): LanguageModelInfo {
     const family = firstString(model, ['family', 'name']) ?? model.id;
     const contextWindow = firstNumber(model, [
@@ -345,6 +355,8 @@ function toModelInfo(model: ModelResponse): LanguageModelInfo {
         detail: createModelDetail(model),
         maxInputTokens,
         maxOutputTokens,
+        isDefault: false,
+        isUserSelectable: true,
         capabilities: createModelCapabilities(model)
     };
 }
