@@ -1,3 +1,10 @@
+# [1.0.0-alpha.9](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.8...v1.0.0-alpha.9) (2026-05-13)
+
+
+### Bug Fixes
+
+* system role assignment in update ([70be07c](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/70be07c3baf92d6dbad1af27c48195ba4a077c31))
+
 # [1.0.0-alpha.8](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.7...v1.0.0-alpha.8) (2026-05-13)
 
 
