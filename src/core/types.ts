@@ -41,6 +41,8 @@ export interface LanguageModelInfo extends Readonly<{
   detail?: string;
   maxInputTokens: number;
   maxOutputTokens: number;
+  isDefault: boolean;
+  isUserSelectable: boolean;
   capabilities: {
     imageInput?: boolean;
     toolCalling?: boolean | number;
