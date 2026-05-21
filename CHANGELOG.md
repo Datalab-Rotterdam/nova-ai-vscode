@@ -1,3 +1,11 @@
+# [1.0.0-alpha.12](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.11...v1.0.0-alpha.12) (2026-05-21)
+
+
+### Bug Fixes
+
+* release ([a0e95e5](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/a0e95e52d9079b2e404e1ea7da960b1587fd446a))
+* release ([505af0a](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/505af0a7f445ad2d7cd394304a251a55720f8ea7))
+
 # [1.0.0-alpha.11](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.10...v1.0.0-alpha.11) (2026-05-21)
 
 
