@@ -1,3 +1,10 @@
+# [1.0.0-alpha.11](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.10...v1.0.0-alpha.11) (2026-05-21)
+
+
+### Features
+
+* token usage tracking and status bar context window display ([84503b8](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/84503b8b0afb257ce442830e9023a21760375533))
+
 # [1.0.0-alpha.10](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.9...v1.0.0-alpha.10) (2026-05-13)
 
 
