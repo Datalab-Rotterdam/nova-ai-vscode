@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import {NOVA_VENDOR} from '../core/constants';
+import { NOVA_USAGE_MIME_TYPE, NOVA_VENDOR } from '../core/constants';
 
 const PARTICIPANT_ID = 'nova-ai.nova';
 const MAX_TOOL_ROUNDS = 6;
@@ -41,6 +41,10 @@ async function runAgentLoop(
     toolInvocationToken: vscode.ChatParticipantToolToken,
     token: vscode.CancellationToken
 ): Promise<void> {
+    let totalPromptTokens = 0;
+    let totalCompletionTokens = 0;
+    let outputBuffer: number | undefined;
+
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
         const options: vscode.LanguageModelChatRequestOptions = tools.length
             ? {tools}
@@ -54,6 +58,11 @@ async function runAgentLoop(
                 stream.markdown(part.value);
             } else if (part instanceof vscode.LanguageModelToolCallPart) {
                 toolCalls.push(part);
+            } else if (part instanceof vscode.LanguageModelDataPart && part.mimeType === NOVA_USAGE_MIME_TYPE) {
+                const usage = JSON.parse(new TextDecoder().decode(part.data)) as { promptTokens?: number; completionTokens?: number; outputBuffer?: number };
+                totalPromptTokens += usage.promptTokens ?? 0;
+                totalCompletionTokens += usage.completionTokens ?? 0;
+                outputBuffer ??= usage.outputBuffer;
             }
         }
 
@@ -82,6 +91,10 @@ async function runAgentLoop(
         }
 
         messages.push(vscode.LanguageModelChatMessage.User(toolResults));
+    }
+
+    if ((totalPromptTokens > 0 || totalCompletionTokens > 0) && typeof stream.usage === 'function') {
+        stream.usage({ promptTokens: totalPromptTokens, completionTokens: totalCompletionTokens, outputBuffer });
     }
 }
 

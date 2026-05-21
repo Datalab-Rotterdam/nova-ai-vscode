@@ -20,3 +20,5 @@ export const STATE_TOOL_CALLING_SUPPORT = 'nova.toolCallingSupport';
 export const MODEL_CACHE_TTL_MS = 10 * 60 * 1000;
 export const DEFAULT_MAX_INPUT_TOKENS = 128_000;
 export const DEFAULT_MAX_OUTPUT_TOKENS = 16_384;
+
+export const NOVA_USAGE_MIME_TYPE = 'application/vnd.nova-ai.usage+json';

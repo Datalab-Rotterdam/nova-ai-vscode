@@ -6,7 +6,7 @@ import type {
     ModelResponse,
     NovaAI
 } from '@datalabrotterdam/nova-sdk';
-import { COMMAND_MANAGE, DEFAULT_MAX_INPUT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS, MODEL_CACHE_TTL_MS } from '../core/constants';
+import { COMMAND_MANAGE, DEFAULT_MAX_INPUT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS, MODEL_CACHE_TTL_MS, NOVA_USAGE_MIME_TYPE } from '../core/constants';
 import { shouldParseModelCapabilities } from '../core/config';
 import { Diagnostics } from '../core/diagnostics';
 import { isEmptyResponse, isToolCallingRejected, mapNovaError } from '../core/errors';
@@ -114,13 +114,19 @@ export class ModelProvider implements vscode.LanguageModelChatProvider<LanguageM
         const request: ChatCompletionRequest & Record<string, unknown> = {
             model: model.id,
             messages: toNovaMessages(messages),
+            stream_options: { include_usage: true },
             ...createModelOptionsPayload(model, options.modelOptions),
             ...createToolPayload(options)
         };
 
+        const contextWindow = model.maxInputTokens + model.maxOutputTokens;
+
         try {
-            await this.streamResponse(client, request, progress, token);
+            const { promptTokens } = await this.streamResponse(client, request, model.maxOutputTokens, progress, token);
             this.diagnostics.trace('Nova chat request completed.', {modelId: model.id});
+            if (promptTokens > 0) {
+                this.statusBar?.updateActualUsage(promptTokens, contextWindow, model.name);
+            }
         } catch (error) {
             const toolsRejected = options.tools?.length && isToolCallingRejected(error);
             const toolsReturnedEmpty = options.tools?.length && isEmptyResponse(error);
@@ -142,8 +148,11 @@ export class ModelProvider implements vscode.LanguageModelChatProvider<LanguageM
                     messages: toNovaMessages(messages),
                     ...createModelOptionsPayload(model, options.modelOptions)
                 };
-                await this.streamResponse(client, fallbackRequest, progress, token);
+                const { promptTokens } = await this.streamResponse(client, fallbackRequest, model.maxOutputTokens, progress, token);
                 this.diagnostics.trace('Nova chat fallback request completed.', {modelId: model.id});
+                if (promptTokens > 0) {
+                    this.statusBar?.updateActualUsage(promptTokens, contextWindow, model.name);
+                }
                 return;
             }
 
@@ -259,14 +268,17 @@ export class ModelProvider implements vscode.LanguageModelChatProvider<LanguageM
     private async streamResponse(
         client: NovaAI,
         request: ChatCompletionRequest & Record<string, unknown>,
+        outputBuffer: number,
         progress: vscode.Progress<vscode.LanguageModelResponsePart>,
         token: vscode.CancellationToken
-    ): Promise<void> {
+    ): Promise<{ promptTokens: number; completionTokens: number }> {
         const abortController = new AbortController();
         const subscription = token.onCancellationRequested(() => abortController.abort());
         const pendingToolCalls = new Map<number, PendingToolCall>();
         const received = { text: false, toolCalls: false };
         const finishReasons: string[] = [];
+        let promptTokens = 0;
+        let completionTokens = 0;
 
         this.diagnostics.trace('Nova stream opened.', {model: request.model});
 
@@ -278,11 +290,21 @@ export class ModelProvider implements vscode.LanguageModelChatProvider<LanguageM
                             finishReasons.push(choice.finish_reason);
                         }
                     }
+                    if (event.data.usage) {
+                        promptTokens = event.data.usage.prompt_tokens ?? promptTokens;
+                        completionTokens = event.data.usage.completion_tokens ?? completionTokens;
+                        this.diagnostics.trace('Nova stream usage received.', {promptTokens, completionTokens});
+                    }
                 }
                 this.handleStreamEvent(event, pendingToolCalls, progress, received);
             }
 
             flushToolCalls(pendingToolCalls, progress, received);
+
+            this.diagnostics.trace('Nova stream usage final.', {promptTokens, completionTokens, outputBuffer});
+            if (promptTokens > 0 || completionTokens > 0) {
+                progress.report(vscode.LanguageModelDataPart.json({promptTokens, completionTokens, outputBuffer}, NOVA_USAGE_MIME_TYPE));
+            }
         } catch (error) {
             if (abortController.signal.aborted) {
                 this.diagnostics.trace('Nova stream aborted by cancellation token.');
@@ -308,6 +330,8 @@ export class ModelProvider implements vscode.LanguageModelChatProvider<LanguageM
                 {isEmptyResponse: true}
             );
         }
+
+        return { promptTokens, completionTokens };
     }
 
     private handleStreamEvent(

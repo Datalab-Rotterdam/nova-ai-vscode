@@ -11,8 +11,11 @@
     "url": "https://github.com/Datalab-Rotterdam/nova-ai-vscode.git"
   },
   "engines": {
-    "vscode": "^1.116.0"
+    "vscode": "^1.120.0"
   },
+  "enabledApiProposals": [
+    "chatParticipantAdditions"
+  ],
   "categories": [
     "AI",
     "Other"
@@ -42,7 +45,8 @@
         "name": "nova",
         "fullName": "Nova AI",
         "description": "Chat with Nova AI models with full tool support",
-        "isSticky": true
+        "isSticky": true,
+        "isAgent": true
       }
     ],
     "languageModelChatProviders": [
@@ -162,7 +166,7 @@
     "@semantic-release/release-notes-generator": "^14.1.0",
     "@sveltejs/vite-plugin-svelte": "^5.1.0",
     "@types/node": "^24.7.2",
-    "@types/vscode": "^1.116.0",
+    "@types/vscode": "^1.120.0",
     "@vscode/vsce": "^3.9.1",
     "bootstrap-icons": "^1.13.1",
     "esbuild": "^0.25.12",
