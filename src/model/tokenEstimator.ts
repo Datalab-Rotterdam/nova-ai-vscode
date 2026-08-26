@@ -2,7 +2,8 @@ import * as vscode from 'vscode';
 
 export function estimateTokenCount(input: string | vscode.LanguageModelChatRequestMessage): number {
   const text = typeof input === 'string' ? input : flattenMessage(input);
-  return Math.max(1, Math.ceil(text.length / 4));
+  const bytes = new TextEncoder().encode(text).length;
+  return Math.max(1, Math.ceil(bytes / 3));
 }
 
 export function flattenMessage(message: vscode.LanguageModelChatRequestMessage): string {

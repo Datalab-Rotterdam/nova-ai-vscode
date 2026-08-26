@@ -332,8 +332,13 @@ function toModelInfo(model: ModelResponse): LanguageModelInfo {
         'input_token_limit',
         'inputTokenLimit'
     ]);
+    const contextSafetyMargin = contextWindow
+        ? Math.max(1_024, Math.ceil(contextWindow * 0.02))
+        : 0;
     const maxInputTokens = explicitMaxInputTokens
-        ?? (contextWindow ? Math.max(1, contextWindow - maxOutputTokens) : DEFAULT_MAX_INPUT_TOKENS);
+        ?? (contextWindow
+            ? Math.max(1, contextWindow - maxOutputTokens - contextSafetyMargin)
+            : DEFAULT_MAX_INPUT_TOKENS);
 
     return {
         id: model.id,
