@@ -31,6 +31,10 @@ export function toUserMessage(error: unknown): string {
   return 'Nova AI request failed.';
 }
 
+export function isEmptyResponse(error: unknown): boolean {
+  return error instanceof Error && (error as Error & {isEmptyResponse?: boolean}).isEmptyResponse === true;
+}
+
 export function isToolCallingRejected(error: unknown): boolean {
   if (!isNovaErrorLike(error)) {
     return false;

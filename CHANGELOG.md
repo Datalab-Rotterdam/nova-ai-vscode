@@ -1,3 +1,47 @@
+# [1.0.0-alpha.12](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.11...v1.0.0-alpha.12) (2026-05-21)
+
+
+### Bug Fixes
+
+* release ([a0e95e5](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/a0e95e52d9079b2e404e1ea7da960b1587fd446a))
+* release ([505af0a](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/505af0a7f445ad2d7cd394304a251a55720f8ea7))
+
+# [1.0.0-alpha.11](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.10...v1.0.0-alpha.11) (2026-05-21)
+
+
+### Features
+
+* token usage tracking and status bar context window display ([84503b8](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/84503b8b0afb257ce442830e9023a21760375533))
+
+# [1.0.0-alpha.10](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.9...v1.0.0-alpha.10) (2026-05-13)
+
+
+### Bug Fixes
+
+* added more logging for errors that stream it returning empty response. ([e63c784](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/e63c784602df4fffc829d764eb909551d9629bb4))
+
+# [1.0.0-alpha.9](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.8...v1.0.0-alpha.9) (2026-05-13)
+
+
+### Bug Fixes
+
+* system role assignment in update ([70be07c](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/70be07c3baf92d6dbad1af27c48195ba4a077c31))
+
+# [1.0.0-alpha.8](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.7...v1.0.0-alpha.8) (2026-05-13)
+
+
+### Bug Fixes
+
+* added detection of stream and tool stalls ([ade8fa5](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/ade8fa53f5231fe8448de75bb2f4dbdf1dc73a7b))
+* tests to check for new defaults in context ([00194b7](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/00194b714eb69ca0a3404ff90178ee4742cb6c13))
+
+# [1.0.0-alpha.7](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.6...v1.0.0-alpha.7) (2026-05-13)
+
+
+### Bug Fixes
+
+* unable to select model in new versions > 1.120.0 ([7e1bb91](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/7e1bb9179546466ddaf32f0a35d7fe9b9ef2fe39))
+
 # [1.0.0-alpha.6](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.5...v1.0.0-alpha.6) (2026-04-29)
 
 

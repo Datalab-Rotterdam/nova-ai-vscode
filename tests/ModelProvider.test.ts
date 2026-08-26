@@ -45,7 +45,7 @@ describe('ModelProvider', () => {
     expect(list).toHaveBeenCalledTimes(1);
   });
 
-  it('reserves the default output budget from the context window when no output limit is advertised', () => {
+  it('reserves a quarter of the context window for output when no output limit is advertised', () => {
     const model = providerInternals.toModelInfo({
       id: 'nova-pro',
       object: 'model',
