@@ -66,3 +66,4 @@ Your API key is stored using VS Code Secret Storage — it is never written to w
 ---
 
 For contributing and development details, see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+
