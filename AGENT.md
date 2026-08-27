@@ -48,7 +48,7 @@ Two separate build targets in one repo:
 
 - `@datalabrotterdam/nova-sdk` is the only runtime dependency; all VS Code APIs are peer/dev
 - `src/types/vscode-proposed.d.ts` — proposed VS Code APIs (requires `enabledApiProposals: ["chatParticipantAdditions"]` in package.json)
-- Token estimation: `Math.ceil(length / 4)` in `tokenEstimator.ts`
+- Token estimation: `Math.ceil(utf8Bytes / 3)` in `tokenEstimator.ts`, with 2%/1,024-token context headroom in `modelProvider.ts`
 - `NOVA_USAGE_MIME_TYPE = "application/vnd.nova-ai.usage+json"` — streamed usage data from SDK
 - Tests mock `vscode` via `tests/mocks/vscode.ts`; vitest alias maps `vscode` → mock
 

@@ -55,7 +55,7 @@ describe('ModelProvider', () => {
       context_window: 8192
     });
 
-    expect(model.maxInputTokens).toBe(6144);
+    expect(model.maxInputTokens).toBe(5120);
     expect(model.maxOutputTokens).toBe(2048);
   });
 
@@ -69,7 +69,7 @@ describe('ModelProvider', () => {
       max_model_len: 32768
     });
 
-    expect(model.maxInputTokens).toBe(24576);
+    expect(model.maxInputTokens).toBe(23552);
     expect(model.maxOutputTokens).toBe(8192);
   });
 
@@ -84,7 +84,7 @@ describe('ModelProvider', () => {
       max_output_tokens: 16384
     });
 
-    expect(model.maxInputTokens).toBe(111616);
+    expect(model.maxInputTokens).toBe(109056);
     expect(model.maxOutputTokens).toBe(16384);
   });
 
@@ -116,6 +116,21 @@ describe('ModelProvider', () => {
     });
 
     expect(model.maxInputTokens).toBe(64000);
+    expect(model.maxOutputTokens).toBe(16384);
+  });
+
+  it('reserves proportional headroom for chat-template and token-estimation overhead', () => {
+    const model = providerInternals.toModelInfo({
+      id: 'qwen3.8:27b',
+      object: 'model',
+      name: 'Qwen 3.8 27B',
+      created: 1,
+      owned_by: 'nova',
+      context_window: 262144,
+      max_output_tokens: 16384
+    });
+
+    expect(model.maxInputTokens).toBe(240517);
     expect(model.maxOutputTokens).toBe(16384);
   });
 
@@ -181,7 +196,7 @@ describe('ModelProvider', () => {
 
     expect(model.detail).toBe('nova | pro | chat | tools');
     expect(model.tooltip).toContain('General purpose model');
-    expect(model.tooltip).toContain('Input: 111,616 tokens');
+    expect(model.tooltip).toContain('Input: 109,056 tokens');
     expect(model.tooltip).toContain('Output: 16,384 tokens');
   });
 
