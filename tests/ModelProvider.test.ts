@@ -55,8 +55,8 @@ describe('ModelProvider', () => {
       context_window: 8192
     });
 
-    expect(model.maxInputTokens).toBe(3072);
-    expect(model.maxOutputTokens).toBe(4096);
+    expect(model.maxInputTokens).toBe(5120);
+    expect(model.maxOutputTokens).toBe(2048);
   });
 
   it('uses vLLM max_model_len as the context window when no gateway context window is advertised', () => {
@@ -69,8 +69,8 @@ describe('ModelProvider', () => {
       max_model_len: 32768
     });
 
-    expect(model.maxInputTokens).toBe(15360);
-    expect(model.maxOutputTokens).toBe(16384);
+    expect(model.maxInputTokens).toBe(23552);
+    expect(model.maxOutputTokens).toBe(8192);
   });
 
   it('uses explicit output limits when splitting the context window', () => {
