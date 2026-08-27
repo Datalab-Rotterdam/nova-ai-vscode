@@ -1,3 +1,10 @@
+# [1.0.0-alpha.13](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.12...v1.0.0-alpha.13) (2026-08-27)
+
+
+### Bug Fixes
+
+* reserve safe model context headroom ([b057754](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/b05775490efb3fef30fb220bc75c8e5cc5096972))
+
 # [1.0.0-alpha.12](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.11...v1.0.0-alpha.12) (2026-05-21)
 
 
