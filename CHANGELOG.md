@@ -1,3 +1,15 @@
+# [1.0.0-alpha.16](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.15...v1.0.0-alpha.16) (2026-10-03)
+
+
+### Bug Fixes
+
+* stop timed-out and cancelled commands including their children ([1cdeca3](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/1cdeca35aa945e72d75d00a002fb55980e0d6243))
+
+
+### Features
+
+* Nova chat panel, native agent-mode integration and memory ([60d167a](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/60d167ad2599cb9df250ca605e91d6275aa1b9b0)), closes [#novaFetch](https://github.com/Datalab-Rotterdam/nova-ai-vscode/issues/novaFetch) [#novaMemory](https://github.com/Datalab-Rotterdam/nova-ai-vscode/issues/novaMemory)
+
 # [1.0.0-alpha.15](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.14...v1.0.0-alpha.15) (2026-08-27)
 
 
