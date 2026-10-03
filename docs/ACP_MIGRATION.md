@@ -11,7 +11,9 @@ context handling, permission policy, memory and sessions. That is about
 `rules.ts` and the `~/.nova-ai` contract are already kept in sync by hand.
 
 The CLI's agent speaks the [Agent Client Protocol](https://agentclientprotocol.com)
-(`nova-ai --acp`, reference: `nova-ai-cli/docs/ACP.md`). Its terminal UI and
+and is published on its own as `@datalabrotterdam/nova-ai-agent` (command
+`nova-ai-agent --acp`, no UI libraries; reference: `nova-ai-cli/docs/ACP.md`).
+The CLI's terminal UI and
 headless mode use only that protocol, and so do Zed and JetBrains. If the
 extension does the same, there is:
 
@@ -34,11 +36,12 @@ extension does the same, there is:
 
 ### How the agent runs
 
-The extension depends on `@datalabrotterdam/nova-ai-cli` at a pinned version
+The extension depends on `@datalabrotterdam/nova-ai-agent` (not the CLI: the
+terminal UI and its Ink/React dependencies are not needed) at a pinned version
 and starts it as a child process:
 
 ```ts
-spawn(process.execPath, [require.resolve('@datalabrotterdam/nova-ai-cli/dist/index.js'), '--acp'], {
+spawn(process.execPath, [require.resolve('@datalabrotterdam/nova-ai-agent/bin.js'), '--acp'], {
   env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', NOVA_API_KEY: key, NOVA_AI_HOME: novaHome },
 });
 ```
@@ -52,11 +55,16 @@ spawn(process.execPath, [require.resolve('@datalabrotterdam/nova-ai-cli/dist/ind
 - **Credentials** stay in VS Code's secret storage and reach the agent as
   `NOVA_API_KEY` (the agent's `env_var` auth method). No key file is written.
 - **`nova.home`** becomes `NOVA_AI_HOME`.
-- **Version check**: `initialize` returns `agentInfo.version` and
-  `_meta["nova-ai-cli"].version` (extension API version). The extension
+- **Version check**: `initialize` returns `agentInfo.version` (the agent
+  package's version) and `_meta["nova-ai-cli"].version` (extension API version). The extension
   refuses an agent whose extension API version it does not know.
 - One agent process per window, started on first use, stopped on
   `deactivate` (closing stdin ends it cleanly).
+- **Optional: "Open Nova in terminal".** Because the terminal UI and the panel
+  use the same sessions in `~/.nova-ai`, a command can open the terminal UI in
+  VS Code's integrated terminal (`nova-ai --resume <id>` for the current
+  chat). It runs an installed `nova-ai` (or `npx @datalabrotterdam/nova-ai-cli`)
+  instead of bundling the TUI into the extension.
 
 ## Feature comparison
 
@@ -167,7 +175,7 @@ Chat with a Nova model from the language-model provider). **Decision needed.**
 
 | Phase | Where | Done when |
 |---|---|---|
-| **A. Agent gaps** | CLI | `find_files`, `fetch_url` (approval), tool name aliases, `kind`/`front` in `queue/update`, context window in the model list, import of extension sessions, config options for rounds/compaction/memory, `readOnlyHint` for MCP; tests + `docs/ACP.md` updated; released as alpha |
+| **A. Agent gaps** | agent package | `find_files`, `fetch_url` (approval), tool name aliases, `kind`/`front` in `queue/update`, context window in the model list, import of extension sessions, config options for rounds/compaction/memory, `readOnlyHint` for MCP; tests + `docs/ACP.md` updated; released as alpha |
 | **B. ACP client in the extension** | extension | Agent process lifecycle, version check, client `fs` (documents) and `terminal`, permission and question requests into the webview, session updates → `ChatEvent`s, MCP bridge; panel runs on ACP behind a setting `nova.agent.engine: "acp" \| "builtin"` |
 | **C. Panel on ACP by default** | extension | Feature table all ✅ in manual testing (incl. Windows, Remote SSH); default switched; built-in loop still selectable for one release |
 | **D. Participant** | extension | Decision above implemented |
@@ -178,7 +186,8 @@ Chat with a Nova model from the language-model provider). **Decision needed.**
 - **Startup time** of the agent process on first message: start it in the
   background when the panel opens; measure on Windows.
 - **Version skew** between extension and agent: pinned dependency plus the
-  extension API version check.
+  extension API version check. The agent is released separately from the
+  CLI, so the extension only moves when the agent changes.
 - **Feature regressions** during B/C: the `nova.agent.engine` switch allows
   falling back without a new release.
 - **Two policies during the transition**: the built-in loop keeps its own
