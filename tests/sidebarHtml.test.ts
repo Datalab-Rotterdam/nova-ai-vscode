@@ -54,6 +54,8 @@ describe('sidebar webview document', () => {
 
     expect(html).toContain('Content-Security-Policy');
     expect(html).toContain("script-src 'nonce-nonce'");
+    expect(html).toContain('font-src csp-source');
+    expect(html).not.toContain('https:');
     expect(html).toContain('nonce="nonce" type="module"');
     expect(html).toContain('src="vscode-resource://assets/index.js"');
     expect(html).toContain('href="vscode-resource://assets/index.css"');

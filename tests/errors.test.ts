@@ -35,3 +35,17 @@ describe('novaErrors', () => {
   });
 });
 
+
+describe('context overflow detection', () => {
+  it('recognizes overflow messages from common servers and parses the limit', async () => {
+    const { isContextOverflow, parseContextLimit } = await import('../src/core/errors');
+    const vllm = new Error("This model's maximum context length is 32768 tokens. However, you requested 40000 tokens.");
+    const generic = new Error('prompt is too long');
+
+    expect(isContextOverflow(vllm)).toBe(true);
+    expect(isContextOverflow(generic)).toBe(true);
+    expect(isContextOverflow(new Error('rate limited'))).toBe(false);
+    expect(parseContextLimit(vllm)).toBe(32768);
+    expect(parseContextLimit(generic)).toBeUndefined();
+  });
+});

@@ -1,0 +1,366 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import * as vscode from 'vscode';
+
+let currentModel: unknown;
+vi.mock('../src/panel/directModel', () => ({ createDirectModel: () => currentModel }));
+
+import { Diagnostics } from '../src/core/diagnostics';
+import { ChatController } from '../src/panel/ChatController';
+import type { ChatEvent, ToolItem } from '../src/panel/protocol';
+
+type Part = vscode.LanguageModelTextPart | vscode.LanguageModelToolCallPart;
+
+function fakeModel(responses: Part[][]) {
+  const sendRequest = vi.fn();
+  for (const response of responses) {
+    sendRequest.mockImplementationOnce(async () => ({ stream: (async function* () { yield* response; })() }));
+  }
+  return { id: `nova-panel-${Math.random()}`, name: 'Nova Test', vendor: 'nova-ai', maxInputTokens: 100_000, sendRequest };
+}
+
+function setup(responses: Part[][], approvalMode = 'autoReadOnly', services: Record<string, unknown> = {}) {
+  const model = fakeModel(responses);
+  currentModel = model;
+  const modelProvider = {
+    onDidChangeLanguageModelChatInformation: () => ({ dispose: () => undefined }),
+    listModels: async () => [{ id: model.id, name: model.name, maxInputTokens: model.maxInputTokens, isDefault: true }]
+  };
+  vi.spyOn(vscode.workspace, 'getConfiguration').mockReturnValue({
+    get: <T>(key: string, fallback: T) => (key === 'agent.approvalMode' ? approvalMode : fallback) as T,
+    update: vi.fn()
+  } as unknown as vscode.WorkspaceConfiguration);
+  (vscode.workspace as unknown as { workspaceFolders: unknown }).workspaceFolders = [
+    { name: 'repo', uri: vscode.Uri.file(process.cwd()), index: 0 }
+  ];
+
+  const events: ChatEvent[] = [];
+  const store = { list: () => [], load: vi.fn(), save: vi.fn(), delete: vi.fn() };
+  const memento = { get: () => undefined, update: vi.fn() };
+  const controller = new ChatController(modelProvider as never, store as never, memento as never, { register: vi.fn() } as never, new Diagnostics(), (event) => events.push(event), services as never);
+  return { controller, events, model, store };
+}
+
+const toolItems = (events: ChatEvent[]) => events
+  .filter((event): event is Extract<ChatEvent, { type: 'chat/itemUpdated' }> => event.type === 'chat/itemUpdated')
+  .map((event) => event.item as ToolItem);
+
+/** The request array is mutated after the call, so search it instead of taking the last message. */
+function toolResultIn(messages: vscode.LanguageModelChatMessage[]): vscode.LanguageModelToolResultPart {
+  return messages.flatMap((message) => message.content).find((part) => part instanceof vscode.LanguageModelToolResultPart) as vscode.LanguageModelToolResultPart;
+}
+
+async function until(condition: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 200 && !condition(); attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
+describe('ChatController', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    (vscode.workspace as unknown as { workspaceFolders: unknown }).workspaceFolders = undefined;
+  });
+
+  it('asks before running a command, runs it once approved and continues the conversation', async () => {
+    const { controller, events, model, store } = setup([
+      [new vscode.LanguageModelToolCallPart('c1', 'run_command', { command: 'echo approved-run' })],
+      [new vscode.LanguageModelTextPart('All done.')]
+    ]);
+
+    const sending = controller.handle({ command: 'chat/send', text: 'run it' });
+    await until(() => toolItems(events).some((item) => item.status === 'awaiting-approval'));
+    const pending = toolItems(events).find((item) => item.status === 'awaiting-approval')!;
+    expect(pending.detail).toBe('echo approved-run');
+
+    await controller.handle({ command: 'chat/approval', itemId: pending.id, decision: 'approve' });
+    await sending;
+
+    const finished = toolItems(events).filter((item) => item.id === pending.id).pop()!;
+    expect(finished.status).toBe('done');
+    expect(finished.output).toContain('approved-run');
+
+    const toolResult = toolResultIn(model.sendRequest.mock.calls[1][0]);
+    expect((toolResult.content[0] as vscode.LanguageModelTextPart).value).toContain('Exit code 0');
+    expect(controller.getState().items.at(-1)).toMatchObject({ kind: 'assistant', text: 'All done.' });
+    expect(controller.getState().title).toBe('run it');
+    expect(store.save).toHaveBeenCalled();
+  });
+
+  it('tells the model when the user rejects a tool call', async () => {
+    const { controller, events, model } = setup([
+      [new vscode.LanguageModelToolCallPart('c1', 'run_command', { command: 'echo nope' })],
+      [new vscode.LanguageModelTextPart('Okay, not running it.')]
+    ]);
+
+    const sending = controller.handle({ command: 'chat/send', text: 'run it' });
+    await until(() => toolItems(events).some((item) => item.status === 'awaiting-approval'));
+    const pending = toolItems(events).find((item) => item.status === 'awaiting-approval')!;
+    await controller.handle({ command: 'chat/approval', itemId: pending.id, decision: 'reject' });
+    await sending;
+
+    expect(toolItems(events).filter((item) => item.id === pending.id).pop()!.status).toBe('rejected');
+    const toolResult = toolResultIn(model.sendRequest.mock.calls[1][0]);
+    expect((toolResult.content[0] as vscode.LanguageModelTextPart).value).toContain('rejected');
+  });
+
+  it('runs read-only tools without asking in the default approval mode', async () => {
+    const { controller, events } = setup([
+      [new vscode.LanguageModelToolCallPart('c1', 'read_file', { path: 'package.json' })],
+      [new vscode.LanguageModelTextPart('Read it.')]
+    ]);
+    vi.spyOn(vscode.workspace, 'fs', 'get').mockReturnValue({
+      readFile: async () => new TextEncoder().encode('{"name":"nova"}')
+    } as unknown as vscode.FileSystem);
+
+    await controller.handle({ command: 'chat/send', text: 'read package.json' });
+
+    const items = toolItems(events);
+    expect(items.some((item) => item.status === 'awaiting-approval')).toBe(false);
+    expect(items.pop()).toMatchObject({ status: 'done', title: 'Read package.json' });
+  });
+
+  it('reports unknown tools back to the model as errors', async () => {
+    const { controller, events, model } = setup([
+      [new vscode.LanguageModelToolCallPart('c1', 'delete_everything', {})],
+      [new vscode.LanguageModelTextPart('Sorry.')]
+    ]);
+
+    await controller.handle({ command: 'chat/send', text: 'go' });
+
+    expect(toolItems(events).pop()?.status).toBe('error');
+    const toolResult = toolResultIn(model.sendRequest.mock.calls[1][0]);
+    expect((toolResult.content[0] as vscode.LanguageModelTextPart).value).toMatch(/Unknown tool "delete_everything"/);
+  });
+
+  it('injects steering messages at the next step of a running reply', async () => {
+    const { controller, events, model } = setup([
+      [new vscode.LanguageModelToolCallPart('c1', 'run_command', { command: 'echo step' })],
+      [new vscode.LanguageModelTextPart('Adjusted as asked.')]
+    ]);
+
+    const sending = controller.handle({ command: 'chat/send', text: 'do the task' });
+    await until(() => toolItems(events).some((item) => item.status === 'awaiting-approval'));
+    await controller.handle({ command: 'chat/send', text: 'also update the README' });
+    expect(controller.getState().queue).toMatchObject([{ text: 'also update the README', mode: 'steer' }]);
+
+    const pending = toolItems(events).find((item) => item.status === 'awaiting-approval')!;
+    await controller.handle({ command: 'chat/approval', itemId: pending.id, decision: 'approve' });
+    await sending;
+
+    const secondRequest = model.sendRequest.mock.calls[1][0] as vscode.LanguageModelChatMessage[];
+    const texts = secondRequest.flatMap((message) => message.content)
+      .filter((part) => part instanceof vscode.LanguageModelTextPart)
+      .map((part) => (part as vscode.LanguageModelTextPart).value);
+    expect(texts).toContain('also update the README');
+    expect(controller.getState().queue).toEqual([]);
+    expect(controller.getState().items).toContainEqual(expect.objectContaining({ kind: 'user', text: 'also update the README', steered: true }));
+  });
+
+  it('sends queued follow-ups after the reply finishes', async () => {
+    const { controller, events, model } = setup([
+      [new vscode.LanguageModelToolCallPart('c1', 'run_command', { command: 'echo one' })],
+      [new vscode.LanguageModelTextPart('First done.')],
+      [new vscode.LanguageModelTextPart('Second done.')]
+    ]);
+
+    const sending = controller.handle({ command: 'chat/send', text: 'first' });
+    await until(() => toolItems(events).some((item) => item.status === 'awaiting-approval'));
+    await controller.handle({ command: 'chat/send', text: 'second' });
+    const queued = controller.getState().queue[0];
+    await controller.handle({ command: 'chat/queueMode', id: queued.id, mode: 'queue' });
+
+    const pending = toolItems(events).find((item) => item.status === 'awaiting-approval')!;
+    await controller.handle({ command: 'chat/approval', itemId: pending.id, decision: 'approve' });
+    await sending;
+    await until(() => model.sendRequest.mock.calls.length === 3 && !controller.getState().running);
+
+    const users = controller.getState().items.filter((item) => item.kind === 'user').map((item) => (item as { text: string }).text);
+    expect(users).toEqual(['first', 'second']);
+    expect(controller.getState().items.at(-1)).toMatchObject({ kind: 'assistant', text: 'Second done.' });
+  });
+
+  it('keeps waiting messages after the user stops a reply', async () => {
+    const { controller, events, model } = setup([
+      [new vscode.LanguageModelToolCallPart('c1', 'run_command', { command: 'echo one' })]
+    ]);
+
+    const sending = controller.handle({ command: 'chat/send', text: 'first' });
+    await until(() => toolItems(events).some((item) => item.status === 'awaiting-approval'));
+    await controller.handle({ command: 'chat/send', text: 'later' });
+    await controller.handle({ command: 'chat/stop' });
+    await sending;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(model.sendRequest).toHaveBeenCalledTimes(1);
+    expect(controller.getState().queue).toHaveLength(1);
+  });
+
+  it('applies .nova-ai permission rules: deny blocks, allow skips approval, Always allow saves a rule', async () => {
+    const rules: Record<string, 'allow' | 'deny'> = { 'rm -rf build': 'deny', 'echo allowed': 'allow' };
+    const permissions = {
+      decide: vi.fn(async (_tool: string, subject?: string) => rules[subject ?? '']),
+      allow: vi.fn(async () => '/repo/.nova-ai/settings.local.json')
+    };
+    const { controller, events } = setup([
+      [
+        new vscode.LanguageModelToolCallPart('c1', 'run_command', { command: 'rm -rf build' }),
+        new vscode.LanguageModelToolCallPart('c2', 'run_command', { command: 'echo allowed' }),
+        new vscode.LanguageModelToolCallPart('c3', 'run_command', { command: 'echo always' })
+      ],
+      [new vscode.LanguageModelTextPart('Done.')]
+    ], 'autoReadOnly', { permissions });
+
+    const sending = controller.handle({ command: 'chat/send', text: 'go' });
+    await until(() => toolItems(events).some((item) => item.status === 'awaiting-approval'));
+    const pending = toolItems(events).find((item) => item.status === 'awaiting-approval')!;
+    expect(pending.detail).toBe('echo always');
+    expect(pending.allowRule).toBe('run_command(echo always)');
+    await controller.handle({ command: 'chat/approval', itemId: pending.id, decision: 'approveAlways' });
+    await sending;
+
+    const final = (callId: string) => toolItems(events).filter((item) => item.callId === callId).pop()!;
+    expect(final('c1')).toMatchObject({ status: 'rejected', output: expect.stringContaining('deny rule') });
+    expect(final('c2').status).toBe('done');
+    expect(toolItems(events).some((item) => item.callId === 'c2' && item.status === 'awaiting-approval')).toBe(false);
+    expect(final('c3').status).toBe('done');
+    expect(permissions.allow).toHaveBeenCalledWith('run_command(echo always)');
+  });
+
+  it('edits an earlier message: drops what followed and resends with the selected model', async () => {
+    const { controller, model } = setup([
+      [new vscode.LanguageModelTextPart('Answer one.')],
+      [new vscode.LanguageModelTextPart('Answer two.')],
+      [new vscode.LanguageModelTextPart('Answer two, revised.')]
+    ]);
+
+    await controller.handle({ command: 'chat/send', text: 'first question' });
+    await controller.handle({ command: 'chat/send', text: 'second question' });
+    const second = controller.getState().items.find((item) => item.kind === 'user' && item.text === 'second question')!;
+
+    await controller.handle({ command: 'chat/editMessage', itemId: second.id, text: 'second question, rephrased' });
+
+    const texts = (messages: vscode.LanguageModelChatMessage[]) => messages.slice(1).map((message) =>
+      message.content.map((part) => (part as vscode.LanguageModelTextPart).value).join(''));
+    expect(texts(model.sendRequest.mock.calls[2][0])).toEqual(['first question', 'Answer one.', 'second question, rephrased', 'Answer two, revised.']);
+    expect(controller.getState().items.map((item) => (item as { text?: string }).text)).toEqual([
+      'first question', 'Answer one.', 'second question, rephrased', 'Answer two, revised.'
+    ]);
+  });
+
+  it('stops a running reply before resending an edited message', async () => {
+    const { controller, events, model } = setup([
+      [new vscode.LanguageModelToolCallPart('c1', 'run_command', { command: 'echo slow' })],
+      [new vscode.LanguageModelTextPart('Edited answer.')]
+    ]);
+
+    const sending = controller.handle({ command: 'chat/send', text: 'original' });
+    await until(() => toolItems(events).some((item) => item.status === 'awaiting-approval'));
+    const original = controller.getState().items.find((item) => item.kind === 'user')!;
+
+    await controller.handle({ command: 'chat/editMessage', itemId: original.id, text: 'edited' });
+    await sending;
+
+    expect(model.sendRequest).toHaveBeenCalledTimes(2);
+    const items = controller.getState().items;
+    expect(items.filter((item) => item.kind === 'user').map((item) => (item as { text: string }).text)).toEqual(['edited']);
+    expect(items.at(-1)).toMatchObject({ kind: 'assistant', text: 'Edited answer.' });
+  });
+
+  it('keeps a task list from todo_write without adding tool cards', async () => {
+    const { controller, events } = setup([
+      [new vscode.LanguageModelToolCallPart('c1', 'todo_write', { todos: [
+        { content: 'Read the code', status: 'completed' },
+        { content: 'Write the fix', status: 'in_progress' },
+        { content: 'Run tests', status: 'pending' }
+      ] })],
+      [new vscode.LanguageModelTextPart('Working on it.')]
+    ]);
+
+    await controller.handle({ command: 'chat/send', text: 'fix the bug' });
+
+    expect(controller.getState().todos).toEqual([
+      { content: 'Read the code', status: 'completed' },
+      { content: 'Write the fix', status: 'in_progress' },
+      { content: 'Run tests', status: 'pending' }
+    ]);
+    expect(controller.getState().items.some((item) => item.kind === 'tool')).toBe(false);
+    expect(events.some((event) => event.type === 'chat/todos')).toBe(true);
+
+    await controller.handle({ command: 'chat/dismissTodos' });
+    expect(controller.getState().todos).toEqual([]);
+  });
+
+  it('asks the user a question and returns the chosen option to the model', async () => {
+    const { controller, model } = setup([
+      [new vscode.LanguageModelToolCallPart('c1', 'ask_user', {
+        question: 'Which database?',
+        options: [
+          { label: 'PostgreSQL', description: 'Relational, needs a server', recommended: true },
+          { label: 'SQLite', description: 'File based, zero setup', recommended: true }
+        ]
+      })],
+      [new vscode.LanguageModelTextPart('Going with PostgreSQL.')]
+    ]);
+
+    const sending = controller.handle({ command: 'chat/send', text: 'set up storage' });
+    await until(() => controller.getState().items.some((item) => item.kind === 'question'));
+    const question = controller.getState().items.find((item) => item.kind === 'question')!;
+    expect(question).toMatchObject({ status: 'pending', multiSelect: false, allowOther: true });
+    // A single-choice question keeps only the first recommendation.
+    expect((question as { options: Array<{ recommended?: boolean }> }).options.map((option) => Boolean(option.recommended))).toEqual([true, false]);
+
+    await controller.handle({ command: 'chat/answer', itemId: question.id, answer: 'PostgreSQL' });
+    await sending;
+
+    expect(controller.getState().items.find((item) => item.kind === 'question')).toMatchObject({ status: 'answered', answer: 'PostgreSQL' });
+    expect((toolResultIn(model.sendRequest.mock.calls[1][0]).content[0] as vscode.LanguageModelTextPart).value).toBe('The user answered: PostgreSQL');
+  });
+
+  it('treats a typed message as the answer, and a skip as "decide yourself"', async () => {
+    const typed = setup([
+      [new vscode.LanguageModelToolCallPart('c1', 'ask_user', { question: 'Name for the module?' })],
+      [new vscode.LanguageModelTextPart('ok')]
+    ]);
+    const sending = typed.controller.handle({ command: 'chat/send', text: 'create a module' });
+    await until(() => typed.controller.getState().items.some((item) => item.kind === 'question'));
+    await typed.controller.handle({ command: 'chat/send', text: 'billing' });
+    await sending;
+    expect((toolResultIn(typed.model.sendRequest.mock.calls[1][0]).content[0] as vscode.LanguageModelTextPart).value).toBe('The user answered: billing');
+    expect(typed.controller.getState().queue).toEqual([]);
+
+    const skipped = setup([
+      [new vscode.LanguageModelToolCallPart('c1', 'ask_user', { question: 'Tabs or spaces?', options: ['Tabs', 'Spaces'] })],
+      [new vscode.LanguageModelTextPart('ok')]
+    ]);
+    const skipping = skipped.controller.handle({ command: 'chat/send', text: 'format it' });
+    await until(() => skipped.controller.getState().items.some((item) => item.kind === 'question'));
+    const question = skipped.controller.getState().items.find((item) => item.kind === 'question')!;
+    await skipped.controller.handle({ command: 'chat/skipQuestion', itemId: question.id });
+    await skipping;
+    expect((toolResultIn(skipped.model.sendRequest.mock.calls[1][0]).content[0] as vscode.LanguageModelTextPart).value).toMatch(/skipped the question/);
+  });
+
+  it('shows an inline diff for edits and tracks changed files for keep and undo', async () => {
+    const files = new Map<string, string>();
+    vi.spyOn(vscode.workspace, 'fs', 'get').mockReturnValue({
+      stat: async (uri: vscode.Uri) => { if (!files.has(uri.fsPath)) throw new Error('missing'); return {}; },
+      readFile: async (uri: vscode.Uri) => new TextEncoder().encode(files.get(uri.fsPath) ?? ''),
+      writeFile: async (uri: vscode.Uri, data: Uint8Array) => void files.set(uri.fsPath, new TextDecoder().decode(data)),
+      delete: async (uri: vscode.Uri) => void files.delete(uri.fsPath)
+    } as never);
+    const { controller } = setup([
+      [new vscode.LanguageModelToolCallPart('c1', 'create_file', { path: 'notes/new.md', content: '# Notes\nfirst\n' })],
+      [new vscode.LanguageModelTextPart('Created.')]
+    ], 'autoAll');
+
+    await controller.handle({ command: 'chat/send', text: 'write notes' });
+
+    const card = controller.getState().items.find((item) => item.kind === 'tool')!;
+    expect(card).toMatchObject({ status: 'done', diff: { added: 2, removed: 0 } });
+    expect(controller.getState().changes).toEqual([{ path: 'notes/new.md', added: 2, removed: 0, created: true }]);
+
+    await controller.handle({ command: 'chat/undoChange', path: 'notes/new.md' });
+    expect([...files.keys()].some((key) => key.endsWith('notes/new.md'))).toBe(false);
+    expect(controller.getState().changes).toEqual([]);
+  });
+});

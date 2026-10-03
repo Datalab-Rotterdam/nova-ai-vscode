@@ -15,6 +15,13 @@ export default defineConfig({
     },
     svelte()
   ],
+  experimental: {
+    // Webview resources live under a vscode-resource URI, so asset URLs inside CSS
+    // (the codicon font) must be relative to the stylesheet, not to the site root.
+    renderBuiltUrl(_filename, { hostType }) {
+      return hostType === 'css' ? { relative: true } : undefined;
+    }
+  },
   build: {
     outDir: path.resolve(__dirname, 'out', 'webview'),
     emptyOutDir: true,

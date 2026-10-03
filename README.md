@@ -24,22 +24,21 @@ Need access or setup details? See the [Nova AI documentation](https://docs.datal
 
 1. Install the **Nova AI** extension.
 2. Open the Nova AI view from the Activity Bar.
-3. Select **Get Started**.
-4. Enter your Nova AI API key.
-5. Open VS Code Chat and choose a Nova model.
-
-After connecting, Nova AI confirms the extension is ready.
+3. Select **Connect Nova AI** and paste your API key.
+4. Open VS Code Chat and pick a Nova model, or type `@nova`.
 
 ## Using Nova AI
 
-Open the Nova AI sidebar to manage your connection and models:
+- **Agent mode**: pick a Nova model in the chat model picker. Nova models that support tool calling show up in agent mode and can edit files and run tools. The **Nova** custom agent in the agent dropdown is tuned for Nova models.
+- **`@nova`**: Nova's own chat participant with full VS Code tool support, attachments (`#file`, selections, images) and slash commands:
+  `/explain`, `/fix`, `/tests` and `/compact` (summarize the conversation to free up context).
+- **Prompt files**: `/nova-review`, `/nova-explain` and `/nova-tests` work in any chat.
+- **Nova chat panel** (the Nova AI sidebar): Nova's own agent with built-in tools — read, list, find and search files, check problems, edit and create files, and run commands. Edits and commands wait for your approval (with a diff preview); read-only tools run automatically by default. Add files or the editor selection as context (**Add to Nova Chat** in the editor context menu), switch models, follow context usage, and reopen earlier chats from the history. MCP tools registered in VS Code are available too.
+- **Diffs** (Nova chat): every edit card shows the changed lines inline (expand to see more, ⛶ to open the full diff editor). Above the input box a strip lists the files Nova changed in this chat with **Keep** / **Undo** per file or for all, and opens each file's diff against its content before Nova's first edit.
+- **Task lists and questions** (Nova chat): for multi-step work Nova keeps a task list, shown as a one-line strip above the input box (click to expand, ✕ to close). When it needs a decision it asks a question with options (a recommended one and a short explanation each), multiple choice, or your own answer; you can also just type the answer, or skip and let Nova decide.
+- **Account view**: connection status, quick actions and the available models with their capabilities. Refresh, settings, model management and sign-out live in the view's title bar.
 
-| Action                   | Description                                            |
-| ------------------------ | ------------------------------------------------------ |
-| **Open Chat**      | Opens the VS Code Chat view                            |
-| **Refresh Models** | Reloads the available Nova model list                  |
-| **Settings**       | Opens Nova AI extension settings                       |
-| **Sign Out**       | Removes the stored API key from VS Code Secret Storage |
+Long conversations are compacted automatically to fit each model's context window.
 
 Commands available from the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`):
 
@@ -48,14 +47,62 @@ Commands available from the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`):
 - `Nova AI: Sign Out`
 - `Nova AI: Refresh Models`
 - `Nova AI: Open Chat`
+- `Nova AI: Open Nova Chat`
+- `Nova AI: New Chat`
+- `Add to Nova Chat`
+- `Nova AI: Open Chat in Editor`
+- `Nova AI: Open Global Memory` / `Nova AI: Open Project Memory`
+- `Nova AI: Reveal Nova Folder`
+- `Nova AI: Clean Up Projects` (removes data of workspaces that no longer exist)
+- `Nova AI: Manage Language Models`
 - `Nova AI: Open Settings`
+
+## Memory, chats and permissions
+
+Nova keeps its data in a folder in your home directory, `~/.nova-ai` (change it with `nova.home` or `NOVA_AI_HOME`):
+
+```
+~/.nova-ai/
+  MEMORY.md                        global memory: your preferences, for every project
+  settings.json                    your own permission rules (optional)
+  projects/<name>-<hash>/          one folder per workspace
+    project.json                   which workspace this folder belongs to
+    MEMORY.md                      private memory for this project
+    sessions/                      Nova chat history
+    scratch/                       sandbox for throwaway files (cleaned after 7 days)
+```
+
+- **Memory**: Nova reads the global `MEMORY.md`, the project's `MEMORY.md`, and a `NOVA.md` or `AGENTS.md` in your repository (team instructions, never changed by Nova) at the start of every chat. Ask Nova to remember, update or forget something and it changes the memory after your approval, showing the change as a diff. When a memory file grows long, Nova offers to consolidate it. Edit the files any time: **Nova AI: Open Global Memory** / **Open Project Memory**.
+- **Workspace settings**: a `.nova-ai/` folder in your repository can hold permission rules, like Claude Code's `.claude/`:
+  - `.nova-ai/settings.json`: shared with your team and committed.
+  - `.nova-ai/settings.local.json`: personal and gitignored. **Always allow** on an approval card adds rules here.
+
+  ```json
+  { "permissions": { "allow": ["run_command(npm test*)", "edit_file"], "deny": ["run_command(rm -rf*)"] } }
+  ```
+
+  A rule is a tool name, optionally with a `*` pattern for the command, URL or path. Deny rules always win. Allow rules from a repository only apply in a trusted workspace.
+- Chat history from earlier versions is moved here automatically. Files are created readable only by you.
 
 ## Settings
 
-| Setting                                   | Description                                                                            |
-| ----------------------------------------- | -------------------------------------------------------------------------------------- |
-| `nova.enableDiagnostics`                | Enable verbose diagnostics logging in the output panel                                 |
-| `nova.developer.parseModelCapabilities` | Parse Nova AI model capabilities into VS Code native flags (tool calling, image input) |
+| Setting | Description |
+| --- | --- |
+| `nova.chat.rewriteAssistantIdentity` | Replace VS Code Chat's built-in assistant identity with Nova's when a Nova model is used (default: on) |
+| `nova.models.editTools` | Edit tools agent mode offers Nova models (default: find/replace) |
+| `nova.context.defaultContextWindow` | Context window assumed for models that do not advertise one (default: 32768) |
+| `nova.context.autoCompact` | Compact long conversations automatically (default: on) |
+| `nova.context.compactThreshold` | Share of the input budget at which `@nova` compacts (default: 0.8) |
+| `nova.agent.maxToolRounds` | Maximum tool rounds per request in `@nova` and the Nova chat (default: 25) |
+| `nova.agent.approvalMode` | When the Nova chat asks before running tools: `ask`, `autoReadOnly` (default) or `autoAll` |
+| `nova.agent.commandTimeoutSeconds` | Time limit for commands run by the Nova chat (default: 120) |
+| `nova.agent.includeMcpTools` | Offer MCP tools registered in VS Code to the Nova chat (default: on) |
+| `nova.home` | Folder for Nova's memory, chats and scratch files (default `~/.nova-ai`) |
+| `nova.memory.enabled` | Use and update Nova's memory (default: on) |
+| `nova.enableDiagnostics` | Verbose diagnostics in the Nova AI output channel |
+| `nova.developer.parseModelCapabilities` | Parse Nova model capabilities into VS Code flags (tool calling, image input) |
+
+Some integrations (thinking output, edit-tool hints, per-model options and pricing in the model picker) use VS Code API proposals. They are active where VS Code enables them and are skipped otherwise.
 
 ## Privacy & Security
 

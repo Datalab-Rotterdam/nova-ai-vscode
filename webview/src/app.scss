@@ -1,59 +1,219 @@
+// Every color comes from the active VS Code theme, so the sidebar follows light, dark,
+// high-contrast and custom themes. Fallbacks only cover hosts without a variable.
 :root {
-  color-scheme: light dark;
-  --bg: var(--vscode-sideBar-background);
-  --fg: var(--vscode-sideBar-foreground);
-  --muted: var(--vscode-descriptionForeground);
-  --border: var(--vscode-sideBar-border, color-mix(in srgb, var(--fg) 16%, transparent));
-  --accent: var(--vscode-button-background);
-  --accent-fg: var(--vscode-button-foreground);
-  --danger: var(--vscode-errorForeground);
-  --row-hover: var(--vscode-list-hoverBackground);
-  --input-bg: var(--vscode-input-background);
-  --input-border: var(--vscode-input-border, var(--border));
-  --input-fg: var(--vscode-input-foreground);
-  --secondary-bg: var(--vscode-button-secondaryBackground, transparent);
-  --secondary-fg: var(--vscode-button-secondaryForeground, var(--fg));
+  --nova-bg: var(--vscode-sideBar-background, var(--vscode-editor-background));
+  --nova-fg: var(--vscode-sideBar-foreground, var(--vscode-foreground));
+  --nova-muted: var(--vscode-descriptionForeground);
+  --nova-border: var(--vscode-sideBarSectionHeader-border, var(--vscode-widget-border, transparent));
+  --nova-subtle-border: var(--vscode-widget-border, color-mix(in srgb, var(--nova-fg) 14%, transparent));
+  --nova-surface: var(--vscode-sideBarSectionHeader-background, color-mix(in srgb, var(--nova-fg) 4%, transparent));
+  --nova-hover: var(--vscode-list-hoverBackground);
+  --nova-hover-fg: var(--vscode-list-hoverForeground, var(--nova-fg));
+  --nova-focus: var(--vscode-focusBorder);
+  --nova-link: var(--vscode-textLink-foreground);
+  --nova-link-active: var(--vscode-textLink-activeForeground, var(--nova-link));
+  --nova-button-bg: var(--vscode-button-background);
+  --nova-button-fg: var(--vscode-button-foreground);
+  --nova-button-hover: var(--vscode-button-hoverBackground);
+  --nova-button-border: var(--vscode-button-border, transparent);
+  --nova-secondary-bg: var(--vscode-button-secondaryBackground);
+  --nova-secondary-fg: var(--vscode-button-secondaryForeground);
+  --nova-secondary-hover: var(--vscode-button-secondaryHoverBackground);
+  --nova-input-bg: var(--vscode-input-background);
+  --nova-input-fg: var(--vscode-input-foreground);
+  --nova-input-border: var(--vscode-input-border, transparent);
+  --nova-input-placeholder: var(--vscode-input-placeholderForeground);
+  --nova-badge-bg: var(--vscode-badge-background);
+  --nova-badge-fg: var(--vscode-badge-foreground);
+  --nova-error: var(--vscode-errorForeground);
+  --nova-error-bg: var(--vscode-inputValidation-errorBackground, transparent);
+  --nova-error-border: var(--vscode-inputValidation-errorBorder, var(--nova-error));
+  --nova-success: var(--vscode-testing-iconPassed, var(--vscode-charts-green));
+  --nova-warning: var(--vscode-editorWarning-foreground, var(--vscode-charts-yellow));
+  --nova-radius: 4px;
+  --nova-radius-large: 6px;
+  --nova-font: var(--vscode-font-family);
+  --nova-font-size: var(--vscode-font-size, 13px);
+  --nova-mono: var(--vscode-editor-font-family, monospace);
+}
+
+// Editor tab: blend in with the editor rather than the sidebar.
+:root[data-surface='editor'] {
+  --nova-bg: var(--vscode-editor-background);
+  --nova-fg: var(--vscode-editor-foreground, var(--vscode-foreground));
+}
+
+// High contrast themes rely on borders instead of background shades.
+body.vscode-high-contrast,
+body.vscode-high-contrast-light {
+  --nova-border: var(--vscode-contrastBorder);
+  --nova-subtle-border: var(--vscode-contrastBorder);
+  --nova-surface: transparent;
+  --nova-button-border: var(--vscode-contrastBorder);
 }
 
 html,
 body {
   margin: 0;
+  padding: 0;
   min-height: 100%;
-  background: var(--bg);
-  color: var(--fg);
-  font: 13px/1.5 var(--vscode-font-family);
+  background: var(--nova-bg);
+  color: var(--nova-fg);
+  font-family: var(--nova-font);
+  font-size: var(--nova-font-size);
+  line-height: 1.4;
 }
 
-body {
+*,
+*::before,
+*::after {
   box-sizing: border-box;
 }
 
-#app,
-.shell {
+#app {
   min-height: 100vh;
 }
 
-button,
-input {
-  width: 100%;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  box-sizing: border-box;
-  font: inherit;
-}
-
-button {
-  cursor: pointer;
-}
-
-button:focus-visible,
-input:focus-visible,
-a:focus-visible,
-[tabindex]:focus-visible {
-  outline: 1px solid var(--vscode-focusBorder);
-  outline-offset: 2px;
-}
-
 a {
-  color: var(--vscode-textLink-foreground);
+  color: var(--nova-link);
+  text-decoration: none;
+
+  &:hover {
+    color: var(--nova-link-active);
+    text-decoration: underline;
+  }
+}
+
+:focus-visible {
+  outline: 1px solid var(--nova-focus);
+  outline-offset: -1px;
+}
+
+p {
+  margin: 0;
+}
+
+// Buttons follow VS Code's own button styles.
+.nova-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 26px;
+  padding: 4px 12px;
+  border: 1px solid var(--nova-button-border);
+  border-radius: var(--nova-radius);
+  background: var(--nova-button-bg);
+  color: var(--nova-button-fg);
+  font: inherit;
+  line-height: 18px;
+  text-align: center;
+  cursor: pointer;
+
+  &:hover:not(:disabled) {
+    background: var(--nova-button-hover);
+    text-decoration: none;
+    color: var(--nova-button-fg);
+  }
+
+  &:disabled {
+    opacity: 0.6;
+    cursor: default;
+  }
+
+  &.secondary {
+    background: var(--nova-secondary-bg);
+    color: var(--nova-secondary-fg);
+
+    &:hover:not(:disabled) {
+      background: var(--nova-secondary-hover);
+      color: var(--nova-secondary-fg);
+    }
+  }
+}
+
+.nova-input {
+  width: 100%;
+  min-height: 26px;
+  padding: 4px 6px;
+  border: 1px solid var(--nova-input-border);
+  border-radius: 2px;
+  background: var(--nova-input-bg);
+  color: var(--nova-input-fg);
+  font: inherit;
+
+  &::placeholder {
+    color: var(--nova-input-placeholder);
+  }
+
+  &:focus {
+    outline: 1px solid var(--nova-focus);
+    outline-offset: -1px;
+    border-color: var(--nova-focus);
+  }
+}
+
+// Monochrome brand marks drawn in the current text color via a mask.
+.nova-mark {
+  display: inline-block;
+  background-color: currentColor;
+  mask-image: var(--mark-url);
+  mask-repeat: no-repeat;
+  mask-position: center;
+  mask-size: contain;
+}
+
+.nova-loader {
+  min-height: 100vh;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+// Nova brand colors, taken from the Nova platform; used only for decorative glows.
+:root {
+  --nova-brand-primary: #6633ee;
+  --nova-brand-info: #38bdf8;
+  --nova-brand-secondary: #2ecc71;
+  --nova-brand-red: #e5484d;
+}
+
+// The Nova platform's "chat bar orbit": a conic gradient rotating behind the composer.
+@property --nova-glow-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+@keyframes nova-orbit {
+  to {
+    --nova-glow-angle: 360deg;
+  }
+}
+
+@keyframes nova-chatbar-enter {
+  from {
+    opacity: 0;
+    transform: translateY(1rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes nova-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
 }

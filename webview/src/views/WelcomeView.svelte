@@ -1,198 +1,114 @@
 <script lang="ts">
-  import type { SidebarRenderState, ThemeMode } from '../types';
+    import type {SidebarRenderState} from '../types';
 
-  export let state: SidebarRenderState;
-  export let theme: ThemeMode;
-  export let onGetStarted: () => void;
+    let {state, onGetStarted}: { state: SidebarRenderState; onGetStarted: () => void } = $props();
 
-  const datalabLogoUri = 'https://git.datalabrotterdam.nl/websites/resources/-/raw/main/logos/datalab_logo_light.svg?ref_type=heads';
+    const docsUrl = 'https://docs.datalabrotterdam.nl/services/nova-ai';
 </script>
 
-<section class="signed-out" data-theme={theme}>
-  <div class="splash-hero" aria-hidden="true">
-    <div class="hero-ring ring-one"></div>
-    <div class="hero-ring ring-two"></div>
-    <div class="hero-core">
-      {#if state.logoUri}
-        <img class="hero-logo" src={state.logoUri} alt="" />
-      {/if}
+<section class="welcome">
+    <div class="intro">
+        {#if state.logoUri}
+            <span class="nova-mark logo" style:--mark-url={`url("${state.logoUri}")`} aria-hidden="true"></span>
+        {/if}
+        <h1>Nova AI</h1>
+        <p>Use Nova AI models in VS Code Chat, in agent mode and with <code>@nova</code>.</p>
     </div>
-  </div>
 
-  <div class="welcome-copy">
-    <p class="welcome-title">Bring Nova AI into VS Code.</p>
-    <p>Connect your API key and use Nova AI from the native chat surface.</p>
-  </div>
+    <ul class="features">
+        <li><span class="codicon codicon-comment-discussion" aria-hidden="true"></span>Chat with Nova models in the native chat view</li>
+        <li><span class="codicon codicon-tools" aria-hidden="true"></span>Let agent mode edit files and run tools</li>
+        <li><span class="codicon codicon-shield" aria-hidden="true"></span>Your key stays in VS Code's secret storage</li>
+    </ul>
 
-  <button class="get-started" onclick={onGetStarted}>Get Started</button>
+    <div class="actions">
+        <button class="nova-button" onclick={onGetStarted}>Connect Nova AI</button>
+        <a href={docsUrl}>Read the documentation</a>
+    </div>
 
-  <footer class="datalab-footer" aria-label="Datalab Rotterdam">
-    <img src={datalabLogoUri} alt="Datalab Rotterdam" />
-  </footer>
+    {#if state.datalabLogoUri}
+        <footer>
+            <span class="nova-mark datalab" style:--mark-url={`url("${state.datalabLogoUri}")`} role="img" aria-label="DataLab Rotterdam"></span>
+        </footer>
+    {/if}
 </section>
 
 <style lang="scss">
-  .signed-out {
+  .welcome {
     min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    padding: 20px 20px 16px;
+  }
+
+  .intro {
     display: grid;
-    grid-template-rows: auto auto auto 1fr;
-    align-content: start;
-    gap: 18px;
-    padding: 14px 12px 16px;
-    box-sizing: border-box;
-    background: var(--bg);
-    color: var(--fg);
-  }
-
-  .splash-hero {
-    height: 156px;
-    position: relative;
-    display: grid;
-    place-items: center;
-    overflow: hidden;
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    background:
-      radial-gradient(circle at center, color-mix(in srgb, var(--accent) 18%, transparent), transparent 58%),
-      color-mix(in srgb, var(--input-bg) 76%, var(--bg));
-  }
-
-  .hero-ring {
-    position: absolute;
-    border: 1px solid color-mix(in srgb, var(--accent) 48%, transparent);
-    border-radius: 50%;
-    opacity: 0.7;
-    animation: pulse-ring 4.4s ease-in-out infinite;
-  }
-
-  .ring-one {
-    width: 112px;
-    height: 112px;
-  }
-
-  .ring-two {
-    width: 146px;
-    height: 146px;
-    animation-delay: 1.1s;
-    opacity: 0.42;
-  }
-
-  .hero-core {
-    width: 76px;
-    height: 76px;
-    position: relative;
-    display: grid;
-    place-items: center;
-    border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--border));
-    border-radius: 22px;
-    background: color-mix(in srgb, var(--bg) 86%, var(--fg) 14%);
-    box-shadow: 0 12px 32px color-mix(in srgb, var(--accent) 20%, transparent);
-    animation: float-core 5.2s ease-in-out infinite;
-  }
-
-  .hero-core::after {
-    content: '';
-    position: absolute;
-    inset: -1px;
-    border-radius: inherit;
-    background: linear-gradient(120deg, transparent 22%, color-mix(in srgb, var(--fg) 18%, transparent), transparent 76%);
-    opacity: 0.5;
-    animation: shimmer 3.6s ease-in-out infinite;
-  }
-
-  .hero-logo {
-    width: 42px;
-    height: 42px;
-    position: relative;
-    z-index: 1;
-    object-fit: contain;
-  }
-
-  .welcome-copy {
-    display: grid;
+    justify-items: center;
     gap: 8px;
+    text-align: center;
+  }
+
+  .logo {
+    width: 40px;
+    height: 40px;
+    color: var(--nova-fg);
+  }
+
+  h1 {
+    margin: 4px 0 0;
+    font-size: 1.3em;
+    font-weight: 600;
   }
 
   p {
+    max-width: 30ch;
+    color: var(--nova-muted);
+  }
+
+  code {
+    font-family: var(--nova-mono);
+    font-size: 0.95em;
+  }
+
+  .features {
+    display: grid;
+    gap: 10px;
     margin: 0;
+    padding: 0;
+    list-style: none;
+
+    li {
+      display: grid;
+      grid-template-columns: 16px 1fr;
+      gap: 8px;
+      align-items: start;
+      color: var(--nova-fg);
+    }
+
+    .codicon {
+      margin-top: 1px;
+      color: var(--nova-muted);
+    }
   }
 
-  .welcome-title {
-    color: var(--fg);
-    font-size: 21px;
-    line-height: 1.15;
-    font-weight: 680;
+  .actions {
+    display: grid;
+    justify-items: center;
+    gap: 10px;
   }
 
-  p {
-    color: var(--muted);
-    font-size: 13px;
-    line-height: 1.45;
-  }
-
-  .get-started {
-    min-height: 40px;
-    padding: 10px 12px;
-    border-color: var(--accent);
-    background: var(--accent);
-    color: var(--accent-fg);
-    font-weight: 650;
-  }
-
-  .datalab-footer {
-    align-self: end;
+  footer {
+    margin-top: auto;
     display: flex;
     justify-content: center;
     padding-top: 12px;
-    opacity: 0.56;
+    color: var(--nova-muted);
+    opacity: 0.7;
   }
 
-  .datalab-footer img {
-    width: min(118px, 42vw);
-    max-height: 34px;
-    object-fit: contain;
-  }
-
-  @keyframes pulse-ring {
-    0%,
-    100% {
-      transform: scale(0.96);
-      opacity: 0.42;
-    }
-
-    50% {
-      transform: scale(1.04);
-      opacity: 0.78;
-    }
-  }
-
-  @keyframes float-core {
-    0%,
-    100% {
-      transform: translateY(0);
-    }
-
-    50% {
-      transform: translateY(-4px);
-    }
-  }
-
-  @keyframes shimmer {
-    0%,
-    100% {
-      transform: translateX(-42%);
-    }
-
-    50% {
-      transform: translateX(42%);
-    }
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .hero-ring,
-    .hero-core,
-    .hero-core::after {
-      animation: none;
-    }
+  .datalab {
+    width: 110px;
+    height: 32px;
   }
 </style>

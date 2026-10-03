@@ -14,7 +14,11 @@
     "vscode": "^1.120.0"
   },
   "enabledApiProposals": [
-    "chatParticipantAdditions"
+    "chatParticipantAdditions",
+    "chatProvider",
+    "languageModelThinkingPart",
+    "languageModelSystem",
+    "languageModelPricing"
   ],
   "categories": [
     "AI",
@@ -36,7 +40,14 @@
     "onCommand:nova.signOut",
     "onCommand:nova.refreshModels",
     "onCommand:nova.openChat",
-    "onCommand:nova.openSettings"
+    "onCommand:nova.openSettings",
+    "onCommand:nova.newChat",
+    "onCommand:nova.focusChat",
+    "onCommand:nova.addSelectionToChat",
+    "onCommand:nova.openChatInEditor",
+    "onWebviewPanel:nova.chatPanel",
+    "onCommand:nova.showHistory",
+    "onCommand:nova.showAccount"
   ],
   "contributes": {
     "chatParticipants": [
@@ -44,9 +55,27 @@
         "id": "nova-ai.nova",
         "name": "nova",
         "fullName": "Nova AI",
-        "description": "Chat with Nova AI models with full tool support",
+        "description": "Agentic coding with Nova AI models and VS Code tools",
         "isSticky": true,
-        "isAgent": true
+        "isAgent": true,
+        "commands": [
+          {
+            "name": "explain",
+            "description": "Explain how the selected or attached code works"
+          },
+          {
+            "name": "fix",
+            "description": "Find and fix a problem in the code"
+          },
+          {
+            "name": "tests",
+            "description": "Write tests for the selected or attached code"
+          },
+          {
+            "name": "compact",
+            "description": "Summarize the conversation so far to free up context"
+          }
+        ]
       }
     ],
     "languageModelChatProviders": [
@@ -54,6 +83,125 @@
         "vendor": "nova-ai",
         "displayName": "Nova AI",
         "managementCommand": "nova.manage"
+      }
+    ],
+    "chatAgents": [
+      {
+        "path": "./resources/chat/agents/nova.agent.md"
+      }
+    ],
+    "chatPromptFiles": [
+      {
+        "path": "./resources/chat/prompts/nova-review.prompt.md"
+      },
+      {
+        "path": "./resources/chat/prompts/nova-explain.prompt.md"
+      },
+      {
+        "path": "./resources/chat/prompts/nova-tests.prompt.md"
+      }
+    ],
+    "languageModelTools": [
+      {
+        "name": "nova_fetch_url",
+        "displayName": "Fetch Web Page (Nova)",
+        "toolReferenceName": "novaFetch",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(globe)",
+        "tags": [
+          "web",
+          "nova"
+        ],
+        "userDescription": "Read a web page by URL and give its main content to the model.",
+        "modelDescription": "Fetch a web page (http or https) and return its main content as text with links, or the raw body for text and JSON. Use it to read documentation, issues or articles the user refers to. Long pages are cut; pass startChar to read on. This tool cannot search the web: it needs a concrete URL.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string",
+              "description": "Absolute http(s) URL."
+            },
+            "startChar": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Character offset to continue from (shown at the end of a cut page)."
+            }
+          },
+          "required": [
+            "url"
+          ]
+        }
+      },
+      {
+        "name": "nova_memory_read",
+        "displayName": "Read Nova Memory",
+        "toolReferenceName": "novaMemory",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(book)",
+        "tags": [
+          "nova",
+          "memory"
+        ],
+        "userDescription": "Read Nova's saved global and project memory.",
+        "modelDescription": "Read Nova's saved memory: global notes about the user and project notes about this workspace.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "scope": {
+              "type": "string",
+              "enum": [
+                "global",
+                "project"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "name": "nova_memory_write",
+        "displayName": "Update Nova Memory",
+        "toolReferenceName": "novaRemember",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(bookmark)",
+        "tags": [
+          "nova",
+          "memory"
+        ],
+        "userDescription": "Remember, update, forget or consolidate Nova memories.",
+        "modelDescription": "Change memory that persists across chats. Keep it small and current: one short fact per entry, no secrets or personal data. Actions: 'remember' adds a fact (text); 'replace' updates entries containing match with text (use it when a fact changed); 'forget' removes entries containing match; 'rewrite' replaces all entries with text (one per line) to consolidate. Scope global is about the user, scope project about this workspace.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "remember",
+                "replace",
+                "forget",
+                "rewrite"
+              ]
+            },
+            "scope": {
+              "type": "string",
+              "enum": [
+                "global",
+                "project"
+              ]
+            },
+            "text": {
+              "type": "string",
+              "description": "remember/replace: the fact. rewrite: all entries, one per line."
+            },
+            "match": {
+              "type": "string",
+              "description": "replace/forget: text identifying the entries to change."
+            }
+          },
+          "required": [
+            "action",
+            "scope"
+          ]
+        }
       }
     ],
     "commands": [
@@ -70,12 +218,14 @@
       {
         "command": "nova.signOut",
         "title": "Nova AI: Sign Out",
-        "category": "Nova AI"
+        "category": "Nova AI",
+        "icon": "$(sign-out)"
       },
       {
         "command": "nova.refreshModels",
         "title": "Nova AI: Refresh Models",
-        "category": "Nova AI"
+        "category": "Nova AI",
+        "icon": "$(refresh)"
       },
       {
         "command": "nova.openChat",
@@ -85,9 +235,137 @@
       {
         "command": "nova.openSettings",
         "title": "Nova AI: Open Settings",
+        "category": "Nova AI",
+        "icon": "$(settings-gear)"
+      },
+      {
+        "command": "nova.manageModels",
+        "title": "Nova AI: Manage Language Models",
+        "category": "Nova AI",
+        "icon": "$(list-selection)"
+      },
+      {
+        "command": "nova.newChat",
+        "title": "Nova AI: New Chat",
+        "category": "Nova AI",
+        "icon": "$(add)"
+      },
+      {
+        "command": "nova.focusChat",
+        "title": "Nova AI: Open Nova Chat",
         "category": "Nova AI"
+      },
+      {
+        "command": "nova.addSelectionToChat",
+        "title": "Add to Nova Chat",
+        "category": "Nova AI"
+      },
+      {
+        "command": "nova.openChatInEditor",
+        "title": "Nova AI: Open Chat in Editor",
+        "category": "Nova AI",
+        "icon": "$(link-external)"
+      },
+      {
+        "command": "nova.openGlobalMemory",
+        "title": "Nova AI: Open Global Memory",
+        "category": "Nova AI"
+      },
+      {
+        "command": "nova.openProjectMemory",
+        "title": "Nova AI: Open Project Memory",
+        "category": "Nova AI"
+      },
+      {
+        "command": "nova.revealHome",
+        "title": "Nova AI: Reveal Nova Folder",
+        "category": "Nova AI"
+      },
+      {
+        "command": "nova.cleanUpProjects",
+        "title": "Nova AI: Clean Up Projects",
+        "category": "Nova AI"
+      },
+      {
+        "command": "nova.showHistory",
+        "title": "Nova AI: Chat History",
+        "category": "Nova AI",
+        "icon": "$(history)"
+      },
+      {
+        "command": "nova.showAccount",
+        "title": "Nova AI: Account and Models",
+        "category": "Nova AI",
+        "icon": "$(account)"
       }
     ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "nova.newChat",
+          "when": "view == nova.sidebar && nova.signedIn",
+          "group": "navigation@1"
+        },
+        {
+          "command": "nova.showHistory",
+          "when": "view == nova.sidebar && nova.signedIn",
+          "group": "navigation@2"
+        },
+        {
+          "command": "nova.openChatInEditor",
+          "when": "view == nova.sidebar && nova.signedIn",
+          "group": "navigation@3"
+        },
+        {
+          "command": "nova.manageModels",
+          "when": "view == nova.sidebar && nova.signedIn",
+          "group": "1_models@1"
+        },
+        {
+          "command": "nova.refreshModels",
+          "when": "view == nova.sidebar && nova.signedIn",
+          "group": "1_models@2"
+        },
+        {
+          "command": "nova.openProjectMemory",
+          "when": "view == nova.sidebar && nova.signedIn",
+          "group": "2_memory@1"
+        },
+        {
+          "command": "nova.openGlobalMemory",
+          "when": "view == nova.sidebar && nova.signedIn",
+          "group": "2_memory@2"
+        },
+        {
+          "command": "nova.revealHome",
+          "when": "view == nova.sidebar && nova.signedIn",
+          "group": "2_memory@3"
+        },
+        {
+          "command": "nova.openSettings",
+          "when": "view == nova.sidebar",
+          "group": "3_settings@1"
+        },
+        {
+          "command": "nova.signOut",
+          "when": "view == nova.sidebar && nova.signedIn",
+          "group": "3_settings@2"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "nova.addSelectionToChat",
+          "when": "nova.signedIn && resourceScheme == file",
+          "group": "nova@1"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "nova.addSelectionToChat",
+          "when": "nova.signedIn && editorIsOpen"
+        }
+      ]
+    },
     "icons": {
       "nova-logo": {
         "description": "Nova AI logo",
@@ -123,6 +401,98 @@
             "type": "boolean",
             "default": false,
             "description": "Enable verbose Nova AI diagnostics logging in the output panel."
+          },
+          "nova.chat.rewriteAssistantIdentity": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "When a Nova model is used from VS Code Chat or agent mode, replace the built-in assistant identity (\"GitHub Copilot\") in the system prompt with Nova's. Tool and workspace instructions are kept."
+          },
+          "nova.models.editTools": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "find-replace",
+                "multi-find-replace",
+                "apply-patch",
+                "code-rewrite"
+              ],
+              "enumDescriptions": [
+                "Find and replace text in a file.",
+                "Find and replace several snippets across files.",
+                "File-oriented diff format, works best with models trained on it.",
+                "Rewrite a code snippet; general but slower."
+              ]
+            },
+            "uniqueItems": true,
+            "default": [
+              "find-replace",
+              "multi-find-replace"
+            ],
+            "markdownDescription": "Edit tools VS Code agent mode offers to Nova models. Most open models edit more reliably with find/replace than with `apply-patch`. Requires a VS Code version with the language model provider edit-tools hint."
+          },
+          "nova.context.defaultContextWindow": {
+            "type": "integer",
+            "default": 32768,
+            "minimum": 1024,
+            "markdownDescription": "Context window (in tokens) assumed for Nova models that do not advertise one."
+          },
+          "nova.context.autoCompact": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Automatically compact long conversations so they fit the model's context window. `@nova` summarizes older turns; requests from VS Code Chat are trimmed only when they would overflow."
+          },
+          "nova.context.compactThreshold": {
+            "type": "number",
+            "default": 0.8,
+            "minimum": 0.3,
+            "maximum": 0.95,
+            "markdownDescription": "Share of the model's input budget at which `@nova` compacts the conversation."
+          },
+          "nova.agent.maxToolRounds": {
+            "type": "integer",
+            "default": 25,
+            "minimum": 1,
+            "maximum": 200,
+            "markdownDescription": "Maximum number of model ↔ tool rounds `@nova` runs for one request."
+          },
+          "nova.agent.approvalMode": {
+            "type": "string",
+            "enum": [
+              "ask",
+              "autoReadOnly",
+              "autoAll"
+            ],
+            "default": "autoReadOnly",
+            "enumDescriptions": [
+              "Ask before every tool call.",
+              "Run read-only tools (read, search, problems) automatically; ask before edits and commands.",
+              "Run all tools without asking."
+            ],
+            "markdownDescription": "When the Nova chat asks for approval before running a tool."
+          },
+          "nova.agent.commandTimeoutSeconds": {
+            "type": "integer",
+            "default": 120,
+            "minimum": 5,
+            "maximum": 3600,
+            "markdownDescription": "Time limit for commands the Nova chat runs."
+          },
+          "nova.agent.includeMcpTools": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Offer MCP server tools registered in VS Code to the Nova chat."
+          },
+          "nova.home": {
+            "type": "string",
+            "default": "",
+            "scope": "machine",
+            "markdownDescription": "Folder for Nova's memory, chats and scratch files. Empty uses `~/.nova-ai` (or the `NOVA_AI_HOME` environment variable)."
+          },
+          "nova.memory.enabled": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Include Nova's memory (`~/.nova-ai/MEMORY.md`, the project's `MEMORY.md`, and the repository's `NOVA.md` / `AGENTS.md`) in Nova chats, and let Nova save new memories (with your approval)."
           }
         }
       },
@@ -145,7 +515,7 @@
     "build:webview": "vite build --config vite.webview.config.mts",
     "dev:webview": "vite build --watch --config vite.webview.config.mts",
     "package:vsix": "npm run compile && mkdir -p dist && vsce package --pre-release --out dist/nova-ai-vscode.vsix",
-    "publish:marketplace": "vsce publish --pre-release --allow-proposed-apis chatParticipantAdditions --packagePath dist/nova-ai-vscode.vsix --pat \"$AZURE_DEVOPS_TOKEN\"",
+    "publish:marketplace": "vsce publish --pre-release --allow-proposed-apis chatParticipantAdditions chatProvider languageModelThinkingPart languageModelSystem languageModelPricing --packagePath dist/nova-ai-vscode.vsix --pat \"$AZURE_DEVOPS_TOKEN\"",
     "publish:ovsx": "ovsx verify-pat datalabrotterdam --pat \"$OVSX_PAT\" && (ovsx create-namespace datalabrotterdam --pat \"$OVSX_PAT\" || true) && ovsx publish dist/nova-ai-vscode.vsix --pre-release --pat \"$OVSX_PAT\"",
     "verify": "npm test && npm run package:vsix",
     "typecheck": "tsc -p ./ --noEmit",
@@ -167,9 +537,11 @@
     "@sveltejs/vite-plugin-svelte": "^5.1.0",
     "@types/node": "^24.7.2",
     "@types/vscode": "^1.120.0",
+    "@vscode/codicons": "^0.0.46-24",
     "@vscode/vsce": "^3.9.1",
-    "bootstrap-icons": "^1.13.1",
+    "dompurify": "^3.4.16",
     "esbuild": "^0.25.12",
+    "marked": "^15.0.12",
     "ovsx": "^0.10.11",
     "sass": "^1.99.0",
     "semantic-release": "^25.0.3",

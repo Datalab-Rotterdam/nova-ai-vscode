@@ -1,42 +1,52 @@
 import * as vscode from 'vscode';
+import { randomUUID } from 'node:crypto';
 import type {
     ChatCompletionRequest,
     ChatMessage,
-    ChatStreamEvent,
     ModelResponse,
     NovaAI
 } from '@datalabrotterdam/nova-sdk';
-import { COMMAND_MANAGE, DEFAULT_MAX_INPUT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS, MODEL_CACHE_TTL_MS, NOVA_USAGE_MIME_TYPE } from '../core/constants';
-import { shouldParseModelCapabilities } from '../core/config';
+import { getThinkingPartConstructor, isProposalEnabled } from '../core/apiSupport';
+import { COMMAND_MANAGE, DEFAULT_MAX_OUTPUT_TOKENS, EXTENSION_ID, MODEL_CACHE_TTL_MS, NOVA_THINKING_MIME_TYPE, NOVA_USAGE_MIME_TYPE } from '../core/constants';
+import { getDefaultContextWindow, getEditTools, isAutoCompactEnabled, shouldParseModelCapabilities, shouldRewriteAssistantIdentity } from '../core/config';
 import { Diagnostics } from '../core/diagnostics';
-import { isEmptyResponse, isToolCallingRejected, mapNovaError } from '../core/errors';
+import { isContextOverflow, isEmptyResponse, isToolCallingRejected, mapNovaError, parseContextLimit } from '../core/errors';
+import { estimateMessagesTokens, fitToBudget, tokenCalibration } from '../agent/ContextManager';
 import { SessionService } from '../services/SessionService';
-import { estimateTokenCount } from './tokenEstimator';
-import type { LanguageModelInfo, ToolCallingSupport } from '../core/types';
+import { estimateTextTokens, estimateTokenCount } from './tokenEstimator';
+import type { LanguageModelInfo } from '../core/types';
 import { StatusBar } from '../status/StatusBar';
+import { rewriteIdentity } from './identity';
+import { toNovaMessages } from './messages';
+import { ChatStreamParser } from './streamParser';
+import { createToolPayload, MAX_TOOLS, ToolNameMap } from './toolSchema';
+
+/** `LanguageModelChatMessageRole.System` from the `languageModelSystem` proposal. */
+const SYSTEM_ROLE = 3;
 
 interface ModelCache {
     models: LanguageModelInfo[];
     expiresAt: number;
 }
 
-interface PendingToolCall {
-    id: string;
-    name: string;
-    argumentsText: string;
+interface StreamResult {
+    promptTokens: number;
+    completionTokens: number;
 }
 
 export class ModelProvider implements vscode.LanguageModelChatProvider<LanguageModelInfo> {
     private readonly didChangeModelsEmitter = new vscode.EventEmitter<void>();
     public readonly onDidChangeLanguageModelChatInformation = this.didChangeModelsEmitter.event;
     private cache?: ModelCache;
+    /** Context windows reported by Nova in overflow errors, which override advertised ones. */
+    private readonly learnedContextWindows = new Map<string, number>();
 
     public constructor(
         private readonly sessionService: SessionService,
         private readonly diagnostics: Diagnostics,
         private readonly statusBar?: StatusBar
     ) {
-        this.sessionService.onDidChangeSession(() => {
+        this.sessionService.onDidChangeAccount(() => {
             this.cache = undefined;
             this.didChangeModelsEmitter.fire();
         });
@@ -48,8 +58,7 @@ export class ModelProvider implements vscode.LanguageModelChatProvider<LanguageM
         }
 
         try {
-            const models = await this.getModels(false);
-            await this.ensureToolCallingSupport(models);
+            await this.getModels(false);
         } catch (error) {
             this.diagnostics.error('Nova model warmup failed.', error);
         }
@@ -64,6 +73,19 @@ export class ModelProvider implements vscode.LanguageModelChatProvider<LanguageM
 
     public async getCachedModels(): Promise<readonly LanguageModelInfo[]> {
         return this.cache?.models ?? [];
+    }
+
+    /** Chat models for Nova's own surfaces (the chat panel); empty when signed out or unreachable. */
+    public async listModels(): Promise<LanguageModelInfo[]> {
+        if (!(await this.sessionService.isSignedIn())) {
+            return [];
+        }
+        try {
+            return await this.getModels(true);
+        } catch (error) {
+            this.diagnostics.error('Nova model discovery failed.', error);
+            return [];
+        }
     }
 
     public async provideLanguageModelChatInformation(
@@ -82,9 +104,7 @@ export class ModelProvider implements vscode.LanguageModelChatProvider<LanguageM
             return [];
         }
 
-        const models = await this.getModels(options.silent);
-        await this.ensureToolCallingSupport(models);
-        return models;
+        return this.getModels(options.silent);
     }
 
     public async provideLanguageModelChatResponse(
@@ -102,65 +122,157 @@ export class ModelProvider implements vscode.LanguageModelChatProvider<LanguageM
         await this.sessionService.setSelectedModel(model.id);
         this.statusBar?.updateRequest(messages, options.tools, model);
 
-        const toolNames = options.tools?.map((t) => t.name) ?? [];
+        const toolTokens = options.tools?.length ? estimateTextTokens(JSON.stringify(options.tools)) : 0;
+        const budget = Math.max(1_024, model.maxInputTokens - toolTokens);
+
+        try {
+            await this.respond(client, model, await this.fitMessages(model, messages, budget, false), options, toolTokens, progress, token);
+        } catch (error) {
+            if (!isContextOverflow(error) || token.isCancellationRequested) {
+                throw error;
+            }
+
+            // Our estimate was too optimistic or the advertised window is wrong: learn the real
+            // limit when the server reports it, trim harder and retry once.
+            const limit = parseContextLimit(error);
+            if (limit) {
+                this.learnContextLimit(model, limit);
+            }
+            const retryBudget = Math.max(1_024, Math.floor(
+                (limit ? Math.min(budget, limit - model.maxOutputTokens - toolTokens) : budget) * 0.75
+            ));
+            this.diagnostics.trace('Nova context overflow, trimming and retrying once.', { modelId: model.id, limit, retryBudget });
+            await this.respond(client, model, await this.fitMessages(model, messages, retryBudget, true), options, toolTokens, progress, token);
+        }
+    }
+
+    private async respond(
+        client: NovaAI,
+        model: LanguageModelInfo,
+        messages: readonly vscode.LanguageModelChatRequestMessage[],
+        options: vscode.ProvideLanguageModelChatResponseOptions,
+        toolTokens: number,
+        progress: vscode.Progress<vscode.LanguageModelResponsePart>,
+        token: vscode.CancellationToken
+    ): Promise<void> {
+        const internal = options.requestInitiator === EXTENSION_ID;
+        const useTools = Boolean(options.tools?.length) && this.sessionService.getModelToolSupport(model.id) !== 'unsupported';
+        const tools = useTools ? createToolPayload(options) : { payload: {}, names: new ToolNameMap(), dropped: [] };
+        const translate = (toolNames?: ToolNameMap) => {
+            const translated = toNovaMessages(messages, { supportsImages: model.capabilities.imageInput === true, toolNames });
+            return shouldRewriteAssistantIdentity() && options.requestInitiator !== EXTENSION_ID
+                ? rewriteIdentity(translated)
+                : translated;
+        };
+        const novaMessages = translate(tools.names);
+
         this.diagnostics.trace('Nova chat request started.', {
             modelId: model.id,
-            messageCount: messages.length,
-            toolCount: toolNames.length,
-            tools: toolNames,
-            toolMode: options.toolMode
+            toolMode: options.toolMode,
+            requestInitiator: options.requestInitiator,
+            tools: options.tools?.slice(0, tools.names.size).map((tool) => tool.name) ?? [],
+            droppedTools: tools.dropped,
+            messages: describeMessages(novaMessages)
         });
 
         const request: ChatCompletionRequest & Record<string, unknown> = {
             model: model.id,
-            messages: toNovaMessages(messages),
+            messages: novaMessages,
             stream_options: { include_usage: true },
-            ...createModelOptionsPayload(model, options.modelOptions),
-            ...createToolPayload(options)
+            ...createModelOptionsPayload(model, options.modelOptions, options.modelConfiguration),
+            ...tools.payload
         };
 
         const contextWindow = model.maxInputTokens + model.maxOutputTokens;
+        const estimatedTokens = estimateMessagesTokens(messages) + toolTokens;
+        const report = (result: StreamResult) => {
+            if (result.promptTokens > 0) {
+                tokenCalibration.record(model.id, estimatedTokens, result.promptTokens);
+                this.statusBar?.updateActualUsage(result.promptTokens, contextWindow, model.name);
+            }
+        };
+
+        if (!useTools) {
+            report(await this.send(client, request, tools.names, model, progress, token, internal));
+            return;
+        }
 
         try {
-            const { promptTokens } = await this.streamResponse(client, request, model.maxOutputTokens, progress, token);
-            this.diagnostics.trace('Nova chat request completed.', {modelId: model.id});
-            if (promptTokens > 0) {
-                this.statusBar?.updateActualUsage(promptTokens, contextWindow, model.name);
-            }
+            report(await this.sendWithEmptyRetry(client, request, tools.names, model, progress, token, internal));
+            await this.sessionService.setModelToolSupport(model.id, 'supported');
         } catch (error) {
-            const toolsRejected = options.tools?.length && isToolCallingRejected(error);
-            const toolsReturnedEmpty = options.tools?.length && isEmptyResponse(error);
-
-            if (toolsRejected || toolsReturnedEmpty) {
-                this.diagnostics.trace('Nova tool-calling unsupported, retrying without tools.', {
-                    modelId: model.id,
-                    reason: toolsRejected ? 'rejected' : 'empty-response',
-                    tools: toolNames
-                });
-                await this.sessionService.setToolCallingSupport('unsupported');
-
-                if (options.toolMode === vscode.LanguageModelChatToolMode.Required) {
-                    throw new Error('Nova AI rejected required tool-calling for this model.');
-                }
-
-                const fallbackRequest: ChatCompletionRequest = {
-                    model: model.id,
-                    messages: toNovaMessages(messages),
-                    ...createModelOptionsPayload(model, options.modelOptions)
-                };
-                const { promptTokens } = await this.streamResponse(client, fallbackRequest, model.maxOutputTokens, progress, token);
-                this.diagnostics.trace('Nova chat fallback request completed.', {modelId: model.id});
-                if (promptTokens > 0) {
-                    this.statusBar?.updateActualUsage(promptTokens, contextWindow, model.name);
-                }
-                return;
+            const toolsRejected = isToolCallingRejected(error);
+            if (!toolsRejected && !isEmptyResponse(error)) {
+                throw mapNovaError(error);
             }
 
-            this.diagnostics.trace('Nova chat request failed.', {
+            this.diagnostics.trace('Nova tool-calling failed, retrying without tools.', {
                 modelId: model.id,
-                error: error instanceof Error ? error.message : String(error)
+                reason: toolsRejected ? 'rejected' : 'empty-response'
             });
-            throw mapNovaError(error);
+
+            if (toolsRejected) {
+                await this.markToolsUnsupported(model.id);
+            }
+
+            if (options.toolMode === vscode.LanguageModelChatToolMode.Required) {
+                throw new Error(`Nova AI model ${model.name} does not support the tool calling this request requires.`);
+            }
+
+            const fallbackRequest: ChatCompletionRequest & Record<string, unknown> = {
+                model: model.id,
+                messages: translate(),
+                stream_options: { include_usage: true },
+                ...createModelOptionsPayload(model, options.modelOptions, options.modelConfiguration)
+            };
+            report(await this.send(client, fallbackRequest, new ToolNameMap(), model, progress, token, internal));
+        }
+    }
+
+    /**
+     * Safety net for requests that exceed the input budget: VS Code compacts its own
+     * conversations, so this only prunes old tool results and drops the oldest turns,
+     * without an extra model call. The system prompt and first user message are kept.
+     */
+    private async fitMessages(
+        model: LanguageModelInfo,
+        messages: readonly vscode.LanguageModelChatRequestMessage[],
+        budget: number,
+        force: boolean
+    ): Promise<readonly vscode.LanguageModelChatRequestMessage[]> {
+        if (!force && !isAutoCompactEnabled()) {
+            return messages;
+        }
+
+        const leadingSystem = messages.findIndex((message) => (message.role as number) !== SYSTEM_ROLE);
+        const fitted = await fitToBudget(
+            messages,
+            (role, content) => ({ role, content, name: undefined }) as vscode.LanguageModelChatRequestMessage,
+            { budget, threshold: force ? 0 : 1, pinned: Math.min(messages.length, (leadingSystem < 0 ? messages.length : leadingSystem) + 1) },
+            tokenCalibration.ratio(model.id)
+        );
+
+        if (fitted.stage !== 'none') {
+            this.diagnostics.trace('Nova request compacted to fit the context window.', {
+                modelId: model.id,
+                stage: fitted.stage,
+                budget,
+                messages: `${messages.length} -> ${fitted.messages.length}`,
+                estimatedTokens: fitted.estimatedTokens
+            });
+        }
+        return fitted.messages;
+    }
+
+    /** Applies a context window reported by the server to the model's limits. */
+    private learnContextLimit(model: LanguageModelInfo, contextWindow: number): void {
+        this.learnedContextWindows.set(model.id, contextWindow);
+        if (this.cache) {
+            this.cache = {
+                ...this.cache,
+                models: this.cache.models.map((cached) => cached.id === model.id ? this.withLearnedCapabilities(cached) : cached)
+            };
+            this.didChangeModelsEmitter.fire();
         }
     }
 
@@ -191,10 +303,10 @@ export class ModelProvider implements vscode.LanguageModelChatProvider<LanguageM
         try {
             const response = await client.models.list();
             const sorted = response.data
-                .filter((model) => model.enabled !== false)
-                .map((model) => toModelInfo(model))
+                .filter((model) => model.enabled !== false && isChatModel(model))
+                .map((model) => this.withLearnedCapabilities(toModelInfo(model)))
                 .sort(sortModels);
-            const defaultIndex = sorted.findIndex((model) => supportsToolCalling(model.capabilities));
+            const defaultIndex = sorted.findIndex((model) => Boolean(model.capabilities.toolCalling));
             const models = sorted.map((model, index) => ({
                 ...model,
                 isDefault: index === defaultIndex
@@ -204,7 +316,8 @@ export class ModelProvider implements vscode.LanguageModelChatProvider<LanguageM
                 maxInputTokens: model.maxInputTokens,
                 maxOutputTokens: model.maxOutputTokens,
                 contextWindow: model.maxInputTokens + model.maxOutputTokens,
-                capabilities: model.capabilities
+                capabilities: model.capabilities,
+                advertised: { capabilities: model.raw.capabilities, tags: model.raw.tags }
             })));
 
             this.cache = {
@@ -221,89 +334,111 @@ export class ModelProvider implements vscode.LanguageModelChatProvider<LanguageM
         }
     }
 
-    private async ensureToolCallingSupport(models: readonly LanguageModelInfo[]): Promise<void> {
-        const snapshot = await this.sessionService.getSnapshot();
-        if (snapshot.toolCallingSupport !== 'unknown' || !models.length) {
-            return;
+    /**
+     * Models that do not advertise tool calling are offered as tool-capable until Nova
+     * rejects tools for them, so they show up in agent mode. What was learned is stored per model.
+     */
+    private withLearnedCapabilities(model: LanguageModelInfo): LanguageModelInfo {
+        let result = model;
+
+        const contextWindow = this.learnedContextWindows.get(model.id);
+        if (contextWindow && contextWindow !== model.maxContextWindowTokens) {
+            result = { ...result, ...splitContextWindow(contextWindow, Math.min(model.maxOutputTokens, contextWindow - 1)), maxContextWindowTokens: contextWindow };
         }
 
-        const client = await this.sessionService.createClient();
-        if (!client) {
-            return;
+        if (result.capabilities.toolCalling === undefined) {
+            const supported = this.sessionService.getModelToolSupport(model.id) !== 'unsupported';
+            result = { ...result, capabilities: { ...result.capabilities, toolCalling: supported ? MAX_TOOLS : false } };
         }
 
-        try {
-            const stream = client.chat.completions.stream({
-                model: getPreferredModelId(models, snapshot.selectedModelId),
-                messages: [{ role: 'user', content: 'Reply with ok.' }],
-                max_tokens: 1,
-                tools: [
-                    {
-                        type: 'function',
-                        function: {
-                            name: 'noop',
-                            description: 'A no-op probe.',
-                            parameters: {
-                                type: 'object',
-                                properties: {},
-                                additionalProperties: false
-                            }
-                        }
-                    }
-                ],
-                tool_choice: 'auto'
-            });
+        return result;
+    }
 
-            for await (const _event of stream) {
-                break;
-            }
-
-            await this.sessionService.setToolCallingSupport('supported');
-        } catch (error) {
-            const support: ToolCallingSupport = isToolCallingRejected(error) ? 'unsupported' : 'supported';
-            await this.sessionService.setToolCallingSupport(support);
+    private async markToolsUnsupported(modelId: string): Promise<void> {
+        await this.sessionService.setModelToolSupport(modelId, 'unsupported');
+        if (this.cache) {
+            this.cache = {
+                ...this.cache,
+                models: this.cache.models.map((model) => model.id === modelId
+                    ? { ...model, capabilities: { ...model.capabilities, toolCalling: false } }
+                    : model)
+            };
+            this.didChangeModelsEmitter.fire();
         }
     }
 
-    private async streamResponse(
+    /** An empty response with tools is often transient: retry once before giving up on tools. */
+    private async sendWithEmptyRetry(
         client: NovaAI,
         request: ChatCompletionRequest & Record<string, unknown>,
-        outputBuffer: number,
+        toolNames: ToolNameMap,
+        model: LanguageModelInfo,
         progress: vscode.Progress<vscode.LanguageModelResponsePart>,
-        token: vscode.CancellationToken
-    ): Promise<{ promptTokens: number; completionTokens: number }> {
+        token: vscode.CancellationToken,
+        internal: boolean
+    ): Promise<StreamResult> {
+        try {
+            return await this.send(client, request, toolNames, model, progress, token, internal);
+        } catch (error) {
+            if (!isEmptyResponse(error) || token.isCancellationRequested) {
+                throw error;
+            }
+            this.diagnostics.trace('Nova returned an empty response, retrying once.', { modelId: model.id });
+            return this.send(client, request, toolNames, model, progress, token, internal);
+        }
+    }
+
+    private async send(
+        client: NovaAI,
+        request: ChatCompletionRequest & Record<string, unknown>,
+        toolNames: ToolNameMap,
+        model: LanguageModelInfo,
+        progress: vscode.Progress<vscode.LanguageModelResponsePart>,
+        token: vscode.CancellationToken,
+        internal: boolean
+    ): Promise<StreamResult> {
         const abortController = new AbortController();
         const subscription = token.onCancellationRequested(() => abortController.abort());
-        const pendingToolCalls = new Map<number, PendingToolCall>();
-        const received = { text: false, toolCalls: false };
-        const finishReasons: string[] = [];
+        const ThinkingPart = getThinkingPartConstructor();
+        const parser = new ChatStreamParser(
+            { callIdPrefix: `nova-${randomUUID().slice(0, 8)}`, toolNames },
+            {
+                text: (value) => progress.report(new vscode.LanguageModelTextPart(value)),
+                thinking: (value) => {
+                    if (ThinkingPart) {
+                        progress.report(new ThinkingPart(value) as vscode.LanguageModelResponsePart);
+                    } else if (internal) {
+                        // Nova's own chat panel shows reasoning even where the thinking proposal is off.
+                        progress.report(vscode.LanguageModelDataPart.text(value, NOVA_THINKING_MIME_TYPE));
+                    }
+                },
+                toolCall: (callId, name, input) => progress.report(new vscode.LanguageModelToolCallPart(callId, name, input))
+            }
+        );
         let promptTokens = 0;
         let completionTokens = 0;
 
-        this.diagnostics.trace('Nova stream opened.', {model: request.model});
+        this.diagnostics.trace('Nova stream opened.', { model: request.model });
 
         try {
             for await (const event of client.chat.completions.stream(request, { signal: abortController.signal })) {
-                if (event.type === 'chunk') {
-                    for (const choice of event.data.choices ?? []) {
-                        if (choice.finish_reason) {
-                            finishReasons.push(choice.finish_reason);
-                        }
-                    }
-                    if (event.data.usage) {
-                        promptTokens = event.data.usage.prompt_tokens ?? promptTokens;
-                        completionTokens = event.data.usage.completion_tokens ?? completionTokens;
-                        this.diagnostics.trace('Nova stream usage received.', {promptTokens, completionTokens});
-                    }
+                if (event.type !== 'chunk') {
+                    continue;
                 }
-                this.handleStreamEvent(event, pendingToolCalls, progress, received);
+                if (event.data.usage) {
+                    promptTokens = event.data.usage.prompt_tokens ?? promptTokens;
+                    completionTokens = event.data.usage.completion_tokens ?? completionTokens;
+                }
+                parser.pushChunk(event.data);
             }
 
-            flushToolCalls(pendingToolCalls, progress, received);
+            parser.end();
 
-            this.diagnostics.trace('Nova stream usage final.', {promptTokens, completionTokens, outputBuffer});
             if (promptTokens > 0 || completionTokens > 0) {
-                progress.report(vscode.LanguageModelDataPart.json({promptTokens, completionTokens, outputBuffer}, NOVA_USAGE_MIME_TYPE));
+                progress.report(vscode.LanguageModelDataPart.json(
+                    { promptTokens, completionTokens, outputBuffer: model.maxOutputTokens },
+                    NOVA_USAGE_MIME_TYPE
+                ));
             }
         } catch (error) {
             if (abortController.signal.aborted) {
@@ -319,80 +454,57 @@ export class ModelProvider implements vscode.LanguageModelChatProvider<LanguageM
         }
 
         this.diagnostics.trace('Nova stream closed.', {
-            receivedText: received.text,
-            receivedToolCalls: received.toolCalls,
-            finishReasons
+            receivedText: parser.receivedText,
+            receivedToolCalls: parser.receivedToolCalls,
+            invalidToolCalls: parser.invalidToolCalls,
+            finishReasons: parser.finishReasons,
+            promptTokens,
+            completionTokens
         });
 
-        if (!received.text && !received.toolCalls) {
+        if (!parser.receivedText && !parser.receivedToolCalls) {
             throw Object.assign(
                 new Error('The model returned an empty response. The model may be overloaded or the request may be malformed — try again.'),
-                {isEmptyResponse: true}
+                { isEmptyResponse: true }
             );
         }
 
         return { promptTokens, completionTokens };
     }
+}
 
-    private handleStreamEvent(
-        event: ChatStreamEvent,
-        pendingToolCalls: Map<number, PendingToolCall>,
-        progress: vscode.Progress<vscode.LanguageModelResponsePart>,
-        received?: { text: boolean; toolCalls: boolean }
-    ): void {
-        if (event.type !== 'chunk') {
-            return;
-        }
+/** Shape of the translated request for diagnostics: roles and sizes, never content. */
+function describeMessages(messages: readonly ChatMessage[]): unknown[] {
+    return messages.map((message) => ({
+        role: message.role,
+        chars: typeof message.content === 'string' ? message.content.length : Array.isArray(message.content) ? `${message.content.length} parts` : 0,
+        ...(Array.isArray(message.tool_calls) ? { toolCalls: message.tool_calls.length } : {}),
+        ...(message.tool_call_id ? { toolCallId: message.tool_call_id } : {})
+    }));
+}
 
-        for (const choice of event.data.choices ?? []) {
-            const content = choice.delta?.content;
-            if (typeof content === 'string' && content.length) {
-                if (received) received.text = true;
-                progress.report(new vscode.LanguageModelTextPart(content));
-            }
+const CHAT_CAPABILITIES = [
+    'text', 'chat', 'completion', 'completions', 'chat-completion', 'chat_completion', 'text-generation', 'text_generation',
+    'tool', 'tools', 'tool-calling', 'tool_calling', 'function-calling', 'function_calling', 'reasoning'
+];
 
-            const toolCalls = Array.isArray((choice.delta as Record<string, unknown>)?.tool_calls)
-                ? ((choice.delta as Record<string, unknown>).tool_calls as Array<Record<string, unknown>>)
-                : [];
-
-            for (const toolCall of toolCalls) {
-                const index = typeof toolCall.index === 'number' ? toolCall.index : 0;
-                const current = pendingToolCalls.get(index) ?? {
-                    id: typeof toolCall.id === 'string' ? toolCall.id : `nova-tool-${index}`,
-                    name: '',
-                    argumentsText: ''
-                };
-
-                const fn = isRecord(toolCall.function) ? toolCall.function : undefined;
-                if (fn && typeof fn.name === 'string') {
-                    current.name = fn.name;
-                }
-                if (fn && typeof fn.arguments === 'string') {
-                    current.argumentsText += fn.arguments;
-                }
-
-                pendingToolCalls.set(index, current);
-            }
-
-            if (choice.finish_reason === 'tool_calls') {
-                flushToolCalls(pendingToolCalls, progress, received);
-            }
-        }
-    }
+/**
+ * Nova also serves embedding, speech (`audio_synthesis`) and transcription (`audio_transcription`)
+ * models, which cannot chat. When a model advertises capabilities, one of them must be a chat
+ * capability; models without capability information are kept.
+ */
+function isChatModel(model: ModelResponse): boolean {
+    const capabilities = getCapabilitySet(model);
+    return !capabilities.size || hasAnyCapability(capabilities, CHAT_CAPABILITIES);
 }
 
 function sortModels(left: LanguageModelInfo, right: LanguageModelInfo): number {
     return left.name.localeCompare(right.name);
 }
 
-function supportsToolCalling(capabilities: LanguageModelInfo['capabilities']): boolean {
-    const tc = capabilities.toolCalling;
-    return tc === undefined || tc === true || (typeof tc === 'number' && tc > 0);
-}
-
 function toModelInfo(model: ModelResponse): LanguageModelInfo {
     const family = firstString(model, ['family', 'name']) ?? model.id;
-    const contextWindow = firstNumber(model, [
+    const advertisedContextWindow = firstNumber(model, [
         'context_window',
         'max_model_len',
         'contextWindow',
@@ -400,6 +512,7 @@ function toModelInfo(model: ModelResponse): LanguageModelInfo {
         'context_length',
         'contextLength'
     ]);
+    const contextWindow = advertisedContextWindow ?? getDefaultContextWindow();
     const explicitMaxOutputTokens = firstNumber(model, [
         'max_output_tokens',
         'maxOutputTokens',
@@ -410,25 +523,21 @@ function toModelInfo(model: ModelResponse): LanguageModelInfo {
     ]);
     // Use 25% of context window for output (not 50%) to leave more room for input.
     // VS Code reserves the full maxOutputTokens slot, so models with small context windows
-    // would otherwise run out of input tokens for actual user prompts.
-    const requestedMaxOutputTokens = explicitMaxOutputTokens
-        ?? (contextWindow ? Math.min(DEFAULT_MAX_OUTPUT_TOKENS, Math.max(1, Math.floor(contextWindow / 4))) : DEFAULT_MAX_OUTPUT_TOKENS);
-    const maxOutputTokens = contextWindow
-        ? Math.min(requestedMaxOutputTokens, Math.max(1, contextWindow - 1))
-        : requestedMaxOutputTokens;
+    // would otherwise run out of input tokens for actual user prompts. When the window is
+    // only assumed, an advertised output limit is capped the same way.
+    const quarterWindow = Math.max(1, Math.floor(contextWindow / 4));
+    const requestedMaxOutputTokens = advertisedContextWindow
+        ? explicitMaxOutputTokens ?? Math.min(DEFAULT_MAX_OUTPUT_TOKENS, quarterWindow)
+        : Math.min(explicitMaxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS, quarterWindow);
     const explicitMaxInputTokens = firstNumber(model, [
         'max_input_tokens',
         'maxInputTokens',
         'input_token_limit',
         'inputTokenLimit'
     ]);
-    const contextSafetyMargin = contextWindow
-        ? Math.max(1_024, Math.ceil(contextWindow * 0.02))
-        : 0;
-    const maxInputTokens = explicitMaxInputTokens
-        ?? (contextWindow
-            ? Math.max(1, contextWindow - maxOutputTokens - contextSafetyMargin)
-            : DEFAULT_MAX_INPUT_TOKENS);
+    const limits = splitContextWindow(contextWindow, requestedMaxOutputTokens);
+    const maxOutputTokens = limits.maxOutputTokens;
+    const maxInputTokens = explicitMaxInputTokens ?? limits.maxInputTokens;
 
     return {
         id: model.id,
@@ -442,7 +551,79 @@ function toModelInfo(model: ModelResponse): LanguageModelInfo {
         maxOutputTokens,
         isDefault: false,
         isUserSelectable: true,
-        capabilities: createModelCapabilities(model)
+        capabilities: {
+            ...createModelCapabilities(model),
+            ...(isProposalEnabled('chatProvider') ? { editTools: getEditTools() } : {})
+        },
+        ...proposedModelInfo(model, contextWindow, maxOutputTokens)
+    };
+}
+
+/**
+ * Model fields from API proposals. Only sent when VS Code enabled the proposal: stable VS Code
+ * rejects the whole model list when, for example, `editTools` is set without `chatProvider`.
+ */
+function proposedModelInfo(model: ModelResponse, contextWindow: number, maxOutputTokens: number): Partial<LanguageModelInfo> {
+    const info: { -readonly [K in keyof LanguageModelInfo]?: LanguageModelInfo[K] } = {};
+    if (isProposalEnabled('chatProvider')) {
+        info.maxContextWindowTokens = contextWindow;
+        info.configurationSchema = createConfigurationSchema(maxOutputTokens);
+    }
+    if (isProposalEnabled('languageModelPricing')) {
+        info.pricing = createPricingLabel(model);
+    }
+    return info;
+}
+
+/**
+ * Splits a context window into input and output budgets, reserving 2% (at least 1,024 tokens)
+ * as headroom for chat-template overhead and token-estimation error.
+ */
+function splitContextWindow(contextWindow: number, requestedMaxOutputTokens: number): { maxInputTokens: number; maxOutputTokens: number } {
+    const maxOutputTokens = Math.min(requestedMaxOutputTokens, Math.max(1, contextWindow - 1));
+    const contextSafetyMargin = Math.max(1_024, Math.ceil(contextWindow * 0.02));
+    return {
+        maxOutputTokens,
+        maxInputTokens: Math.max(1, contextWindow - maxOutputTokens - contextSafetyMargin)
+    };
+}
+
+function createPricingLabel(model: ModelResponse): string | undefined {
+    const input = firstNumber(model, ['input_cost_per_1m']);
+    const output = firstNumber(model, ['output_cost_per_1m']);
+    if (input === undefined && output === undefined) {
+        return undefined;
+    }
+
+    const currency = firstString(model, ['currency']) ?? 'EUR';
+    const format = (value: number | undefined) => value === undefined
+        ? '?'
+        : new Intl.NumberFormat('en-US', { style: 'currency', currency, maximumFractionDigits: 4 }).format(value);
+    return `${format(input)} in / ${format(output)} out per 1M tokens`;
+}
+
+/** Per-model options users can set in VS Code's language models configuration. */
+function createConfigurationSchema(maxOutputTokens: number): LanguageModelInfo['configurationSchema'] {
+    return {
+        properties: {
+            temperature: {
+                type: 'number',
+                minimum: 0,
+                maximum: 2,
+                description: 'Sampling temperature. Lower is more deterministic.'
+            },
+            reasoningEffort: {
+                type: 'string',
+                enum: ['low', 'medium', 'high'],
+                description: 'Reasoning effort for models that support it.'
+            },
+            maxOutputTokens: {
+                type: 'integer',
+                minimum: 1,
+                maximum: maxOutputTokens,
+                description: 'Maximum number of tokens to generate.'
+            }
+        }
     };
 }
 
@@ -509,9 +690,10 @@ function createModelCapabilities(model: ModelResponse): vscode.LanguageModelChat
     };
 }
 
+/** Tool calling is left undefined so the provider can apply what it learned for the model. */
 function defaultModelCapabilities(): vscode.LanguageModelChatCapabilities {
     return {
-        toolCalling: false,
+        toolCalling: undefined,
         imageInput: false
     };
 }
@@ -577,34 +759,35 @@ function firstContainerNumber(model: Record<string, unknown>, keys: string[]): n
     return undefined;
 }
 
-function createToolPayload(options: vscode.ProvideLanguageModelChatResponseOptions): Record<string, unknown> {
-    if (!options.tools?.length) {
+function createModelOptionsPayload(
+    model: LanguageModelInfo,
+    modelOptions: vscode.ProvideLanguageModelChatResponseOptions['modelOptions'],
+    modelConfiguration?: vscode.ProvideLanguageModelChatResponseOptions['modelConfiguration']
+): Record<string, unknown> {
+    const payload: Record<string, unknown> = {
+        ...configurationPayload(modelConfiguration),
+        ...(isRecord(modelOptions) ? modelOptions : {})
+    };
+    if (!hasOutputTokenLimit(payload)) {
+        payload.max_tokens = model.maxOutputTokens;
+    }
+    return payload;
+}
+
+function configurationPayload(configuration: Record<string, unknown> | undefined): Record<string, unknown> {
+    if (!configuration) {
         return {};
     }
 
-    return {
-        tools: options.tools.map((tool) => ({
-            type: 'function',
-            function: {
-                name: tool.name,
-                description: tool.description,
-                parameters: tool.inputSchema ?? {
-                    type: 'object',
-                    properties: {}
-                }
-            }
-        })),
-        tool_choice: options.toolMode === vscode.LanguageModelChatToolMode.Required ? 'required' : 'auto'
-    };
-}
-
-function createModelOptionsPayload(
-    model: LanguageModelInfo,
-    modelOptions: vscode.ProvideLanguageModelChatResponseOptions['modelOptions']
-): Record<string, unknown> {
-    const payload = isRecord(modelOptions) ? { ...modelOptions } : {};
-    if (!hasOutputTokenLimit(payload)) {
-        payload.max_tokens = model.maxOutputTokens;
+    const payload: Record<string, unknown> = {};
+    if (typeof configuration.temperature === 'number') {
+        payload.temperature = configuration.temperature;
+    }
+    if (typeof configuration.reasoningEffort === 'string') {
+        payload.reasoning_effort = configuration.reasoningEffort;
+    }
+    if (typeof configuration.maxOutputTokens === 'number') {
+        payload.max_tokens = configuration.maxOutputTokens;
     }
     return payload;
 }
@@ -617,135 +800,17 @@ function hasOutputTokenLimit(payload: Record<string, unknown>): boolean {
     ]) !== undefined;
 }
 
-function toNovaMessages(messages: readonly vscode.LanguageModelChatRequestMessage[]): ChatMessage[] {
-    const result: ChatMessage[] = [];
-
-    for (const message of messages) {
-        const textParts: string[] = [];
-        const assistantToolCalls: Array<Record<string, unknown>> = [];
-        const toolResults: vscode.LanguageModelToolResultPart[] = [];
-
-        for (const part of message.content) {
-            if (part instanceof vscode.LanguageModelTextPart) {
-                textParts.push(part.value);
-                continue;
-            }
-
-            if (part instanceof vscode.LanguageModelToolCallPart) {
-                assistantToolCalls.push({
-                    id: part.callId,
-                    type: 'function',
-                    function: {
-                        name: part.name,
-                        arguments: JSON.stringify(part.input)
-                    }
-                });
-                continue;
-            }
-
-            if (part instanceof vscode.LanguageModelToolResultPart) {
-                toolResults.push(part);
-                continue;
-            }
-
-            if (part instanceof vscode.LanguageModelDataPart) {
-                textParts.push(new TextDecoder().decode(part.data));
-                continue;
-            }
-
-            textParts.push(stringifyUnknown(part));
-        }
-
-        if (message.role === vscode.LanguageModelChatMessageRole.User) {
-            if (textParts.length) {
-                result.push({
-                    role: 'user',
-                    content: textParts.join('\n')
-                });
-            }
-
-            for (const toolResult of toolResults) {
-                result.push({
-                    role: 'tool',
-                    tool_call_id: toolResult.callId,
-                    content: toolResult.content.map(stringifyUnknown).join('\n')
-                });
-            }
-
-            continue;
-        }
-
-        // System role (LanguageModelChatMessageRole.System = 3) added in VS Code 1.120
-        if ((message.role as number) === 3) {
-            if (textParts.length) {
-                result.push({
-                    role: 'system',
-                    content: textParts.join('\n')
-                });
-            }
-            continue;
-        }
-
-        result.push({
-            role: 'assistant',
-            content: textParts.join('\n'),
-            ...(assistantToolCalls.length ? { tool_calls: assistantToolCalls } : {})
-        });
-    }
-
-    return result;
-}
-
-function flushToolCalls(
-    pendingToolCalls: Map<number, PendingToolCall>,
-    progress: vscode.Progress<vscode.LanguageModelResponsePart>,
-    received?: { text: boolean; toolCalls: boolean }
-): void {
-    for (const [index, toolCall] of Array.from(pendingToolCalls.entries()).sort((left, right) => left[0] - right[0])) {
-        if (!toolCall.name) {
-            continue;
-        }
-
-        let parsedInput: object = {};
-        try {
-            parsedInput = toolCall.argumentsText ? JSON.parse(toolCall.argumentsText) as object : {};
-        } catch {
-            parsedInput = { raw: toolCall.argumentsText };
-        }
-
-        if (received) received.toolCalls = true;
-        progress.report(new vscode.LanguageModelToolCallPart(toolCall.id, toolCall.name, parsedInput));
-        pendingToolCalls.delete(index);
-    }
-}
-
-function stringifyUnknown(value: unknown): string {
-    if (typeof value === 'string') {
-        return value;
-    }
-
-    try {
-        return JSON.stringify(value);
-    } catch {
-        return String(value);
-    }
-}
-
-function getPreferredModelId(models: readonly LanguageModelInfo[], selectedModelId?: string): string {
-    return selectedModelId && models.some((model) => model.id === selectedModelId)
-        ? selectedModelId
-        : models[0].id;
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null;
 }
 
+/** Pricing label for Nova's own UI; independent of the `languageModelPricing` proposal. */
+export function pricingLabel(model: LanguageModelInfo): string | undefined {
+    return model.pricing ?? createPricingLabel(model.raw);
+}
+
 export const providerInternals = {
     createModelOptionsPayload,
-    createToolPayload,
-    flushToolCalls,
-    getPreferredModelId,
-    toModelInfo,
-    toNovaMessages
+    isChatModel,
+    toModelInfo
 };

@@ -1,3 +1,4 @@
+import '@vscode/codicons/dist/codicon.css';
 import './app.scss';
 import { mount } from 'svelte';
 // @ts-ignore
@@ -11,6 +12,9 @@ const initialState: SidebarRenderState = window.__NOVA_SIDEBAR_STATE__ ?? {
     toolCallingSupport: 'unknown'
   }
 };
+
+// The editor tab uses the editor's colors instead of the sidebar's.
+document.documentElement.dataset.surface = initialState.surface ?? 'sidebar';
 
 const vscode = window.acquireVsCodeApi?.() as VsCodeApi | undefined;
 const target = document.getElementById('app')!;

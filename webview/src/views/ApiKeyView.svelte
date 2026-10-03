@@ -1,182 +1,184 @@
 <script lang="ts">
-  import arrowLeftIcon from 'bootstrap-icons/icons/arrow-left.svg?raw';
-  import boxArrowUpRightIcon from 'bootstrap-icons/icons/box-arrow-up-right.svg?raw';
-  import infoCircleIcon from 'bootstrap-icons/icons/info-circle.svg?raw';
-  import { COMMAND_SIGN_IN } from '../../../src/core/constants';
-  import type { SidebarRenderState, ThemeMode, VsCodeApi } from '../types';
+    let {busy, error, onConnect, onBack}: {
+        busy: boolean;
+        error?: string;
+        onConnect: (apiKey: string) => void;
+        onBack: () => void;
+    } = $props();
 
-  export let state: SidebarRenderState;
-  export let theme: ThemeMode;
-  export let vscode: VsCodeApi | undefined;
-  export let onBack: () => void;
+    let apiKey = $state('');
 
-  let apiKey = '';
+    const apiKeyUrl = 'https://platform.nova.datalabrotterdam.nl/dashboard/api-keys?name=Nova%20AI%20VSCode%20Extensie&scopes=models:read,llm:call';
+    const docsUrl = 'https://docs.datalabrotterdam.nl/services/nova-ai';
 
-  const apiKeyUrl = 'https://platform.nova.datalabrotterdam.nl/dashboard/api-keys?name=Nova%20AI%20VSCode%20Extensie&scopes=models:read,llm:call';
-  const docsUrl = 'https://docs.datalabrotterdam.nl/services/nova-ai';
-
-  function connect() {
-    vscode?.postMessage({
-      command: COMMAND_SIGN_IN,
-      apiKey
-    });
-  }
+    function submit(event: SubmitEvent) {
+        event.preventDefault();
+        if (apiKey.trim() && !busy) {
+            onConnect(apiKey.trim());
+        }
+    }
 </script>
 
-<section class="api-key-page" data-theme={theme}>
-  <form class="connect-panel" onsubmit={(event) => { event.preventDefault(); connect(); }}>
-    <button class="back-button" type="button" aria-label="Back" title="Back" onclick={onBack}>
-      <span aria-hidden="true">{@html arrowLeftIcon}</span>
-      Back
+<section class="connect">
+    <button class="back" type="button" onclick={onBack}>
+        <span class="codicon codicon-arrow-left" aria-hidden="true"></span>Back
     </button>
 
-    <div class="connect-copy">
-      <p class="form-title">Create your Nova API key</p>
-      <p>Generate a key with model read and LLM call scopes, then paste it below.</p>
-      <a class="docs-link" href={docsUrl} target="_blank" rel="noreferrer" title="Open Nova AI documentation">
-        <span aria-hidden="true">{@html infoCircleIcon}</span>
-        Nova AI documentation
-      </a>
-    </div>
+    <header>
+        <h1>Connect your API key</h1>
+        <p>Nova needs a key with the <code>models:read</code> and <code>llm:call</code> scopes.</p>
+    </header>
 
-    <a class="api-key-link" href={apiKeyUrl} target="_blank" rel="noreferrer">
-      Create API key
-      <span aria-hidden="true">{@html boxArrowUpRightIcon}</span>
+    <ol class="steps">
+        <li>
+            <span class="step">1</span>
+            <div>
+                <p>Create a key in the Nova platform.</p>
+                <a class="nova-button secondary" href={apiKeyUrl}>
+                    Create API key<span class="codicon codicon-link-external" aria-hidden="true"></span>
+                </a>
+            </div>
+        </li>
+        <li>
+            <span class="step">2</span>
+            <form onsubmit={submit}>
+                <label for="apiKey">Paste the key</label>
+                <input
+                        id="apiKey"
+                        class="nova-input"
+                        type="password"
+                        bind:value={apiKey}
+                        placeholder="sk_live_…"
+                        autocomplete="off"
+                        spellcheck="false"
+                        aria-invalid={Boolean(error)}
+                        aria-describedby={error ? 'apiKeyError' : undefined}
+                        disabled={busy}
+                />
+                {#if error}
+                    <p id="apiKeyError" class="error" role="alert">
+                        <span class="codicon codicon-error" aria-hidden="true"></span>{error}
+                    </p>
+                {/if}
+                <button class="nova-button" type="submit" disabled={busy || !apiKey.trim()}>
+                    {#if busy}
+                        <span class="codicon codicon-loading codicon-modifier-spin" aria-hidden="true"></span>Connecting…
+                    {:else}
+                        Connect
+                    {/if}
+                </button>
+            </form>
+        </li>
+    </ol>
+
+    <a class="docs" href={docsUrl}>
+        <span class="codicon codicon-book" aria-hidden="true"></span>Nova AI documentation
     </a>
-
-    {#if state.snapshot.lastError}
-      <p class="error">{state.snapshot.lastError}</p>
-    {/if}
-
-    <label for="apiKey">API key</label>
-    <input id="apiKey" type="password" bind:value={apiKey} placeholder="sk_live..." autocomplete="off" spellcheck="false" />
-
-    <button class="connect-button" type="submit">Connect</button>
-  </form>
 </section>
 
 <style lang="scss">
-  .api-key-page {
-    min-height: 100vh;
+  .connect {
     display: grid;
-    align-items: center;
-    padding: 12px;
-    box-sizing: border-box;
-    background: var(--bg);
+    gap: 16px;
+    padding: 12px 20px 20px;
   }
 
-  .connect-panel {
-    width: 100%;
-    display: grid;
-    gap: 12px;
-    padding: 16px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: color-mix(in srgb, var(--input-bg) 82%, var(--bg));
-    box-sizing: border-box;
-  }
-
-  .back-button {
-    width: max-content;
+  .back {
+    justify-self: start;
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    padding: 6px 8px;
+    gap: 4px;
+    margin-left: -6px;
+    padding: 2px 6px;
     border: 0;
+    border-radius: var(--nova-radius);
     background: transparent;
-    color: var(--fg);
-
-    :global(svg) {
-      width: 15px;
-      height: 15px;
-      fill: currentColor;
-    }
+    color: var(--nova-muted);
+    font: inherit;
+    cursor: pointer;
 
     &:hover {
-      background: var(--row-hover);
+      background: var(--nova-hover);
+      color: var(--nova-hover-fg);
     }
   }
 
-  .connect-copy {
+  header {
     display: grid;
-    gap: 8px;
-  }
-
-  p {
-    margin: 0;
-  }
-
-  .form-title {
-    color: var(--fg);
-    font-size: 19px;
-    font-weight: 650;
-    line-height: 1.25;
-  }
-
-  p,
-  label {
-    color: var(--muted);
-  }
-
-  .docs-link {
-    width: max-content;
-    display: inline-flex;
-    align-items: center;
     gap: 6px;
-    color: var(--muted);
-    font-size: 12px;
-    text-decoration: none;
+  }
 
-    :global(svg) {
-      width: 13px;
-      height: 13px;
-      fill: currentColor;
+  h1 {
+    margin: 0;
+    font-size: 1.2em;
+    font-weight: 600;
+  }
+
+  header p {
+    color: var(--nova-muted);
+  }
+
+  code {
+    font-family: var(--nova-mono);
+    font-size: 0.95em;
+  }
+
+  .steps {
+    display: grid;
+    gap: 16px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+
+    li {
+      display: grid;
+      grid-template-columns: 20px 1fr;
+      gap: 10px;
     }
 
-    &:hover {
-      color: var(--vscode-textLink-foreground);
-      text-decoration: underline;
+    li > div,
+    form {
+      display: grid;
+      gap: 8px;
+      min-width: 0;
     }
   }
 
-  .api-key-link {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    width: 100%;
-    padding: 10px 12px;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: var(--secondary-bg);
-    color: var(--secondary-fg);
-    box-sizing: border-box;
-    font-weight: 650;
-    text-decoration: none;
+  .step {
+    display: grid;
+    place-items: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--nova-badge-bg);
+    color: var(--nova-badge-fg);
+    font-size: 0.85em;
+    font-weight: 600;
+  }
 
-    :global(svg) {
-      width: 14px;
-      height: 14px;
-      fill: currentColor;
-    }
+  label {
+    color: var(--nova-fg);
   }
 
   .error {
-    color: var(--danger);
+    display: flex;
+    gap: 6px;
+    padding: 6px 8px;
+    border: 1px solid var(--nova-error-border);
+    border-radius: 2px;
+    background: var(--nova-error-bg);
+    color: var(--nova-fg);
+    overflow-wrap: anywhere;
+
+    .codicon {
+      color: var(--nova-error);
+    }
   }
 
-  input {
-    padding: 10px 12px;
-    background: var(--input-bg);
-    color: var(--input-fg);
-    border-color: var(--input-border);
-  }
-
-  .connect-button {
-    padding: 10px 12px;
-    border-color: var(--accent);
-    background: var(--accent);
-    color: var(--accent-fg);
-    font-weight: 650;
+  .docs {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    justify-self: start;
   }
 </style>

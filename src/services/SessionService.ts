@@ -5,8 +5,8 @@ import {
     STATE_ACCOUNT_SUMMARY,
     STATE_CONNECTION_HEALTH,
     STATE_LAST_ERROR,
-    STATE_SELECTED_MODEL,
-    STATE_TOOL_CALLING_SUPPORT
+    STATE_MODEL_TOOL_SUPPORT,
+    STATE_SELECTED_MODEL
 } from '../core/constants';
 import {Diagnostics} from '../core/diagnostics';
 import {toUserMessage} from '../core/errors';
@@ -15,6 +15,9 @@ import type {ConnectionHealth, AccountSummary, SessionSnapshot, ToolCallingSuppo
 export class SessionService {
     private readonly didChangeSessionEmitter = new vscode.EventEmitter<void>();
     public readonly onDidChangeSession = this.didChangeSessionEmitter.event;
+    private readonly didChangeAccountEmitter = new vscode.EventEmitter<void>();
+    /** Fires when the API key or account changes, which invalidates the model list. */
+    public readonly onDidChangeAccount = this.didChangeAccountEmitter.event;
 
     public constructor(
         private readonly context: Pick<vscode.ExtensionContext, 'secrets' | 'globalState'>,
@@ -24,13 +27,14 @@ export class SessionService {
     }
 
     public async getSnapshot(): Promise<SessionSnapshot> {
+        const selectedModelId = this.context.globalState.get<string | undefined>(STATE_SELECTED_MODEL);
         return {
             hasApiKey: Boolean(await this.getApiKey()),
             accountSummary: this.context.globalState.get<AccountSummary>(STATE_ACCOUNT_SUMMARY),
             connectionHealth: this.context.globalState.get<ConnectionHealth>(STATE_CONNECTION_HEALTH, 'signedOut'),
             lastError: this.context.globalState.get<string | undefined>(STATE_LAST_ERROR),
-            selectedModelId: this.context.globalState.get<string | undefined>(STATE_SELECTED_MODEL),
-            toolCallingSupport: this.context.globalState.get<ToolCallingSupport>(STATE_TOOL_CALLING_SUPPORT, 'unknown')
+            selectedModelId,
+            toolCallingSupport: selectedModelId ? this.getModelToolSupport(selectedModelId) : 'unknown'
         };
     }
 
@@ -55,8 +59,9 @@ export class SessionService {
         await this.context.globalState.update(STATE_ACCOUNT_SUMMARY, accountSummary);
         await this.context.globalState.update(STATE_CONNECTION_HEALTH, 'connected');
         await this.context.globalState.update(STATE_LAST_ERROR, undefined);
-        await this.context.globalState.update(STATE_TOOL_CALLING_SUPPORT, 'unknown');
+        await this.context.globalState.update(STATE_MODEL_TOOL_SUPPORT, undefined);
 
+        this.didChangeAccountEmitter.fire();
         this.didChangeSessionEmitter.fire();
         return this.getSnapshot();
     }
@@ -67,6 +72,7 @@ export class SessionService {
             await this.context.globalState.update(STATE_ACCOUNT_SUMMARY, undefined);
             await this.context.globalState.update(STATE_CONNECTION_HEALTH, 'signedOut');
             await this.context.globalState.update(STATE_LAST_ERROR, undefined);
+            this.didChangeAccountEmitter.fire();
             this.didChangeSessionEmitter.fire();
             return this.getSnapshot();
         }
@@ -92,18 +98,34 @@ export class SessionService {
         await this.context.globalState.update(STATE_CONNECTION_HEALTH, 'signedOut');
         await this.context.globalState.update(STATE_LAST_ERROR, undefined);
         await this.context.globalState.update(STATE_SELECTED_MODEL, undefined);
-        await this.context.globalState.update(STATE_TOOL_CALLING_SUPPORT, 'unknown');
+        await this.context.globalState.update(STATE_MODEL_TOOL_SUPPORT, undefined);
+        this.didChangeAccountEmitter.fire();
         this.didChangeSessionEmitter.fire();
     }
 
     public async setSelectedModel(modelId: string | undefined): Promise<void> {
+        if (this.context.globalState.get<string | undefined>(STATE_SELECTED_MODEL) === modelId) {
+            return;
+        }
         await this.context.globalState.update(STATE_SELECTED_MODEL, modelId);
         this.didChangeSessionEmitter.fire();
     }
 
-    public async setToolCallingSupport(value: ToolCallingSupport): Promise<void> {
-        await this.context.globalState.update(STATE_TOOL_CALLING_SUPPORT, value);
-        this.didChangeSessionEmitter.fire();
+    /** Tool-calling support learned per model from Nova's responses. */
+    public getModelToolSupport(modelId: string): ToolCallingSupport {
+        return this.context.globalState.get<Record<string, ToolCallingSupport>>(STATE_MODEL_TOOL_SUPPORT, {})[modelId] ?? 'unknown';
+    }
+
+    /**
+     * Records tool-calling support for one model. Does not fire a session change:
+     * the model provider refreshes the affected model's capabilities itself.
+     */
+    public async setModelToolSupport(modelId: string, value: ToolCallingSupport): Promise<void> {
+        const current = this.context.globalState.get<Record<string, ToolCallingSupport>>(STATE_MODEL_TOOL_SUPPORT, {});
+        if (current[modelId] === value) {
+            return;
+        }
+        await this.context.globalState.update(STATE_MODEL_TOOL_SUPPORT, { ...current, [modelId]: value });
     }
 
     private async fetchAccountSummary(client: NovaAI): Promise<AccountSummary> {
