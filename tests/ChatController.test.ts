@@ -198,8 +198,8 @@ describe('ChatController', () => {
   it('applies .nova-ai permission rules: deny blocks, allow skips approval, Always allow saves a rule', async () => {
     const rules: Record<string, 'allow' | 'deny'> = { 'rm -rf build': 'deny', 'echo allowed': 'allow' };
     const permissions = {
-      decide: vi.fn(async (_tool: string, subject?: string) => rules[subject ?? '']),
-      allow: vi.fn(async () => '/repo/.nova-ai/settings.local.json')
+      decide: vi.fn(async (_tool: string, input: Record<string, unknown>) => rules[String(input.command ?? '')]),
+      allow: vi.fn(async () => '/home/.nova-ai/projects/repo-12345678/settings.json')
     };
     const { controller, events } = setup([
       [

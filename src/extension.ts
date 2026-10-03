@@ -52,7 +52,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
     const nova = await openNovaHome(context, diagnostics);
     const memory = new MemoryService({ global: nova.home.globalMemory, project: nova.project.memory });
-    const permissions = new PermissionService(path.join(nova.home.root, 'settings.json'));
+    const permissions = new PermissionService(
+        path.join(nova.home.root, 'settings.json'),
+        undefined,
+        undefined,
+        () => nova.project.settings
+    );
 
     const proposedContent = new ProposedContentProvider();
     const chatController = new ChatController(

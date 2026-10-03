@@ -64,6 +64,7 @@ export class NovaHome {
             key,
             dir,
             info: path.join(dir, 'project.json'),
+            settings: path.join(dir, 'settings.json'),
             memory: path.join(dir, 'MEMORY.md'),
             sessions: path.join(dir, 'sessions'),
             scratch: path.join(dir, 'scratch')
@@ -107,6 +108,8 @@ export interface ProjectPaths {
     key: string;
     dir: string;
     info: string;
+    /** Private per-project settings (permission rules), shared with nova-ai-cli. */
+    settings: string;
     memory: string;
     sessions: string;
     scratch: string;

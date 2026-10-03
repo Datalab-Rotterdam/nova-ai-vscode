@@ -693,8 +693,7 @@ export class ChatController implements vscode.Disposable {
             }
 
             // Rules from .nova-ai settings first: deny always wins, allow skips the approval card.
-            const subject = toolSubject(call.name, input);
-            const rule = await this.services.permissions?.decide(call.name, subject);
+            const rule = await this.services.permissions?.decide(call.name, input);
             if (rule === 'deny') {
                 item.status = 'rejected';
                 item.output = 'Blocked by a deny rule in the .nova-ai settings.';
@@ -705,7 +704,7 @@ export class ChatController implements vscode.Disposable {
             if (rule !== 'allow' && this.needsApproval(tool)) {
                 item.status = 'awaiting-approval';
                 if (this.services.permissions) {
-                    item.allowRule = suggestRule(call.name, subject);
+                    item.allowRule = suggestRule(call.name, input, workspaceFolders()[0]?.uri.fsPath);
                 }
                 updateItem(item);
                 const decision = await this.waitForApproval(item.id, token);
@@ -923,11 +922,6 @@ function getApprovalMode(): ApprovalMode {
 }
 
 /** The call's subject for permission rules: the command, URL or path it acts on. */
-function toolSubject(tool: string, input: Record<string, unknown>): string | undefined {
-    const value = tool === 'run_command' ? input.command : tool === 'fetch_url' ? input.url : input.path;
-    return typeof value === 'string' ? value.trim() : undefined;
-}
-
 async function createSystemMessage(memory?: MemoryService): Promise<vscode.LanguageModelChatMessage> {
     const prompt = createPanelPrompt({
         folders: workspaceFolders().map((folder) => folder.name),
