@@ -40,7 +40,7 @@ Two separate build targets in one repo:
 - `src/agent/tools/interactionTools.ts` — panel-only `todo_write` (task strip) and `ask_user` (question card; waits like an approval) via an `InteractionHost` implemented by `ChatController`; no tool cards for them
 - `src/panel/protocol.ts` — type-only message protocol shared with the webview (`chat/*` commands and events)
 - `src/storage/NovaHome.ts` — `~/.nova-ai` layout; per-workspace folder `projects/<slug>-<hash8>` (sha256 of the normalized workspace path; `project.json` maps back)
-- `src/memory/MemoryService.ts` — global and project `MEMORY.md` in ~/.nova-ai, repo `NOVA.md`/`AGENTS.md` (read-only) → prompt section; `memory_read`/`memory_write` tools in `src/agent/tools/memoryTools.ts`
+- `src/memory/MemoryService.ts` — global and project `MEMORY.md` index in ~/.nova-ai plus typed notes in `memory/<name>.md` next to each, repo `NOVA.md`/`AGENTS.md` (read-only) → prompt section; `memory_read`/`memory_write` tools (incl. `save_note`/`delete_note`) in `src/agent/tools/memoryTools.ts`. The ~/.nova-ai layout is shared with nova-ai-cli: `docs/NOVA_HOME.md` is the contract, keep both repos in sync
 - `src/permissions/PermissionService.ts` — allow/deny rules from `~/.nova-ai/settings.json` and `<workspace>/.nova-ai/settings(.local).json`; deny wins; workspace allow only when trusted
 - `src/services/ProfileService.ts` — user avatar for the webview: `AccountSummary.profile.avatarUrl` is downloaded (raster images ≤ 1 MB) and passed as a data: URI; falls back to initials, then an icon. Fill `profile` in `SessionService.fetchAccountSummary` once the Nova API exposes the current user.
 - Scratch: `setScratchRoot()` in `workspacePaths.ts` lets tools use `scratch/...` paths in the project's scratch folder

@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -21,10 +21,12 @@ export interface ProjectInfo {
  *
  * ```
  * ~/.nova-ai/
- *   MEMORY.md                    global memory
+ *   MEMORY.md  memory/           global memory index and notes
  *   projects/<slug>-<hash8>/     one folder per workspace
- *     project.json  MEMORY.md  sessions/  scratch/
+ *     project.json  MEMORY.md  memory/  sessions/  scratch/
  * ```
+ *
+ * The layout is shared with nova-ai-cli; docs/NOVA_HOME.md is the contract.
  */
 export class NovaHome {
     public constructor(public readonly root: string) {
@@ -190,10 +192,21 @@ export async function ensureDir(dir: string): Promise<void> {
     await fs.mkdir(dir, { recursive: true, mode: DIR_MODE });
 }
 
-/** Writes a file readable only by the user, creating its directory. */
+/**
+ * Writes a file readable only by the user, creating its directory. The content goes to a
+ * temporary file first and is renamed into place, so readers (this extension, nova-ai-cli)
+ * never see a half-written file.
+ */
 export async function writePrivateFile(file: string, content: string): Promise<void> {
     await ensureDir(path.dirname(file));
-    await fs.writeFile(file, content, { mode: FILE_MODE });
+    const temp = path.join(path.dirname(file), `.${path.basename(file)}.${process.pid}.${randomUUID()}.tmp`);
+    try {
+        await fs.writeFile(temp, content, { mode: FILE_MODE, flag: 'wx' });
+        await fs.rename(temp, file);
+    } catch (error) {
+        await fs.rm(temp, { force: true });
+        throw error;
+    }
 }
 
 /** Deletes files in `dir` (recursively) not modified for `maxAgeDays`, and then empty folders. */
