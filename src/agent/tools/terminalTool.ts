@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { type ChildProcess, spawn } from 'node:child_process';
 import * as vscode from 'vscode';
 import { NovaTool, ToolInputError } from './types';
 import { ensureDir } from '../../storage/NovaHome';
@@ -55,10 +55,19 @@ interface ShellResult {
 
 export function runShell(command: string, cwd: string, timeoutMs: number, token: vscode.CancellationToken): Promise<ShellResult> {
     return new Promise((resolve) => {
-        const child = spawn(command, { cwd, shell: true, env: { ...process.env, CI: '1', NO_COLOR: '1', FORCE_COLOR: '0' } });
+        // Own process group on POSIX, so a timeout or stop also ends the command's children
+        // (the shell may not exec the command itself, e.g. dash on Linux, and npm spawns node).
+        const child = spawn(command, {
+            cwd,
+            shell: true,
+            detached: process.platform !== 'win32',
+            env: { ...process.env, CI: '1', NO_COLOR: '1', FORCE_COLOR: '0' }
+        });
         let output = '';
         let timedOut = false;
         let cancelled = false;
+        let settled = false;
+        let forceTimer: NodeJS.Timeout | undefined;
         const append = (chunk: Buffer) => {
             output += chunk.toString();
             if (output.length > MAX_OUTPUT_CHARS * 4) {
@@ -70,24 +79,63 @@ export function runShell(command: string, cwd: string, timeoutMs: number, token:
         child.stderr.on('data', append);
         child.stdin.end();
 
+        const stop = () => {
+            killTree(child, 'SIGTERM');
+            // Escalate if the command ignores SIGTERM, and stop waiting for pipes a grandchild may still hold.
+            forceTimer = setTimeout(() => {
+                killTree(child, 'SIGKILL');
+                finish(child.exitCode);
+            }, KILL_GRACE_MS);
+        };
+
         const timer = setTimeout(() => {
             timedOut = true;
-            child.kill();
+            stop();
         }, timeoutMs);
         const subscription = token.onCancellationRequested(() => {
             cancelled = true;
-            child.kill();
+            stop();
         });
 
-        const finish = (exitCode: number | null) => {
+        function finish(exitCode: number | null) {
+            if (settled) {
+                return;
+            }
+            settled = true;
             clearTimeout(timer);
+            clearTimeout(forceTimer);
             subscription.dispose();
+            child.stdout.destroy();
+            child.stderr.destroy();
             resolve({ exitCode, output: output.trimEnd(), timedOut, cancelled });
-        };
+        }
         child.on('error', (error) => {
             output += `\n${error.message}`;
             finish(null);
         });
-        child.on('close', finish);
+        child.on('close', (code) => finish(code));
     });
+}
+
+const KILL_GRACE_MS = 1_000;
+
+/** Kills the command and everything it started. */
+function killTree(child: ChildProcess, signal: NodeJS.Signals): void {
+    if (child.pid === undefined || child.exitCode !== null && signal === 'SIGTERM') {
+        return;
+    }
+    try {
+        if (process.platform === 'win32') {
+            spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' }).on('error', () => undefined);
+        } else {
+            process.kill(-child.pid, signal);
+        }
+    } catch {
+        // Already gone, or no process group: fall back to the shell itself.
+        try {
+            child.kill(signal);
+        } catch {
+            // already exited
+        }
+    }
 }

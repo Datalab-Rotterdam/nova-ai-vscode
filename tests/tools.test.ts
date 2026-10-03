@@ -69,9 +69,20 @@ describe('run_command shell runner', () => {
     expect(result.exitCode).toBe(3);
   });
 
-  it('stops commands that exceed the timeout', async () => {
-    const result = await runShell('sleep 5', process.cwd(), 200, vscode.CancellationToken.None as vscode.CancellationToken);
+  it('stops commands that exceed the timeout, including the processes they started', async () => {
+    const started = Date.now();
+    // A compound command keeps sh as the parent on every platform, like dash on Linux CI.
+    // Even if the shell survives SIGTERM and starts the next sleep, SIGKILL ends the group.
+    const result = await runShell('sleep 5; sleep 5', process.cwd(), 200, vscode.CancellationToken.None as vscode.CancellationToken);
     expect(result.timedOut).toBe(true);
+    expect(Date.now() - started).toBeLessThan(2_500);
+  });
+
+  it('stops a command when the run is cancelled', async () => {
+    const source = new vscode.CancellationTokenSource();
+    setTimeout(() => source.cancel(), 100);
+    const result = await runShell('sleep 5', process.cwd(), 10_000, source.token as unknown as vscode.CancellationToken);
+    expect(result.cancelled).toBe(true);
   });
 });
 
