@@ -1,6 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import { commands, Disposable, Uri, ViewColumn, Webview, WebviewPanel, WebviewPanelSerializer, WebviewView, WebviewViewProvider, window } from 'vscode';
+import { commands, Disposable, ThemeIcon, Uri, ViewColumn, Webview, WebviewPanel, WebviewPanelSerializer, WebviewView, WebviewViewProvider, window } from 'vscode';
+import type { SkillsCommand } from '../skills/protocol';
+import type { SkillPaths } from '../skills/SkillService';
+import { SkillsController } from '../skills/SkillsController';
 import { Diagnostics } from '../core/diagnostics';
 import {
   COMMAND_MANAGE_MODELS,
@@ -28,9 +31,10 @@ const WEBVIEW_ENTRY = 'webview/index.html' as const;
 const HEAD_MARKER = '<!--nova:svelte-head-->';
 const BODY_MARKER = '<!--nova:svelte-body-->';
 
-export type Surface = 'sidebar' | 'editor';
+export type Surface = 'sidebar' | 'editor' | 'skills';
 
 export const CHAT_PANEL_VIEW_TYPE = 'nova.chatPanel';
+export const SKILLS_VIEW_TYPE = 'nova.skills';
 
 export type ChatFactory = (post: (event: ChatEvent) => void, options: ChatControllerOptions) => ChatController;
 
@@ -47,6 +51,8 @@ export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer
   private lastActivePanel?: WebviewPanel;
   private createChat?: ChatFactory;
   private readonly profiles = new ProfileService();
+  private skillPaths?: () => SkillPaths;
+  private skills?: { panel: WebviewPanel; controller: SkillsController };
 
   public constructor(
     private readonly extensionUri: Uri,
@@ -62,6 +68,50 @@ export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer
   public useChats(createChat: ChatFactory): void {
     this.createChat = createChat;
     this.sidebarChat = this.newSidebarChat(undefined);
+  }
+
+  /** Where skills live, for the Skills page. */
+  public useSkills(paths: () => SkillPaths): void {
+    this.skillPaths = paths;
+  }
+
+  /** The Skills page (one editor tab): skills of every project, or of this one. */
+  public async openSkills(): Promise<void> {
+    if (this.skills) {
+      this.skills.panel.reveal();
+      return;
+    }
+    await this.adoptSkillsPanel(window.createWebviewPanel(SKILLS_VIEW_TYPE, 'Nova Skills', ViewColumn.Active, {
+      enableScripts: true,
+      localResourceRoots: this.resourceRoots()
+    }));
+  }
+
+  /** Restores the Skills tab after a window reload. */
+  public readonly skillsSerializer: WebviewPanelSerializer = {
+    deserializeWebviewPanel: (panel) => this.adoptSkillsPanel(panel)
+  };
+
+  private async adoptSkillsPanel(panel: WebviewPanel): Promise<void> {
+    if (!this.skillPaths) {
+      panel.dispose();
+      return;
+    }
+    panel.iconPath = new ThemeIcon('book');
+    const controller = new SkillsController(this.skillPaths, (message) => postSafely(panel.webview, message));
+    this.skills = { panel, controller };
+    panel.onDidChangeViewState(() => {
+      if (panel.visible) {
+        controller.refresh();
+      }
+    });
+    panel.onDidDispose(() => {
+      controller.dispose();
+      if (this.skills?.panel === panel) {
+        this.skills = undefined;
+      }
+    });
+    await this.attach(panel.webview, 'skills');
   }
 
   /** The sidebar's chat. */
@@ -87,6 +137,7 @@ export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer
     }
     this.panels.clear();
     this.sidebarChat?.dispose();
+    this.skills?.controller.dispose();
   }
 
   public async resolveWebviewView(view: WebviewView): Promise<void> {
@@ -231,7 +282,8 @@ export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer
   private surfaces(): Array<{ webview: Webview; surface: Surface }> {
     return [
       ...(this.view ? [{ webview: this.view.webview, surface: 'sidebar' as const }] : []),
-      ...[...this.panels.keys()].map((panel) => ({ webview: panel.webview, surface: 'editor' as const }))
+      ...[...this.panels.keys()].map((panel) => ({ webview: panel.webview, surface: 'editor' as const })),
+      ...(this.skills ? [{ webview: this.skills.panel.webview, surface: 'skills' as const }] : [])
     ];
   }
 
@@ -264,6 +316,18 @@ export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer
   }
 
   private async handleMessage(message: SidebarMessage, source: Webview): Promise<void> {
+    if (message.command.startsWith('skills/')) {
+      if (this.skills?.panel.webview === source) {
+        try {
+          await this.skills.controller.handle(message as unknown as SkillsCommand);
+        } catch (error) {
+          this.diagnostics.error('Nova skills action failed.', error);
+          void window.showErrorMessage(toUserMessage(error));
+          this.skills?.controller.refresh();
+        }
+      }
+      return;
+    }
     const panel = [...this.panels.keys()].find((candidate) => candidate.webview === source);
     this.lastActivePanel = panel;
     if (message.command.startsWith('chat/')) {
@@ -469,7 +533,7 @@ function createBootstrapScript(state: SidebarRenderState, nonce: string): string
 }
 
 /** A tab can be closed while its chat still reports (a stopped reply saving). */
-function postSafely(webview: Webview, event: ChatEvent): void {
+function postSafely(webview: Webview, event: unknown): void {
   try {
     void Promise.resolve(webview.postMessage(event)).catch(() => undefined);
   } catch {

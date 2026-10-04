@@ -15,7 +15,7 @@ export interface SidebarModel {
 export interface SidebarRenderState {
   snapshot: SessionSnapshot;
   profile?: ProfileView;
-  surface?: 'sidebar' | 'editor';
+  surface?: 'sidebar' | 'editor' | 'skills';
   models?: SidebarModel[];
   preferredModelId?: string;
   logoUri?: string;

@@ -46,6 +46,7 @@
     "onCommand:nova.addSelectionToChat",
     "onCommand:nova.openChatInEditor",
     "onWebviewPanel:nova.chatPanel",
+    "onWebviewPanel:nova.skills",
     "onCommand:nova.showHistory",
     "onCommand:nova.showAccount"
   ],
@@ -318,6 +319,12 @@
         "command": "nova.chats.delete",
         "title": "Delete",
         "category": "Nova AI"
+      },
+      {
+        "command": "nova.manageSkills",
+        "title": "Nova AI: Manage Skills",
+        "category": "Nova AI",
+        "icon": "$(book)"
       }
     ],
     "menus": {
@@ -371,6 +378,11 @@
           "command": "nova.signOut",
           "when": "view == nova.sidebar && nova.signedIn",
           "group": "3_settings@2"
+        },
+        {
+          "command": "nova.manageSkills",
+          "when": "view == nova.sidebar",
+          "group": "2_memory@4"
         }
       ],
       "editor/context": [

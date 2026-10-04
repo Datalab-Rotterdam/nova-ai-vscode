@@ -33,6 +33,8 @@ import type {
     SessionSummary,
     ToolItem
 } from './protocol';
+import { enabledSkills, type Skill, type SkillPaths } from '../skills/SkillService';
+import { buildSkillsPrompt, createLoadSkillTool } from '../skills/skillTools';
 import type { ChatHub } from './ChatHub';
 import { confirmAndDeleteChats, type ChatHistory } from './chatSearch';
 import { fromStoredMessages, type SessionStore, type StoredSession, toStoredMessages } from './SessionStore';
@@ -117,7 +119,7 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         private readonly proposedContent: ProposedContentProvider,
         private readonly diagnostics: Diagnostics,
         private post: (event: ChatEvent) => void,
-        private readonly services: { memory?: MemoryService; permissions?: PermissionService } = {},
+        private readonly services: { memory?: MemoryService; permissions?: PermissionService; skillPaths?: () => SkillPaths } = {},
         private readonly options: ChatControllerOptions = {}
     ) {
         this.rememberLast = options.rememberLast ?? true;
@@ -477,9 +479,11 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         this.running = running;
         this.post({ type: 'chat/running', running: true });
 
-        const conversation = [await createSystemMessage(this.services.memory), ...this.messages];
+        // Only the skills that are on, and their list ranked by this message (see skillTools).
+        const skills = this.services.skillPaths ? enabledSkills(this.services.skillPaths()) : [];
+        const conversation = [await createSystemMessage(this.services.memory, buildSkillsPrompt(skills, prompt)), ...this.messages];
         this.conversation = conversation;
-        const tools = availableTools(this.services.memory, this.interactionHost());
+        const tools = availableTools(this.services.memory, this.interactionHost(), skills);
         let assistantItem: Extract<ChatItem, { kind: 'assistant' }> | undefined;
         let thinkingItem: Extract<ChatItem, { kind: 'thinking' }> | undefined;
 
@@ -1094,9 +1098,10 @@ interface AvailableTool {
 }
 
 /** Nova's built-in tools plus MCP tools registered in VS Code, which can run without a chat request. */
-function availableTools(memory?: MemoryService, interaction?: InteractionHost): AvailableTool[] {
+function availableTools(memory?: MemoryService, interaction?: InteractionHost, skills: readonly Skill[] = []): AvailableTool[] {
     const novaTools = [
         ...BUILT_IN_TOOLS,
+        ...(skills.length ? [createLoadSkillTool(skills) as NovaTool<never>] : []),
         ...(interaction ? createInteractionTools(interaction) : []),
         ...(memory?.isEnabled() ? createMemoryTools(memory) : [])
     ];
@@ -1123,13 +1128,14 @@ function getApprovalMode(): ApprovalMode {
 }
 
 /** The call's subject for permission rules: the command, URL or path it acts on. */
-async function createSystemMessage(memory?: MemoryService): Promise<vscode.LanguageModelChatMessage> {
+async function createSystemMessage(memory?: MemoryService, skills?: string): Promise<vscode.LanguageModelChatMessage> {
     const prompt = createPanelPrompt({
         folders: workspaceFolders().map((folder) => folder.name),
         platform: process.platform,
         shell: vscode.env.shell || undefined,
         scratch: Boolean(getScratchRoot()),
-        memory: memory?.isEnabled() ? await memory.promptSection().catch(() => '') : undefined
+        memory: memory?.isEnabled() ? await memory.promptSection().catch(() => '') : undefined,
+        skills
     });
     const systemRole = getSystemRole();
     return systemRole !== undefined

@@ -2,6 +2,8 @@
     import {onMount, untrack} from 'svelte';
     import type {ChatEvent} from '../../src/panel/protocol';
     import ChatView from './chat/ChatView.svelte';
+    import SkillsPage from './skills/SkillsPage.svelte';
+    import type {SkillScopeName, SkillsPageData} from '../../src/skills/protocol';
     import {createChatStore} from './chat/store.svelte';
     import type {ExtensionMessage, SidebarRenderState, SidebarView, VsCodeApi} from './types';
     import ApiKeyView from './views/ApiKeyView.svelte';
@@ -17,11 +19,17 @@
     const chat = createChatStore();
     /** The Chats page over the conversation (history button, title bar). */
     let chatsOpen = $state(false);
+    /** The Skills tab runs this same app with surface "skills". */
+    const skillsSurface = untrack(() => initialState.surface === 'skills');
+    let skills = $state<SkillsPageData | undefined>();
+    const savedScope = (vscode?.getState?.() as { scope?: SkillScopeName } | undefined)?.scope;
 
     onMount(() => {
         const onMessage = (event: MessageEvent<ExtensionMessage | ChatEvent>) => {
             const message = event.data;
-            if (message.type.startsWith('chat/')) {
+            if (message.type === 'skills') {
+                skills = (message as unknown as { data: SkillsPageData }).data;
+            } else if (message.type.startsWith('chat/')) {
                 chat.apply(message as ChatEvent);
                 if (message.type === 'chat/state') {
                     // An editor tab reopens this chat after a window reload.
@@ -55,6 +63,10 @@
         };
 
         window.addEventListener('message', onMessage);
+        if (skillsSurface) {
+            post({command: 'skills/ready'});
+            return () => window.removeEventListener('message', onMessage);
+        }
         post({command: 'ready'});
         post({command: 'chat/ready'});
         return () => window.removeEventListener('message', onMessage);
@@ -74,7 +86,9 @@
     <title>Nova AI</title>
 </svelte:head>
 
-{#if view === 'chat' && chat.state}
+{#if skillsSurface}
+    <SkillsPage data={skills} {post} initialScope={savedScope ?? 'global'} onScope={(scope) => vscode?.setState?.({scope})}/>
+{:else if view === 'chat' && chat.state}
     <ChatView chat={chat.state} {post} logoUri={state.logoUri} surface={state.surface} profile={state.profile} onAccount={() => view = 'account'} {chatsOpen} onChats={(open) => chatsOpen = open}/>
 {:else if view === 'chat'}
     <div class="nova-loader" aria-label="Loading Nova chat"></div>

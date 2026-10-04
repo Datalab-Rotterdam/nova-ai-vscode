@@ -10,6 +10,7 @@ import {
     COMMAND_CHAT_DELETE,
     COMMAND_CHAT_OPEN_IN_EDITOR,
     COMMAND_CHAT_RENAME,
+    COMMAND_MANAGE_SKILLS,
     COMMAND_SEARCH_CHATS,
     COMMAND_SHOW_HISTORY,
     COMMAND_FOCUS_CHAT,
@@ -33,7 +34,9 @@ import {SessionService} from './services/SessionService';
 import {toUserMessage} from './core/errors';
 import type {LanguageModelInfo} from './core/types';
 import {StatusBar} from './status/StatusBar';
-import {CHAT_PANEL_VIEW_TYPE, ViewProvider, type SignInResult} from './views';
+import {CHAT_PANEL_VIEW_TYPE, SKILLS_VIEW_TYPE, ViewProvider, type SignInResult} from './views';
+import type {SkillPaths} from './skills/SkillService';
+import * as os from 'node:os';
 import {registerAgentParticipant} from './chat/AgentParticipant';
 import {registerVsCodeTools} from './agent/tools/vscodeTools';
 import {ChatController} from './panel/ChatController';
@@ -66,6 +69,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     );
 
     const proposedContent = new ProposedContentProvider();
+    // Skill folders and settings (docs/NOVA_HOME.md, "Skills"), read fresh on every use.
+    const skillPaths = (): SkillPaths => ({
+        home: os.homedir(),
+        novaHome: nova.home.root,
+        projectSettings: nova.project.settings,
+        workspaceRoots: (vscode.workspace.workspaceFolders ?? []).filter((folder) => folder.uri.scheme === 'file').map((folder) => folder.uri.fsPath)
+    });
+    sidebarProvider.useSkills(skillPaths);
     const chatHub = new ChatHub();
     // One controller per chat surface (the sidebar, each editor tab), all sharing the store.
     sidebarProvider.useChats((post, options) => {
@@ -76,7 +87,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             proposedContent,
             diagnostics,
             post,
-            { memory, permissions },
+            { memory, permissions, skillPaths },
             { ...options, hub: chatHub }
         );
         chatHub.add(controller);
@@ -118,6 +129,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             await target.reveal();
         }),
         vscode.window.registerWebviewPanelSerializer(CHAT_PANEL_VIEW_TYPE, sidebarProvider),
+        vscode.window.registerWebviewPanelSerializer(SKILLS_VIEW_TYPE, sidebarProvider.skillsSerializer),
+        vscode.commands.registerCommand(COMMAND_MANAGE_SKILLS, async () => {
+            await sidebarProvider.openSkills();
+        }),
         vscode.commands.registerCommand(COMMAND_OPEN_CHAT_IN_EDITOR, async () => {
             await sidebarProvider.openInEditor();
         }),

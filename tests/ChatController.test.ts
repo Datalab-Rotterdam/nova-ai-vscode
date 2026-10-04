@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 
@@ -360,6 +363,30 @@ describe('ChatController', () => {
 
     await controller.handle({ command: 'chat/stop' });
     await sending;
+  });
+
+  it('lists the skills that are on in the system prompt and offers load_skill', async () => {
+    const base = mkdtempSync(join(tmpdir(), 'nova-panel-skills-'));
+    try {
+      const novaHome = join(base, '.nova-ai');
+      for (const [name, description] of [['review', 'Review a pull request.'], ['deploy', 'Deploy the app.']]) {
+        mkdirSync(join(novaHome, 'skills', name), { recursive: true });
+        writeFileSync(join(novaHome, 'skills', name, 'SKILL.md'), `---\nname: ${name}\ndescription: ${description}\n---\nsteps`);
+      }
+      writeFileSync(join(novaHome, 'settings.json'), JSON.stringify({ skills: { disabled: ['deploy'] } }));
+      const skillPaths = () => ({ home: base, novaHome, workspaceRoots: [] });
+      const { controller, model } = setup([[new vscode.LanguageModelTextPart('Ok.')]], 'autoReadOnly', { skillPaths });
+
+      await controller.handle({ command: 'chat/send', text: 'review this' });
+
+      const [messages, options] = model.sendRequest.mock.calls[0];
+      const system = JSON.stringify(messages[0].content);
+      expect(system).toContain('- review: Review a pull request.');
+      expect(system).not.toContain('deploy');
+      expect(options.tools.map((tool: { name: string }) => tool.name)).toContain('load_skill');
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
   });
 
   it('keeps a task list from todo_write without adding tool cards', async () => {
