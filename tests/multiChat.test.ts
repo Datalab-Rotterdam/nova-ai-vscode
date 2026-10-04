@@ -42,11 +42,16 @@ function model(responses: vscode.LanguageModelTextPart[][]) {
     return { id: 'nova-test', name: 'Nova Test', vendor: 'nova-ai', maxInputTokens: 100_000, sendRequest };
 }
 
+const MODELS = [
+    { id: 'nova-test', name: 'Nova Test', maxInputTokens: 100_000, isDefault: true },
+    { id: 'tiny', name: 'Tiny', maxInputTokens: 2_000, isDefault: false }
+];
+
 function world(sessions: StoredSession[] = [], lastSession?: string) {
-    currentModel = model([[new vscode.LanguageModelTextPart('Hi.')]]);
+    currentModel = model([[new vscode.LanguageModelTextPart('Hi.')], [new vscode.LanguageModelTextPart('Small reply.')]]);
     const modelProvider = {
         onDidChangeLanguageModelChatInformation: () => ({ dispose: () => undefined }),
-        listModels: async () => [{ id: 'nova-test', name: 'Nova Test', maxInputTokens: 100_000, isDefault: true }]
+        listModels: async () => MODELS
     };
     vi.spyOn(vscode.workspace, 'getConfiguration').mockReturnValue({
         get: <T>(_key: string, fallback: T) => fallback,
@@ -166,5 +171,47 @@ describe('several chats at once (sidebar and editor tabs)', () => {
         const tab = make({ rememberLast: false, initialSessionId: null, onTitle: (title) => titles.push(title) });
         await tab.controller.handle({ command: 'chat/send', text: 'How does the login flow work?' });
         expect(titles.at(-1)).toBe('How does the login flow work?');
+    });
+
+    it('keeps the model that answered each message when the model is switched', async () => {
+        const { make } = world();
+        const tab = make();
+        await tab.controller.handle({ command: 'chat/send', text: 'first' });
+        await tab.controller.handle({ command: 'chat/selectModel', modelId: 'tiny' });
+        await tab.controller.handle({ command: 'chat/send', text: 'second' });
+
+        const users = tab.controller.getState().items.filter((item) => item.kind === 'user');
+        expect(users.map((item) => [item.text, item.model])).toEqual([['first', 'Nova Test'], ['second', 'Tiny']]);
+    });
+
+    it('tells the user when the chat is too big for the model switched to', async () => {
+        const { make } = world();
+        const tab = make();
+        await tab.controller.handle({ command: 'chat/send', text: 'x'.repeat(8_000) });
+        await tab.controller.handle({ command: 'chat/selectModel', modelId: 'tiny' });
+
+        const state = tab.controller.getState();
+        expect(state.usage?.total).toBe(2_000);
+        expect(state.usage!.used).toBeGreaterThan(1_600);
+        expect(state.items.at(-1)).toMatchObject({ kind: 'notice', tone: 'info' });
+        expect((state.items.at(-1) as { text: string }).text).toMatch(/Tiny takes 2k\. Older messages will be summarized before the next request\./);
+
+        // Back to the big model: it fits, no new notice.
+        const count = state.items.length;
+        await tab.controller.handle({ command: 'chat/selectModel', modelId: 'nova-test' });
+        expect(tab.controller.getState().items).toHaveLength(count);
+    });
+
+    it('warns instead when automatic compaction is off', async () => {
+        const { make } = world();
+        vi.spyOn(vscode.workspace, 'getConfiguration').mockReturnValue({
+            get: <T>(key: string, fallback: T) => (key === 'context.autoCompact' ? false : fallback) as T,
+            update: vi.fn()
+        } as unknown as vscode.WorkspaceConfiguration);
+        const tab = make();
+        await tab.controller.handle({ command: 'chat/send', text: 'x'.repeat(12_000) });
+        await tab.controller.handle({ command: 'chat/selectModel', modelId: 'tiny' });
+        expect(tab.controller.getState().items.at(-1)).toMatchObject({ kind: 'notice', tone: 'warning' });
+        expect((tab.controller.getState().items.at(-1) as { text: string }).text).toMatch(/no longer fits/);
     });
 });

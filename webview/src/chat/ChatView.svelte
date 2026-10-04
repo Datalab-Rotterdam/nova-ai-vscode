@@ -164,7 +164,16 @@
         editingId = undefined;
     }
 
-    const modelName = $derived(chat.models.find((model) => model.id === chat.modelId)?.name ?? 'Nova');
+    /** The model that answered the prompt before `index` (recorded per message; older chats: "Nova"). */
+    function replyModel(index: number): string {
+        for (let at = Math.min(index, chat.items.length - 1); at >= 0; at--) {
+            const item = chat.items[at];
+            if (item.kind === 'user') {
+                return item.model ?? 'Nova';
+            }
+        }
+        return 'Nova';
+    }
     const lastUserIndex = $derived(chat.items.findLastIndex((item) => item.kind === 'user'));
 
     /** A reply header goes above the first non-user item after each user message. */
@@ -213,7 +222,7 @@
                     {:else}
                         <span class="codicon codicon-sparkle" aria-hidden="true"></span>
                     {/if}
-                    <span class="reply-model">{modelName}</span>
+                    <span class="reply-model">{replyModel(index)}</span>
                     {#if chat.running && index > lastUserIndex}
                         <span class="live-dot" aria-label="Generating"></span>
                     {/if}
@@ -277,7 +286,7 @@
                     {#if logoUri}
                         <span class="nova-mark reply-mark" style:--mark-url={`url("${logoUri}")`} aria-hidden="true"></span>
                     {/if}
-                    <span class="reply-model">{modelName}</span>
+                    <span class="reply-model">{replyModel(chat.items.length - 1)}</span>
                     <span class="live-dot" aria-label="Generating"></span>
                 </div>
             {/if}

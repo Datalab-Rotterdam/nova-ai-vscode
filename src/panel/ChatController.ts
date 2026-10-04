@@ -9,6 +9,7 @@ import { displayPath, getScratchRoot, readText, resolveWorkspacePath, workspaceF
 import type { MemoryService } from '../memory/MemoryService';
 import { type PermissionService, suggestRule } from '../permissions/PermissionService';
 import { getSystemRole } from '../core/apiSupport';
+import { estimateMessagesTokens, tokenCalibration } from '../agent/ContextManager';
 import { getCompactThreshold, getMaxToolRounds, isAutoCompactEnabled } from '../core/config';
 import { Diagnostics } from '../core/diagnostics';
 import { createPanelPrompt } from '../core/prompts';
@@ -104,6 +105,8 @@ export class ChatController implements vscode.Disposable, ChatHistory {
     private readonly disposables: vscode.Disposable[] = [];
     private initialized?: Promise<void>;
     private rememberLast: boolean;
+    /** Name of the model answering the running reply (steering messages get it too). */
+    private runModelName?: string;
     /** The session the hub last heard about, so it is only told about changes. */
     private announcedSessionId?: string;
 
@@ -185,9 +188,7 @@ export class ChatController implements vscode.Disposable, ChatHistory {
                 await confirmAndDeleteChats(this, command.sessionIds);
                 break;
             case 'chat/selectModel':
-                this.session.modelId = command.modelId;
-                this.usage = undefined;
-                this.postState();
+                this.selectModel(command.modelId);
                 break;
             case 'chat/addFile':
                 await this.addFile();
@@ -351,6 +352,45 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         await this.workspaceState.update(LAST_SESSION_KEY, undefined);
     }
 
+    /**
+     * Switches the model for the next messages (earlier replies keep theirs). A smaller
+     * context window may no longer hold the conversation: the usage meter shows the new
+     * share at once, and the user is told whether the next request compacts it first.
+     */
+    private selectModel(modelId: string): void {
+        const previous = this.models.find((model) => model.id === this.selectedModelId());
+        this.session.modelId = modelId;
+        const next = this.models.find((model) => model.id === modelId);
+        if (!next || !this.messages.length) {
+            this.usage = undefined;
+            this.postState();
+            return;
+        }
+
+        const used = estimateMessagesTokens(this.messages, tokenCalibration.ratio(next.id));
+        const total = next.maxInputTokens;
+        this.usage = { used, total };
+        if (previous?.id !== next.id && used > total * getCompactThreshold()) {
+            const size = `This chat is about ${formatTokens(used)} tokens; ${next.name} takes ${formatTokens(total)}.`;
+            this.addItem(isAutoCompactEnabled()
+                ? {
+                    kind: 'notice',
+                    id: randomUUID(),
+                    tone: 'info',
+                    text: `${size} Older messages will be summarized before the next request.`
+                }
+                : {
+                    kind: 'notice',
+                    id: randomUUID(),
+                    tone: 'warning',
+                    text: used > total
+                        ? `${size} It no longer fits and automatic compaction is off (nova.context.autoCompact): switch back, turn it on, or start a new chat.`
+                        : `${size} It is close to the limit and automatic compaction is off (nova.context.autoCompact).`
+                });
+        }
+        this.postState();
+    }
+
     /** Stops the running reply and waits until it has been saved to its own chat. */
     public async stopAndWait(): Promise<void> {
         if (this.running) {
@@ -414,6 +454,7 @@ export class ChatController implements vscode.Disposable, ChatHistory {
             return;
         }
         this.session.modelId = model.id;
+        this.runModelName = info?.name ?? model.name;
 
         this.addItem({
             kind: 'user',
@@ -422,6 +463,7 @@ export class ChatController implements vscode.Disposable, ChatHistory {
             attachments: attachments.map((attachment) => attachment.label),
             files: attachments,
             messageIndex: this.messages.length,
+            model: this.runModelName,
             ...(steered ? { steered } : {})
         });
         if (this.session.items.filter((item) => item.kind === 'user').length === 1) {
@@ -693,6 +735,7 @@ export class ChatController implements vscode.Disposable, ChatHistory {
                 attachments: item.attachments,
                 files: item.files,
                 messageIndex: offset + messages.length,
+                model: this.runModelName,
                 steered: true
             });
             messages.push(vscode.LanguageModelChatMessage.User(await buildPrompt(item.text, item.files)));
@@ -1162,6 +1205,15 @@ function textResult(text: string): vscode.LanguageModelToolResult {
 
 function clip(text: string): string {
     return text.length > MAX_CARD_OUTPUT_CHARS ? `${text.slice(0, MAX_CARD_OUTPUT_CHARS)}\n…` : text;
+}
+
+/** "950", "12.3k", "128k". */
+function formatTokens(tokens: number): string {
+    if (tokens < 1_000) {
+        return String(tokens);
+    }
+    const thousands = tokens / 1_000;
+    return `${thousands < 100 ? thousands.toFixed(1).replace(/\.0$/, '') : Math.round(thousands)}k`;
 }
 
 function summarizeTitle(text: string): string {

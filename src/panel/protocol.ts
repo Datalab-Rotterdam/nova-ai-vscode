@@ -14,6 +14,8 @@ export type ChatItem =
         files?: Attachment[];
         /** Position of this message in the model conversation, used to cut it on edit. */
         messageIndex?: number;
+        /** Name of the model that answered this message (older chats do not have it). */
+        model?: string;
     }
     | { kind: 'assistant'; id: string; text: string }
     | { kind: 'thinking'; id: string; text: string }
