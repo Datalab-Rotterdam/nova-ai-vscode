@@ -33,6 +33,10 @@ export function createChatStore() {
                 }
                 break;
             }
+            case 'chat/sessions':
+                state.sessions = event.sessions;
+                state.openElsewhere = event.openElsewhere;
+                break;
             case 'chat/running':
                 state.running = event.running;
                 break;

@@ -129,6 +129,8 @@ export interface ChatState {
     usage?: { used: number; total: number };
     /** Saved chats of the workspace, newest first (for the Chats page). */
     sessions: SessionSummary[];
+    /** Chats open in another place (the sidebar or another editor tab). */
+    openElsewhere: string[];
     approvalMode: ApprovalMode;
     queue: QueuedMessage[];
     /** Nova's task list for the current work; empty when there is none or it was closed. */
@@ -144,6 +146,7 @@ export type ApprovalDecision = 'approve' | 'approveSession' | 'approveAlways' | 
 /** Extension → webview. */
 export type ChatEvent =
     | { type: 'chat/state'; state: ChatState }
+    | { type: 'chat/sessions'; sessions: SessionSummary[]; openElsewhere: string[] }
     | { type: 'chat/itemAdded'; item: ChatItem }
     | { type: 'chat/itemUpdated'; item: ChatItem }
     | { type: 'chat/textDelta'; itemId: string; delta: string }

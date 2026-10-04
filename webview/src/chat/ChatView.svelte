@@ -184,7 +184,7 @@
         <!-- The sidebar has these actions in VS Code's own title bar; the editor tab has none. -->
         {#if surface === 'editor'}
             <button class="icon codicon codicon-history" title="Chats" aria-label="Chats" aria-pressed={chatsOpen} onclick={() => onChats(!chatsOpen)}></button>
-            <button class="icon codicon codicon-add" title="New chat" aria-label="New chat" onclick={() => { onChats(false); post({command: 'chat/new'}); }}></button>
+            <button class="icon codicon codicon-add" title="New chat in a new tab" aria-label="New chat in a new tab" onclick={() => post({command: 'newChatTab'})}></button>
         {:else if chatsOpen}
             <button class="icon codicon codicon-close" title="Back to the chat (Esc)" aria-label="Back to the chat" onclick={() => onChats(false)}></button>
         {/if}
@@ -301,7 +301,7 @@
     <Composer {chat} {post}/>
     </div>
     {#if chatsOpen}
-        <ChatsPage sessions={chat.sessions} currentId={chat.sessionId} running={chat.running} {post} onClose={() => onChats(false)}/>
+        <ChatsPage sessions={chat.sessions} openElsewhere={chat.openElsewhere ?? []} currentId={chat.sessionId} running={chat.running} {surface} {post} onClose={() => onChats(false)}/>
     {/if}
     </div>
 </section>

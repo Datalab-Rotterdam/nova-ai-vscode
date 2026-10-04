@@ -3,8 +3,11 @@
     import type {SessionSummary} from '../../../src/panel/protocol';
     import {filterChats, formatAge, groupChats} from '../../../src/panel/chatGroups';
 
-    let {sessions, currentId, running, post, onClose}: {
+    let {sessions, openElsewhere = [], currentId, running, surface = 'sidebar', post, onClose}: {
         sessions: SessionSummary[];
+        /** Chats open in another place (the sidebar or another editor tab). */
+        openElsewhere?: string[];
+        surface?: 'sidebar' | 'editor';
         currentId: string;
         running: boolean;
         post: (message: Record<string, unknown>) => void;
@@ -46,11 +49,25 @@
             onClose();
             return;
         }
+        if (openElsewhere.includes(chat.id)) {
+            // The extension shows the tab (or the sidebar) that has it.
+            post({command: 'chat/open', sessionId: chat.id});
+            return;
+        }
         post({command: 'chat/open', sessionId: chat.id});
         // While Nova works the extension refuses to switch (and says why): stay on the list.
         if (!running) {
             onClose();
         }
+    }
+
+    function openInEditor(chat: SessionSummary) {
+        post({command: 'openChatInEditor', sessionId: chat.id});
+    }
+
+    /** VS Code's native context menu for a row (see "webview/context" in package.json). */
+    function menuContext(chat: SessionSummary): string {
+        return JSON.stringify({webviewSection: 'novaChatRow', sessionId: chat.id, preventDefaultContextMenuItems: true});
     }
 
     function remove(ids: string[]) {
@@ -197,6 +214,7 @@
                 {#each group.chats as chat (chat.id)}
                     {@const current = chat.id === currentId}
                     {@const working = current && running}
+                    {@const elsewhere = openElsewhere.includes(chat.id)}
                     <div
                         class="row"
                         class:current
@@ -206,6 +224,7 @@
                         role="option"
                         aria-selected={chat.id === activeId}
                         aria-current={current ? 'true' : undefined}
+                        data-vscode-context={menuContext(chat)}
                     >
                         {#if editingId === chat.id}
                             <input
@@ -228,12 +247,22 @@
                                         <span class="codicon codicon-loading spin"></span>
                                     {:else if current}
                                         <span class="dot"></span>
+                                    {:else if elsewhere}
+                                        <span class="codicon codicon-window elsewhere-icon"></span>
                                     {/if}
                                 </span>
                                 <span class="chat-title">{chat.title || 'Untitled chat'}</span>
-                                <span class="age">{working ? 'working…' : current ? 'open' : formatAge(chat.updatedAt, now)}</span>
+                                <span class="age">{working ? 'working…' : current ? 'open' : elsewhere ? (surface === 'editor' ? 'open elsewhere' : 'in a tab') : formatAge(chat.updatedAt, now)}</span>
                             </button>
                             <span class="actions">
+                                {#if !current || surface === 'sidebar'}
+                                    <button
+                                        class="icon codicon codicon-link-external"
+                                        title={elsewhere ? 'Show where it is open' : surface === 'editor' ? 'Open in a new tab' : 'Open in editor'}
+                                        aria-label={`Open ${chat.title} in the editor`}
+                                        onclick={() => openInEditor(chat)}
+                                    ></button>
+                                {/if}
                                 <button class="icon codicon codicon-edit" title="Rename (F2)" aria-label={`Rename ${chat.title}`} onclick={() => startRename(chat)}></button>
                                 <button class="icon codicon codicon-trash" title="Delete" aria-label={`Delete ${chat.title}`} onclick={() => remove([chat.id])}></button>
                             </span>
@@ -453,6 +482,11 @@
 
   .row.current .age {
     color: var(--nova-link);
+  }
+
+  .elsewhere-icon {
+    font-size: 12px;
+    color: var(--nova-muted);
   }
 
   .rename {

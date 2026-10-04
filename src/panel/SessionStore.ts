@@ -42,6 +42,9 @@ const LEGACY_MIGRATED_KEY = 'nova.chat.sessionsMigrated';
  */
 export class SessionStore {
     private index: SessionSummary[] = [];
+    private readonly changed = new vscode.EventEmitter<void>();
+    /** A chat was saved, renamed or deleted (the list changed). */
+    public readonly onDidChange = this.changed.event;
 
     private constructor(private readonly dir: string) {
     }
@@ -76,6 +79,7 @@ export class SessionStore {
         summaries.unshift({ id: session.id, title: session.title, updatedAt: session.updatedAt });
         this.index = summaries;
         await this.writeIndex();
+        this.changed.fire();
     }
 
     /**
@@ -92,6 +96,7 @@ export class SessionStore {
         await writePrivateFile(this.fileFor(id), JSON.stringify(session));
         this.index = this.index.map((summary) => (summary.id === id ? { ...summary, title } : summary));
         await this.writeIndex();
+        this.changed.fire();
         return true;
     }
 
@@ -99,6 +104,7 @@ export class SessionStore {
         await this.deleteFile(id);
         this.index = this.index.filter((summary) => summary.id !== id);
         await this.writeIndex();
+        this.changed.fire();
     }
 
     /**

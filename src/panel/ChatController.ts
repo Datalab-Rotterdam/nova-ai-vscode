@@ -32,12 +32,26 @@ import type {
     SessionSummary,
     ToolItem
 } from './protocol';
+import type { ChatHub } from './ChatHub';
 import { confirmAndDeleteChats, type ChatHistory } from './chatSearch';
 import { fromStoredMessages, type SessionStore, type StoredSession, toStoredMessages } from './SessionStore';
 
 const MAX_ATTACHMENT_CHARS = 60_000;
 const MAX_CARD_OUTPUT_CHARS = 4_000;
 const LAST_SESSION_KEY = 'nova.chat.lastSession';
+
+export interface ChatControllerOptions {
+    /** Knows the other open chats; without it this controller is on its own (tests). */
+    hub?: ChatHub;
+    /** Remember the open chat for the next window (the sidebar); default true. */
+    rememberLast?: boolean;
+    /** Chat to start with: an id, null for a new chat, undefined for the remembered one. */
+    initialSessionId?: string | null;
+    /** Shows this chat's surface. */
+    reveal?: () => Promise<void> | void;
+    /** The chat's title changed (editor tabs show it). */
+    onTitle?: (title: string) => void;
+}
 const MAX_CARD_DIFF_LINES = 400;
 
 interface TrackedChange {
@@ -89,6 +103,9 @@ export class ChatController implements vscode.Disposable, ChatHistory {
     private readonly edits = new Map<string, PendingEdit>();
     private readonly disposables: vscode.Disposable[] = [];
     private initialized?: Promise<void>;
+    private rememberLast: boolean;
+    /** The session the hub last heard about, so it is only told about changes. */
+    private announcedSessionId?: string;
 
     public constructor(
         private readonly modelProvider: ModelProvider,
@@ -96,15 +113,47 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         private readonly workspaceState: vscode.Memento,
         private readonly proposedContent: ProposedContentProvider,
         private readonly diagnostics: Diagnostics,
-        private readonly post: (event: ChatEvent) => void,
-        private readonly services: { memory?: MemoryService; permissions?: PermissionService } = {}
+        private post: (event: ChatEvent) => void,
+        private readonly services: { memory?: MemoryService; permissions?: PermissionService } = {},
+        private readonly options: ChatControllerOptions = {}
     ) {
+        this.rememberLast = options.rememberLast ?? true;
         this.disposables.push(this.modelProvider.onDidChangeLanguageModelChatInformation(() => void this.refreshModels().then(() => this.postState())));
+        if (options.hub) {
+            this.disposables.push(options.hub.onDidChange(() => this.postSessions()));
+        }
+        if (this.store.onDidChange) {
+            this.disposables.push(this.store.onDidChange(() => this.postSessions()));
+        }
     }
 
     public dispose(): void {
         this.running?.cancel();
         this.disposables.forEach((disposable) => disposable.dispose());
+        this.options.hub?.remove(this);
+    }
+
+    /** Sends this chat's events to another webview (the chat moved to an editor tab) and resyncs it. */
+    public moveTo(post: (event: ChatEvent) => void, options: Pick<ChatControllerOptions, 'reveal' | 'onTitle'>): void {
+        this.post = post;
+        this.rememberLast = false;
+        this.options.reveal = options.reveal;
+        this.options.onTitle = options.onTitle;
+        this.postState();
+    }
+
+    /** Shows this chat's surface (the sidebar or its editor tab). */
+    public async reveal(): Promise<void> {
+        await this.options.reveal?.();
+    }
+
+    /** Nothing to keep: no message yet and nothing running. */
+    public get isEmpty(): boolean {
+        return !this.session.items.length && !this.running;
+    }
+
+    public get title(): string {
+        return this.session.title;
     }
 
     public async handle(command: ChatCommand): Promise<void> {
@@ -237,6 +286,7 @@ export class ChatController implements vscode.Disposable, ChatHistory {
             attachments: this.attachments,
             usage: this.usage,
             sessions: this.store.list(),
+            openElsewhere: this.openElsewhere(),
             approvalMode: getApprovalMode(),
             queue: this.queueView(),
             todos: this.session.todos ?? [],
@@ -246,8 +296,11 @@ export class ChatController implements vscode.Disposable, ChatHistory {
 
     private initialize(): Promise<void> {
         this.initialized ??= (async () => {
-            const lastId = this.workspaceState.get<string>(LAST_SESSION_KEY);
-            const last = lastId ? await this.store.load(lastId) : undefined;
+            const wanted = this.options.initialSessionId !== undefined
+                ? this.options.initialSessionId
+                : this.rememberLast ? this.workspaceState.get<string>(LAST_SESSION_KEY) : undefined;
+            // A chat open in another tab stays there.
+            const last = wanted && !this.options.hub?.ownerOf(wanted, this) ? await this.store.load(wanted) : undefined;
             if (last) {
                 this.loadSession(last);
             }
@@ -270,10 +323,36 @@ export class ChatController implements vscode.Disposable, ChatHistory {
 
     private postState(): void {
         this.post({ type: 'chat/state', state: this.getState() });
+        this.options.onTitle?.(this.session.title);
+        if (this.announcedSessionId !== this.session.id) {
+            this.announcedSessionId = this.session.id;
+            this.options.hub?.notify();
+        }
+    }
+
+    /** The chat list and where chats are open changed elsewhere. */
+    private postSessions(): void {
+        this.post({ type: 'chat/sessions', sessions: this.store.list(), openElsewhere: this.openElsewhere() });
+    }
+
+    private openElsewhere(): string[] {
+        return this.options.hub?.openElsewhere(this) ?? [];
+    }
+
+    /** The sidebar reopens its last chat after a reload; editor tabs remember their own. */
+    private async rememberAsLast(): Promise<void> {
+        if (this.rememberLast) {
+            await this.workspaceState.update(LAST_SESSION_KEY, this.session.id);
+        }
+    }
+
+    /** The sidebar's chat moved to a tab: after a reload the sidebar starts empty. */
+    public async forgetLast(): Promise<void> {
+        await this.workspaceState.update(LAST_SESSION_KEY, undefined);
     }
 
     /** Stops the running reply and waits until it has been saved to its own chat. */
-    private async stopAndWait(): Promise<void> {
+    public async stopAndWait(): Promise<void> {
         if (this.running) {
             this.stop();
             await this.currentRun;
@@ -347,6 +426,7 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         });
         if (this.session.items.filter((item) => item.kind === 'user').length === 1) {
             this.session.title = summarizeTitle(prompt || attachments[0]?.label || 'New chat');
+            this.options.onTitle?.(this.session.title);
         }
 
         this.messages.push(vscode.LanguageModelChatMessage.User(await buildPrompt(prompt, attachments)));
@@ -857,6 +937,11 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         if (sessionId === this.session.id) {
             return true;
         }
+        const owner = this.options.hub?.ownerOf(sessionId, this);
+        if (owner) {
+            await owner.reveal();
+            return false;
+        }
         if (this.running) {
             void vscode.window.showInformationMessage('Nova is still working in this chat. Stop it first, then open another chat.');
             return false;
@@ -867,7 +952,7 @@ export class ChatController implements vscode.Disposable, ChatHistory {
             return false;
         }
         this.loadSession(session);
-        await this.workspaceState.update(LAST_SESSION_KEY, session.id);
+        await this.rememberAsLast();
         this.postState();
         return true;
     }
@@ -877,6 +962,11 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         await this.initialize();
         const name = title.trim();
         if (!name || name.length > 200) {
+            return;
+        }
+        const owner = this.options.hub?.ownerOf(sessionId, this);
+        if (owner) {
+            await owner.renameSession(sessionId, name);
             return;
         }
         if (sessionId === this.session.id) {
@@ -891,20 +981,26 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         this.postState();
     }
 
-    /** Deletes chats; deleting the open chat stops Nova's reply and starts a new chat. */
+    /**
+     * Deletes chats; where one of them is open (here or in another tab) Nova's reply is
+     * stopped and that place starts a new chat.
+     */
     public async deleteSessions(sessionIds: readonly string[]): Promise<void> {
         await this.initialize();
         const ids = new Set(sessionIds);
-        if (ids.has(this.session.id)) {
-            // Let a stopped reply finish saving first, or it would recreate the chat.
-            await this.stopAndWait();
+        const holders = [this, ...[...ids].flatMap((id) => this.options.hub?.ownerOf(id, this) ?? [])]
+            .filter((controller) => ids.has(controller.currentSessionId));
+        // Let stopped replies finish saving first, or they would recreate the chats.
+        for (const holder of holders) {
+            await holder.stopAndWait();
         }
         for (const id of ids) {
             await this.store.delete(id);
         }
-        if (ids.has(this.session.id)) {
-            await this.newChat();
-        } else {
+        for (const holder of holders) {
+            await holder.newChat();
+        }
+        if (!holders.includes(this)) {
             this.postState();
         }
     }
@@ -930,7 +1026,7 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         this.session.messages = toStoredMessages(this.messages);
         try {
             await this.store.save(this.session);
-            await this.workspaceState.update(LAST_SESSION_KEY, this.session.id);
+            await this.rememberAsLast();
             this.postState();
         } catch (error) {
             this.diagnostics.error('Saving the Nova chat failed.', error);

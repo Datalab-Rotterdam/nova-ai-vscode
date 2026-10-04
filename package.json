@@ -303,6 +303,21 @@
         "title": "Nova AI: Search Chats",
         "category": "Nova AI",
         "icon": "$(search)"
+      },
+      {
+        "command": "nova.chats.openInEditor",
+        "title": "Open in Editor",
+        "category": "Nova AI"
+      },
+      {
+        "command": "nova.chats.rename",
+        "title": "Rename…",
+        "category": "Nova AI"
+      },
+      {
+        "command": "nova.chats.delete",
+        "title": "Delete",
+        "category": "Nova AI"
       }
     ],
     "menus": {
@@ -373,6 +388,35 @@
         {
           "command": "nova.chats.search",
           "when": "nova.signedIn"
+        },
+        {
+          "command": "nova.chats.openInEditor",
+          "when": "false"
+        },
+        {
+          "command": "nova.chats.rename",
+          "when": "false"
+        },
+        {
+          "command": "nova.chats.delete",
+          "when": "false"
+        }
+      ],
+      "webview/context": [
+        {
+          "command": "nova.chats.openInEditor",
+          "when": "webviewSection == 'novaChatRow'",
+          "group": "1_open@1"
+        },
+        {
+          "command": "nova.chats.rename",
+          "when": "webviewSection == 'novaChatRow'",
+          "group": "2_edit@1"
+        },
+        {
+          "command": "nova.chats.delete",
+          "when": "webviewSection == 'novaChatRow'",
+          "group": "2_edit@2"
         }
       ]
     },

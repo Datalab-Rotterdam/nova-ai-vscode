@@ -20,6 +20,10 @@ export const COMMAND_REVEAL_HOME = 'nova.revealHome';
 export const COMMAND_CLEAN_UP_PROJECTS = 'nova.cleanUpProjects';
 export const COMMAND_SHOW_HISTORY = 'nova.showHistory';
 export const COMMAND_SEARCH_CHATS = 'nova.chats.search';
+/** Context menu of a row on the Chats page. */
+export const COMMAND_CHAT_OPEN_IN_EDITOR = 'nova.chats.openInEditor';
+export const COMMAND_CHAT_RENAME = 'nova.chats.rename';
+export const COMMAND_CHAT_DELETE = 'nova.chats.delete';
 export const COMMAND_SHOW_ACCOUNT = 'nova.showAccount';
 export const CONTEXT_SIGNED_IN = 'nova.signedIn';
 

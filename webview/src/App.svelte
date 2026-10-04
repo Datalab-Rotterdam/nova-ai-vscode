@@ -23,6 +23,10 @@
             const message = event.data;
             if (message.type.startsWith('chat/')) {
                 chat.apply(message as ChatEvent);
+                if (message.type === 'chat/state') {
+                    // An editor tab reopens this chat after a window reload.
+                    vscode?.setState?.({sessionId: (message as Extract<ChatEvent, {type: 'chat/state'}>).state.sessionId});
+                }
             } else if (message.type === 'ui') {
                 const action = (message as unknown as { action: 'history' | 'account' | 'chat' }).action;
                 if (state.snapshot.hasApiKey) {
