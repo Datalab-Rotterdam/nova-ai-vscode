@@ -1,6 +1,7 @@
 # Moving the extension's agent onto `nova-ai --acp`
 
-Status: proposal (2026-10-03). Covers the chat panel and the `@nova` chat
+Status: phase A done in nova-ai-cli (2026-10-04, not yet released); the
+rest is a proposal. Covers the chat panel and the `@nova` chat
 participant. The language-model provider stays as it is.
 
 ## Why
@@ -81,8 +82,8 @@ Legend: ✅ the ACP agent already does this · 🟡 small change · 🔴 new wor
 | Usage `{used, total}` | `usage_update`, `_nova/session/context_usage` | ✅ |
 | Title | `session_info_update` | ✅ |
 | Auto-compaction, `/compact` | agent compacts on overflow; `/compact` command | ✅ (settings: see below) |
-| Model picker (`chat/selectModel`, `maxInputTokens`) | `model` config option; `providers/list` `_meta` | 🟡 add the context window to the model list `_meta` |
-| Attachments: files and selections with line ranges | prompt `resource_link` / embedded `resource` blocks | 🟡 confirm line ranges (URI fragment `#L10-L20`) are read; test |
+| Model picker (`chat/selectModel`, `maxInputTokens`) | `model` config option; `providers/list` `_meta` | ✅ (A) `contextWindow` and `maxOutputTokens` per model in `providers/list` `_meta` |
+| Attachments: files and selections with line ranges | prompt `resource_link` / embedded `resource` blocks | ✅ (A) the model gets the path and `#L10-L20` / `#L10` line range of both block types |
 | Edit an earlier message and resend (`chat/editMessage`) | `_nova/session/rewind` by completed turns | 🟡 the client counts turns after the edited message; editing a steered message (not a turn start) is not offered |
 
 ### Queue and steering
@@ -90,20 +91,20 @@ Legend: ✅ the ACP agent already does this · 🟡 small change · 🔴 new wor
 | Panel feature | ACP agent today | Status / work |
 |---|---|---|
 | Queue while working, steer at the next step | `_nova/queue/*` with `kind: followup | steer`, injected at the next tool boundary | ✅ |
-| Switch an entry between queue and steer (`chat/queueMode`) | `_nova/queue/update` has no `kind` | 🟡 accept `kind` in `queue/update` |
+| Switch an entry between queue and steer (`chat/queueMode`) | `_nova/queue/update` with `kind` | ✅ (A) |
 | Remove (`chat/queueRemove`) | `_nova/queue/remove` | ✅ |
-| Send now (`chat/queueSendNow`) | — | 🟡 = switch to steer and move to the front (`front` on update) |
+| Send now (`chat/queueSendNow`) | `_nova/queue/update` with `kind: "steer"`, `front: true` | ✅ (A) |
 
 ### Tools
 
 | Extension tool | ACP agent | Status / work |
 |---|---|---|
 | `read_file`, `edit_file`, `search_text`, `run_command`, `ask_user`, `memory_read`, `memory_write` | same names | ✅ |
-| `list_dir` | `list_directory` | 🟡 alias the name so existing rules (`list_dir(...)`) keep matching |
-| `create_file` | `write_file` | 🟡 alias, as above |
+| `list_dir` | `list_directory` | ✅ (A) rules naming either match both |
+| `create_file` | `write_file` | ✅ (A) as above |
 | `todo_write` | `update_plan` (ACP `plan`) | ✅ different name, same feature; alias for rules |
-| `find_files` (glob) | — | 🔴 add to the agent (workspace-confined; `.gitignore`, `node_modules` excluded) |
-| `fetch_url` | — | 🔴 add to the agent; **network egress = approval required** (it can carry code out in a URL); rule subject is the URL (already in `NOVA_HOME.md`) |
+| `find_files` (glob) | — | ✅ (A) workspace-confined; `node_modules`, `.git` and build output skipped (`.gitignore` is not read) |
+| `fetch_url` | — | ✅ (A) always asks unless a rule allows the URL; same-site redirects only |
 | `get_diagnostics` (VS Code problems) | — | 🔴 editor-only: provided by the extension's MCP bridge (below) |
 | VS Code MCP tools (`mcp_*`, `nova.agent.includeMcpTools`) | agent connects MCP servers given in `session/new` | 🔴 MCP bridge (below) |
 | MCP servers from `.mcp.json` / `.nova-ai/settings.json` | ✅ agent reads them (trusted workspaces) | ✅ |
@@ -123,7 +124,7 @@ approval every time.
 | Edits see unsaved editor buffers | client `fs/read_text_file` / `fs/write_text_file` | ✅ the extension implements these with VS Code documents |
 | Diff in the tool card, "Open diff" | `diff` content in `tool_call` | ✅ render it; `ProposedContentProvider` stays |
 | Keep / Undo per file or all (`chat/keepChange`, `chat/undoChange`) | — | ✅ **stays in the extension**: every write goes through the client's `fs/write_text_file`, so the extension records the baseline exactly as today |
-| Command execution | client `terminal/*` or agent-side | 🟡 the extension implements ACP terminals (process tree kill as in `terminalTool.ts`); `nova.agent.commandTimeoutSeconds` → `terminal/create` timeout |
+| Command execution | client `terminal/*` or agent-side | 🟡 the extension implements ACP terminals (process tree kill as in `terminalTool.ts`); `nova.agent.commandTimeoutSeconds` → session setting `commandTimeoutSeconds` (✅ A: the agent kills with `terminal/kill`) |
 
 ### Permissions
 
@@ -143,18 +144,24 @@ approval every time.
 | Panel feature | ACP agent today | Status / work |
 |---|---|---|
 | History list, open, delete | `session/list` (paged), `session/load` (with replay), `session/delete` | ✅ |
-| Session storage | agent: `projects/<key>/cli-sessions/*.jsonl` · extension: `projects/<key>/sessions/index.json` | 🔴 one-time import of extension chats into the agent's format (agent side, idempotent); `NOVA_HOME.md` then describes one format |
+| Session storage | agent: `projects/<key>/cli-sessions/*.jsonl` · extension: `projects/<key>/sessions/index.json` | ✅ (A) `session/list` with a `cwd` imports the panel's chats once (ids recorded in `cli-sessions/extension-import.json`); one format once phase E removes the panel's store |
 | Memory (`MEMORY.md` + notes), memory commands | same files and tools | ✅ (commands open the same files) |
-| `nova.memory.enabled` | — | 🟡 session config option or `_meta` on `session/new` |
+| `nova.memory.enabled` | session setting `memory` | ✅ (A) |
 
 ### Settings
+
+Session settings are not ACP config options (those show up as selectors in
+every client); the extension sends them as `_meta["nova-ai-cli/settings"]` on
+`session/new`/`load`/`resume`/`fork` and calls `_nova/session/set_settings`
+when the user changes one (see the agent's `docs/ACP.md`).
 
 | Setting | After |
 |---|---|
 | `nova.agent.approvalMode` | `permission_mode` config option |
-| `nova.agent.maxToolRounds` | 🟡 new config option (agent default 64) |
-| `nova.context.autoCompact`, `nova.context.compactThreshold`, `nova.context.defaultContextWindow` | 🟡 new config options |
-| `nova.agent.commandTimeoutSeconds` | client terminal timeout |
+| `nova.agent.maxToolRounds` | ✅ (A) session setting `maxToolRounds` (agent default 64) |
+| `nova.context.autoCompact`, `nova.context.compactThreshold` | ✅ (A) session settings `autoCompact`, `compactThreshold` |
+| `nova.context.defaultContextWindow` | the agent uses the window the gateway reports; open: a fallback setting for models that report none |
+| `nova.agent.commandTimeoutSeconds` | ✅ (A) session setting `commandTimeoutSeconds` |
 | `nova.agent.includeMcpTools` | MCP bridge on/off |
 | `nova.home` | `NOVA_AI_HOME` |
 | `nova.memory.enabled` | see above |
