@@ -29,8 +29,10 @@ import type {
     FileChange,
     QuestionItem,
     QueuedMessage,
+    SessionSummary,
     ToolItem
 } from './protocol';
+import { confirmAndDeleteChats, type ChatHistory } from './chatSearch';
 import { fromStoredMessages, type SessionStore, type StoredSession, toStoredMessages } from './SessionStore';
 
 const MAX_ATTACHMENT_CHARS = 60_000;
@@ -63,7 +65,7 @@ interface PendingEdit {
  * approvals, persistence through {@link SessionStore}. The webview only renders
  * {@link ChatState} and the incremental {@link ChatEvent}s posted here.
  */
-export class ChatController implements vscode.Disposable {
+export class ChatController implements vscode.Disposable, ChatHistory {
     private session: StoredSession = newSession();
     private messages: vscode.LanguageModelChatMessage[] = [];
     private attachments: Attachment[] = [];
@@ -125,10 +127,13 @@ export class ChatController implements vscode.Disposable {
                 await this.newChat();
                 break;
             case 'chat/open':
-                await this.open(command.sessionId);
+                await this.openSession(command.sessionId);
+                break;
+            case 'chat/rename':
+                await this.renameSession(command.sessionId, command.title);
                 break;
             case 'chat/delete':
-                await this.deleteSession(command.sessionId);
+                await confirmAndDeleteChats(this, command.sessionIds);
                 break;
             case 'chat/selectModel':
                 this.session.modelId = command.modelId;
@@ -209,7 +214,7 @@ export class ChatController implements vscode.Disposable {
     }
 
     public async newChat(): Promise<void> {
-        this.stop();
+        await this.stopAndWait();
         this.session = newSession();
         this.messages = [];
         this.attachments = [];
@@ -265,6 +270,14 @@ export class ChatController implements vscode.Disposable {
 
     private postState(): void {
         this.post({ type: 'chat/state', state: this.getState() });
+    }
+
+    /** Stops the running reply and waits until it has been saved to its own chat. */
+    private async stopAndWait(): Promise<void> {
+        if (this.running) {
+            this.stop();
+            await this.currentRun;
+        }
     }
 
     /** Sends a message, or queues it as steering when Nova is already working. */
@@ -824,23 +837,72 @@ export class ChatController implements vscode.Disposable {
         this.post({ type: 'chat/attachments', attachments: this.attachments });
     }
 
-    private async open(sessionId: string): Promise<void> {
+    /** Saved chats of this workspace, newest first. */
+    public listSessions(): SessionSummary[] {
+        return this.store.list();
+    }
+
+    /** The chat shown in the panel; it is only in {@link listSessions} once it has been saved. */
+    public get currentSessionId(): string {
+        return this.session.id;
+    }
+
+    public get isRunning(): boolean {
+        return Boolean(this.running);
+    }
+
+    /** Shows a saved chat in the panel. Refused while Nova is working, so no reply is cut off. */
+    public async openSession(sessionId: string): Promise<boolean> {
+        await this.initialize();
+        if (sessionId === this.session.id) {
+            return true;
+        }
         if (this.running) {
-            return;
+            void vscode.window.showInformationMessage('Nova is still working in this chat. Stop it first, then open another chat.');
+            return false;
         }
         const session = await this.store.load(sessionId);
         if (!session) {
             void vscode.window.showWarningMessage('This Nova chat could not be loaded.');
-            return;
+            return false;
         }
         this.loadSession(session);
         await this.workspaceState.update(LAST_SESSION_KEY, session.id);
         this.postState();
+        return true;
     }
 
-    private async deleteSession(sessionId: string): Promise<void> {
-        await this.store.delete(sessionId);
+    /** Renames a chat; the open chat is renamed in memory too, so a running reply keeps the name. */
+    public async renameSession(sessionId: string, title: string): Promise<void> {
+        await this.initialize();
+        const name = title.trim();
+        if (!name || name.length > 200) {
+            return;
+        }
         if (sessionId === this.session.id) {
+            this.session.title = name;
+            // A running reply saves the chat (with the new name) when it ends.
+            if (!this.running && this.store.list().some((summary) => summary.id === sessionId)) {
+                await this.store.save(this.session);
+            }
+        } else {
+            await this.store.rename(sessionId, name);
+        }
+        this.postState();
+    }
+
+    /** Deletes chats; deleting the open chat stops Nova's reply and starts a new chat. */
+    public async deleteSessions(sessionIds: readonly string[]): Promise<void> {
+        await this.initialize();
+        const ids = new Set(sessionIds);
+        if (ids.has(this.session.id)) {
+            // Let a stopped reply finish saving first, or it would recreate the chat.
+            await this.stopAndWait();
+        }
+        for (const id of ids) {
+            await this.store.delete(id);
+        }
+        if (ids.has(this.session.id)) {
             await this.newChat();
         } else {
             this.postState();

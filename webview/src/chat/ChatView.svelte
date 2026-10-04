@@ -4,31 +4,25 @@
     import type {ProfileView} from '../../../src/core/types';
     import Avatar from './Avatar.svelte';
     import ChangesStrip from './ChangesStrip.svelte';
+    import ChatsPage from './ChatsPage.svelte';
     import Composer from './Composer.svelte';
     import QuestionCard from './QuestionCard.svelte';
     import TodoStrip from './TodoStrip.svelte';
     import Markdown from './Markdown.svelte';
     import ToolCard from './ToolCard.svelte';
 
-    let {chat, post, onAccount, logoUri, surface = 'sidebar', historyToggle = 0, profile}: {
+    let {chat, post, onAccount, logoUri, surface = 'sidebar', profile, chatsOpen = false, onChats}: {
         chat: ChatState;
         profile?: ProfileView;
         logoUri?: string;
         surface?: 'sidebar' | 'editor';
-        /** Incremented by the title bar's history button. */
-        historyToggle?: number;
         post: (message: Record<string, unknown>) => void;
         onAccount: () => void;
+        /** The Chats page is shown over the conversation. */
+        chatsOpen?: boolean;
+        onChats: (open: boolean) => void;
     } = $props();
 
-    let showHistory = $state(false);
-    let seenToggle = 0;
-    $effect(() => {
-        if (historyToggle !== seenToggle) {
-            seenToggle = historyToggle;
-            showHistory = !showHistory;
-        }
-    });
     let list: HTMLElement | undefined = $state();
     let content: HTMLElement | undefined = $state();
 
@@ -178,47 +172,29 @@
         const item = chat.items[index];
         return item.kind !== 'user' && (index === 0 || chat.items[index - 1].kind === 'user');
     }
-
-    function formatDate(time: number): string {
-        return new Date(time).toLocaleString(undefined, {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'});
-    }
 </script>
 
 <section class="chat" class:editor={surface === 'editor'}>
     <header>
-        <span class="title" title={chat.title}>{chat.title}</span>
+        {#if chatsOpen}
+            <span class="title">Chats</span>
+        {:else}
+            <span class="title" title={chat.title}>{chat.title}</span>
+        {/if}
         <!-- The sidebar has these actions in VS Code's own title bar; the editor tab has none. -->
         {#if surface === 'editor'}
-            <button class="icon codicon codicon-history" title="Chat history" aria-label="Chat history" aria-pressed={showHistory} onclick={() => showHistory = !showHistory}></button>
-            <button class="icon codicon codicon-add" title="New chat" aria-label="New chat" onclick={() => { showHistory = false; post({command: 'chat/new'}); }}></button>
-        {:else if showHistory}
-            <button class="icon codicon codicon-close" title="Close history" aria-label="Close history" onclick={() => showHistory = false}></button>
+            <button class="icon codicon codicon-history" title="Chats" aria-label="Chats" aria-pressed={chatsOpen} onclick={() => onChats(!chatsOpen)}></button>
+            <button class="icon codicon codicon-add" title="New chat" aria-label="New chat" onclick={() => { onChats(false); post({command: 'chat/new'}); }}></button>
+        {:else if chatsOpen}
+            <button class="icon codicon codicon-close" title="Back to the chat (Esc)" aria-label="Back to the chat" onclick={() => onChats(false)}></button>
         {/if}
         <button class="avatar-button" title="Account and models" aria-label="Account and models" onclick={onAccount}>
             <Avatar {profile}/>
         </button>
     </header>
 
-    {#if showHistory}
-        <div class="history">
-            {#if chat.sessions.length}
-                <ul>
-                    {#each chat.sessions as session (session.id)}
-                        <li class:active={session.id === chat.sessionId}>
-                            <button class="open" onclick={() => { showHistory = false; post({command: 'chat/open', sessionId: session.id}); }}>
-                                <span class="session-title">{session.title}</span>
-                                <span class="session-date">{formatDate(session.updatedAt)}</span>
-                            </button>
-                            <button class="icon codicon codicon-trash" title="Delete chat" aria-label={`Delete ${session.title}`} onclick={() => post({command: 'chat/delete', sessionId: session.id})}></button>
-                        </li>
-                    {/each}
-                </ul>
-            {:else}
-                <p class="empty-history">No earlier chats in this workspace.</p>
-            {/if}
-        </div>
-    {/if}
-
+    <div class="body">
+    <div class="conversation" inert={chatsOpen}>
     <div class="items-wrap">
     <div class="items" bind:this={list} role="log" aria-live="polite">
     <div class="content" bind:this={content}>
@@ -323,6 +299,11 @@
         <TodoStrip todos={chat.todos} running={chat.running} {post}/>
     {/if}
     <Composer {chat} {post}/>
+    </div>
+    {#if chatsOpen}
+        <ChatsPage sessions={chat.sessions} currentId={chat.sessionId} running={chat.running} {post} onClose={() => onChats(false)}/>
+    {/if}
+    </div>
 </section>
 
 <style lang="scss">
@@ -378,71 +359,20 @@
     }
   }
 
-  .history {
-    flex: none;
-    max-height: 50vh;
-    overflow-y: auto;
-    border-bottom: 1px solid var(--nova-border);
-
-    ul {
-      margin: 0;
-      padding: 4px 0;
-      list-style: none;
-    }
-
-    li {
-      display: flex;
-      align-items: center;
-      padding-right: 8px;
-
-      &:hover {
-        background: var(--nova-hover);
-      }
-
-      &.active .session-title {
-        font-weight: 600;
-      }
-
-      .icon {
-        visibility: hidden;
-        color: var(--nova-muted);
-      }
-
-      &:hover .icon,
-      .icon:focus-visible {
-        visibility: visible;
-      }
-    }
-
-    .open {
-      flex: 1;
-      min-width: 0;
-      display: grid;
-      padding: 4px 12px;
-      border: 0;
-      background: none;
-      color: var(--nova-fg);
-      font: inherit;
-      text-align: left;
-      cursor: pointer;
-    }
+  /* The Chats page lies over the conversation, which stays mounted (scroll position, streaming). */
+  .body {
+    position: relative;
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
   }
 
-  .session-title,
-  .session-date {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .session-date {
-    color: var(--nova-muted);
-    font-size: 0.85em;
-  }
-
-  .empty-history {
-    padding: 8px 12px;
-    color: var(--nova-muted);
+  .conversation {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
   }
 
   .items-wrap {

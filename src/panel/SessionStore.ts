@@ -29,7 +29,6 @@ export interface StoredSession {
     todos?: TodoItem[];
 }
 
-const MAX_SESSIONS = 50;
 const INDEX_FILE = 'index.json';
 
 /** Keys of the pre-~/.nova-ai storage in VS Code's workspace storage. */
@@ -39,7 +38,7 @@ const LEGACY_MIGRATED_KEY = 'nova.chat.sessionsMigrated';
 /**
  * Persists panel conversations per workspace in `~/.nova-ai/projects/<key>/sessions`:
  * an `index.json` plus one JSON file per session. The index is cached in memory so the
- * history list renders without disk access.
+ * history list renders without disk access. Chats are kept until the user deletes them.
  */
 export class SessionStore {
     private index: SessionSummary[] = [];
@@ -75,11 +74,25 @@ export class SessionStore {
 
         const summaries = this.list().filter((summary) => summary.id !== session.id);
         summaries.unshift({ id: session.id, title: session.title, updatedAt: session.updatedAt });
-        for (const dropped of summaries.slice(MAX_SESSIONS)) {
-            await this.deleteFile(dropped.id);
-        }
-        this.index = summaries.slice(0, MAX_SESSIONS);
+        this.index = summaries;
         await this.writeIndex();
+    }
+
+    /**
+     * Gives a stored chat a new title without changing when it was last used.
+     * The chat that is open in the panel is renamed through the controller instead,
+     * which saves its in-memory copy. Returns false when the chat does not exist.
+     */
+    public async rename(id: string, title: string): Promise<boolean> {
+        const session = await this.load(id);
+        if (!session) {
+            return false;
+        }
+        session.title = title;
+        await writePrivateFile(this.fileFor(id), JSON.stringify(session));
+        this.index = this.index.map((summary) => (summary.id === id ? { ...summary, title } : summary));
+        await this.writeIndex();
+        return true;
     }
 
     public async delete(id: string): Promise<void> {
@@ -114,7 +127,7 @@ export class SessionStore {
         }
 
         if (migrated) {
-            this.index = this.list().slice(0, MAX_SESSIONS);
+            this.index = this.list();
             await this.writeIndex();
         }
         await state.update(LEGACY_MIGRATED_KEY, true);

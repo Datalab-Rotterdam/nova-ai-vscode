@@ -288,7 +288,7 @@
       },
       {
         "command": "nova.showHistory",
-        "title": "Nova AI: Chat History",
+        "title": "Nova AI: Chats",
         "category": "Nova AI",
         "icon": "$(history)"
       },
@@ -297,6 +297,12 @@
         "title": "Nova AI: Account and Models",
         "category": "Nova AI",
         "icon": "$(account)"
+      },
+      {
+        "command": "nova.chats.search",
+        "title": "Nova AI: Search Chats",
+        "category": "Nova AI",
+        "icon": "$(search)"
       }
     ],
     "menus": {
@@ -363,6 +369,10 @@
         {
           "command": "nova.addSelectionToChat",
           "when": "nova.signedIn && editorIsOpen"
+        },
+        {
+          "command": "nova.chats.search",
+          "when": "nova.signedIn"
         }
       ]
     },

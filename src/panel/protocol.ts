@@ -127,6 +127,7 @@ export interface ChatState {
     attachments: Attachment[];
     /** Prompt tokens of the last request and the model's input budget. */
     usage?: { used: number; total: number };
+    /** Saved chats of the workspace, newest first (for the Chats page). */
     sessions: SessionSummary[];
     approvalMode: ApprovalMode;
     queue: QueuedMessage[];
@@ -161,7 +162,8 @@ export type ChatCommand =
     | { command: 'chat/approval'; itemId: string; decision: ApprovalDecision }
     | { command: 'chat/new' }
     | { command: 'chat/open'; sessionId: string }
-    | { command: 'chat/delete'; sessionId: string }
+    | { command: 'chat/rename'; sessionId: string; title: string }
+    | { command: 'chat/delete'; sessionIds: string[] }
     | { command: 'chat/selectModel'; modelId: string }
     | { command: 'chat/addFile' }
     | { command: 'chat/addSelection' }

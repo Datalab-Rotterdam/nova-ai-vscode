@@ -19,6 +19,7 @@ export const COMMAND_OPEN_PROJECT_MEMORY = 'nova.openProjectMemory';
 export const COMMAND_REVEAL_HOME = 'nova.revealHome';
 export const COMMAND_CLEAN_UP_PROJECTS = 'nova.cleanUpProjects';
 export const COMMAND_SHOW_HISTORY = 'nova.showHistory';
+export const COMMAND_SEARCH_CHATS = 'nova.chats.search';
 export const COMMAND_SHOW_ACCOUNT = 'nova.showAccount';
 export const CONTEXT_SIGNED_IN = 'nova.signedIn';
 

@@ -97,7 +97,7 @@ export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer
   }
 
   /** Asks the sidebar webview to show a view (from the VS Code title bar buttons). */
-  public async showInSidebar(view: 'history' | 'account'): Promise<void> {
+  public async showInSidebar(view: 'history' | 'account' | 'chat'): Promise<void> {
     await this.view?.webview.postMessage({ type: 'ui', action: view });
   }
 

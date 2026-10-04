@@ -15,7 +15,8 @@
     let view = $state<SidebarView>(untrack(() => initialState.snapshot.hasApiKey) ? 'chat' : 'welcome');
     let signIn = $state<{ busy: boolean; error?: string }>({busy: false});
     const chat = createChatStore();
-    let historyToggle = $state(0);
+    /** The Chats page over the conversation (history button, title bar). */
+    let chatsOpen = $state(false);
 
     onMount(() => {
         const onMessage = (event: MessageEvent<ExtensionMessage | ChatEvent>) => {
@@ -23,13 +24,16 @@
             if (message.type.startsWith('chat/')) {
                 chat.apply(message as ChatEvent);
             } else if (message.type === 'ui') {
-                const action = (message as unknown as { action: 'history' | 'account' }).action;
+                const action = (message as unknown as { action: 'history' | 'account' | 'chat' }).action;
                 if (state.snapshot.hasApiKey) {
                     if (action === 'account') {
                         view = view === 'account' ? 'chat' : 'account';
-                    } else {
+                    } else if (action === 'history') {
+                        chatsOpen = view === 'chat' ? !chatsOpen : true;
                         view = 'chat';
-                        historyToggle++;
+                    } else {
+                        chatsOpen = false;
+                        view = 'chat';
                     }
                 }
             } else if (message.type === 'state') {
@@ -67,7 +71,7 @@
 </svelte:head>
 
 {#if view === 'chat' && chat.state}
-    <ChatView chat={chat.state} {post} logoUri={state.logoUri} surface={state.surface} {historyToggle} profile={state.profile} onAccount={() => view = 'account'}/>
+    <ChatView chat={chat.state} {post} logoUri={state.logoUri} surface={state.surface} profile={state.profile} onAccount={() => view = 'account'} {chatsOpen} onChats={(open) => chatsOpen = open}/>
 {:else if view === 'chat'}
     <div class="nova-loader" aria-label="Loading Nova chat"></div>
 {:else if view === 'account'}

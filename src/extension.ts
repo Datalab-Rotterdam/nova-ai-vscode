@@ -7,6 +7,7 @@ import {
     COMMAND_OPEN_PROJECT_MEMORY,
     COMMAND_REVEAL_HOME,
     COMMAND_SHOW_ACCOUNT,
+    COMMAND_SEARCH_CHATS,
     COMMAND_SHOW_HISTORY,
     COMMAND_FOCUS_CHAT,
     COMMAND_MANAGE_MODELS,
@@ -35,6 +36,7 @@ import {registerVsCodeTools} from './agent/tools/vscodeTools';
 import {ChatController} from './panel/ChatController';
 import {PROPOSED_SCHEME, ProposedContentProvider} from './panel/ProposedContentProvider';
 import {SessionStore} from './panel/SessionStore';
+import {searchChats} from './panel/chatSearch';
 import * as path from 'node:path';
 import {MemoryService, type MemoryScope} from './memory/MemoryService';
 import {PermissionService} from './permissions/PermissionService';
@@ -91,6 +93,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         vscode.workspace.registerTextDocumentContentProvider(PROPOSED_SCHEME, proposedContent),
         vscode.commands.registerCommand(COMMAND_NEW_CHAT, async () => {
             await focusSidebar(sidebarProvider);
+            await sidebarProvider.showInSidebar('chat');
             await chatController.newChat();
         }),
         vscode.commands.registerCommand(COMMAND_ADD_SELECTION, async () => {
@@ -104,6 +107,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         vscode.commands.registerCommand(COMMAND_SHOW_HISTORY, async () => {
             await focusSidebar(sidebarProvider);
             await sidebarProvider.showInSidebar('history');
+        }),
+        vscode.commands.registerCommand(COMMAND_SEARCH_CHATS, async () => {
+            await searchChats(chatController, async () => {
+                await focusSidebar(sidebarProvider);
+                await sidebarProvider.showInSidebar('chat');
+            });
         }),
         vscode.commands.registerCommand(COMMAND_SHOW_ACCOUNT, async () => {
             await focusSidebar(sidebarProvider);
