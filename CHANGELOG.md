@@ -1,3 +1,20 @@
+# [1.0.0-alpha.17](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.16...v1.0.0-alpha.17) (2026-10-05)
+
+
+### Bug Fixes
+
+* **panel:** replies keep their model; warn when a switch outgrows the context ([7e86698](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/7e86698fbb710f06dc758e8882ba4efe6d4ac16a))
+* **permissions:** equivalent tool names match each other's rules ([ad4daee](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/ad4daee182aed462e30ed705e32c6aa598d065e3))
+* **permissions:** per-segment command rules and private "Always allow" ([a78cad2](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/a78cad2f3a9fc93bd209a5ee4fdb5c4489bfa0f4))
+
+
+### Features
+
+* **memory:** typed memory notes shared with nova-ai-cli ([a1d24ce](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/a1d24ce583e2b951334b760f6afcdb8810a05d96))
+* **panel:** Chats page to browse, search, rename and delete conversations ([74796d9](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/74796d95ca83c649a25b7baaa68b5cba6cee5d8d))
+* **panel:** several chats at once in editor tabs ([290f2a8](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/290f2a83d79f7ee0f064ecf99fb45e027dd553b2))
+* **skills:** manage skills globally and per project; the panel uses them ([4829300](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/48293009aa9115df6c61792809009f1dd218eeb1))
+
 # [1.0.0-alpha.16](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.15...v1.0.0-alpha.16) (2026-10-03)
 
 
