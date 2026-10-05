@@ -486,4 +486,77 @@ describe('ChatController', () => {
     expect([...files.keys()].some((key) => key.endsWith('notes/new.md'))).toBe(false);
     expect(controller.getState().changes).toEqual([]);
   });
+
+  describe('slash commands', () => {
+    const textOf = (message: vscode.LanguageModelChatMessage) => message.content
+      .map((part) => (part instanceof vscode.LanguageModelTextPart ? part.value : ''))
+      .join('');
+    const notices = (controller: ChatController) => controller.getState().items.filter((item) => item.kind === 'notice').map((item) => item.text);
+
+    it('/clear starts a new chat without asking the model', async () => {
+      const { controller, model } = setup([[new vscode.LanguageModelTextPart('Hello.')]]);
+      await controller.handle({ command: 'chat/send', text: 'hi' });
+      const first = controller.getState().sessionId;
+
+      await controller.handle({ command: 'chat/send', text: '/clear' });
+
+      expect(controller.getState()).toMatchObject({ items: [], title: 'New chat' });
+      expect(controller.getState().sessionId).not.toBe(first);
+      expect(model.sendRequest).toHaveBeenCalledTimes(1);
+    });
+
+    it('/compact replaces the conversation with a summary that later messages build on', async () => {
+      const { controller, model } = setup([
+        [new vscode.LanguageModelTextPart('Hello.')],
+        [new vscode.LanguageModelTextPart('Goal: say hi.')],
+        [new vscode.LanguageModelTextPart('Next.')]
+      ]);
+      await controller.handle({ command: 'chat/send', text: 'hi' });
+      await controller.handle({ command: 'chat/send', text: '/compact the greeting' });
+
+      const compaction = textOf(model.sendRequest.mock.calls[1][0][0]);
+      expect(compaction).toContain('User:\nhi');
+      expect(compaction).toContain('Focus the summary on: the greeting');
+      expect(notices(controller).pop()).toMatch(/^Conversation compacted/);
+      // The chat stays visible.
+      expect(controller.getState().items.filter((item) => item.kind === 'user' || item.kind === 'assistant')).toHaveLength(2);
+
+      await controller.handle({ command: 'chat/send', text: 'and now?' });
+      const sent = (model.sendRequest.mock.calls[2][0] as vscode.LanguageModelChatMessage[]).slice(1).map(textOf);
+      expect(sent[0]).toContain('<conversation-summary>');
+      expect(sent[0]).toContain('Goal: say hi.');
+      expect(sent.some((text) => text === 'hi')).toBe(false);
+      expect(sent).toContain('and now?');
+    });
+
+    it('/compact says so when there is nothing to compact', async () => {
+      const { controller, model } = setup([]);
+      await controller.handle({ command: 'chat/send', text: '/compact' });
+      expect(notices(controller)).toEqual(['Nothing to compact yet.']);
+      expect(model.sendRequest).not.toHaveBeenCalled();
+    });
+
+    it('/model lists the models and reports names that match none', async () => {
+      const { controller } = setup([]);
+      await controller.handle({ command: 'chat/send', text: '/model' });
+      await controller.handle({ command: 'chat/send', text: '/model gpt' });
+      await controller.handle({ command: 'chat/send', text: '/model nova test' });
+      expect(notices(controller)).toEqual([
+        'Models (switch with /model <name>):\n● Nova Test',
+        'No model matches "gpt". Models:\n● Nova Test',
+        'Model: Nova Test'
+      ]);
+    });
+
+    it('/rename renames the chat; unknown commands and paths are sent as messages', async () => {
+      const { controller, model } = setup([[new vscode.LanguageModelTextPart('ok')], [new vscode.LanguageModelTextPart('ok')]]);
+      await controller.handle({ command: 'chat/send', text: '/rename  Release prep ' });
+      expect(controller.getState().title).toBe('Release prep');
+
+      await controller.handle({ command: 'chat/send', text: '/deploy now' });
+      await controller.handle({ command: 'chat/send', text: '/etc/hosts looks wrong' });
+      expect(model.sendRequest).toHaveBeenCalledTimes(2);
+      expect(controller.getState().items.filter((item) => item.kind === 'user').map((item) => item.text)).toEqual(['/deploy now', '/etc/hosts looks wrong']);
+    });
+  });
 });

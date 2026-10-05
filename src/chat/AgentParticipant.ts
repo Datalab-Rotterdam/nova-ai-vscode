@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { runAgentLoop, summarize, type ToolRound } from '../agent/AgentLoop';
-import { buildTranscript } from '../agent/ContextManager';
+import { buildTranscript, summaryBlock } from '../agent/ContextManager';
 import { getEnabledRequestTools, getSystemRole, reportThinking, reportUsage } from '../core/apiSupport';
 import { getCompactThreshold, getMaxToolRounds, isAutoCompactEnabled } from '../core/config';
 import { COMMAND_MANAGE, NOVA_VENDOR } from '../core/constants';
@@ -266,10 +266,6 @@ async function compactConversation(
     stream.markdown(`Conversation compacted. Later messages continue from this summary:\n\n${summary}`);
     const metadata: NovaChatMetadata = { summary };
     return { metadata };
-}
-
-function summaryBlock(summary: string): string {
-    return `<conversation-summary>\nEarlier parts of this conversation were compacted. Summary:\n\n${summary}\n</conversation-summary>`;
 }
 
 function withCommand(command: string | undefined, prompt: string): string {

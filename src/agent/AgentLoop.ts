@@ -219,12 +219,13 @@ async function compact(
     return fitted.stage === 'summarized' ? summary : undefined;
 }
 
-/** Asks the model for a summary of older turns, without tools. */
+/** Asks the model for a summary of older turns, without tools; `focus` says what the summary should keep. */
 export async function summarize(
     model: vscode.LanguageModelChat,
     transcript: string,
     budget: number,
-    token: vscode.CancellationToken
+    token: vscode.CancellationToken,
+    focus?: string
 ): Promise<string> {
     // Leave room for the prompt itself and the summary.
     const maxTranscriptChars = Math.max(2_000, Math.floor(budget * 0.6) * 3);
@@ -233,7 +234,7 @@ export async function summarize(
         : transcript;
 
     const response = await model.sendRequest(
-        [vscode.LanguageModelChatMessage.User(COMPACTION_PROMPT.replace('{transcript}', clipped))],
+        [vscode.LanguageModelChatMessage.User(COMPACTION_PROMPT.replace('{transcript}', () => clipped) + (focus ? `\n\nFocus the summary on: ${focus}` : ''))],
         {},
         token
     );
