@@ -52,6 +52,9 @@
     "onCommand:nova.showHelp"
   ],
   "contributes": {
+    "markdown.previewStyles": [
+      "./resources/help/preview.css"
+    ],
     "chatParticipants": [
       {
         "id": "nova-ai.nova",

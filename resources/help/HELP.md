@@ -1,4 +1,7 @@
-# Nova AI Help
+<div align="center">
+  <img src="../icons/icon-192-rounded.png" alt="Nova AI" width="96" height="96" />
+  <h1>Nova AI Help</h1>
+</div>
 
 Nova AI brings the Nova model catalog into VS Code. You can use it in three places:
 
@@ -174,3 +177,11 @@ Everything lives in `~/.nova-ai` (change it with `nova.home` or `NOVA_AI_HOME`):
 - **Something else**: turn on `nova.enableDiagnostics` and look at the **Nova AI** output channel.
 
 > AI can make mistakes. Review important output before relying on it.
+
+---
+
+<div align="center">
+  <img src="../datalab-logo.svg#gh-dark-mode-only" alt="DataLab Rotterdam" width="180" />
+  <img src="../datalab-logo-on-light.svg#gh-light-mode-only" alt="DataLab Rotterdam" width="180" />
+  <p><sub>Nova AI is made by DataLab Rotterdam · <a href="https://docs.datalabrotterdam.nl/services/nova-ai">Documentation</a></sub></p>
+</div>

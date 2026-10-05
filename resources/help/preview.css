@@ -1,0 +1,10 @@
+/*
+ * Added to Markdown previews (markdown.previewStyles) for the Nova AI help page, resources/help/HELP.md:
+ * shows the DataLab Rotterdam logo that suits the theme. Only matches these two file names.
+ */
+.vscode-light img[src*="datalab-logo.svg"],
+.vscode-high-contrast-light img[src*="datalab-logo.svg"],
+.vscode-dark img[src*="datalab-logo-on-light.svg"],
+.vscode-high-contrast:not(.vscode-high-contrast-light) img[src*="datalab-logo-on-light.svg"] {
+    display: none;
+}
