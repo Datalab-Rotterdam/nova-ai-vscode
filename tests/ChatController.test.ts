@@ -548,6 +548,14 @@ describe('ChatController', () => {
       ]);
     });
 
+    it('/help opens the help page', async () => {
+      const { controller } = setup([]);
+      const execute = vi.spyOn(vscode.commands, 'executeCommand');
+      await controller.handle({ command: 'chat/send', text: '/help' });
+      expect(execute).toHaveBeenCalledWith('nova.showHelp');
+      expect(controller.getState().items).toEqual([]);
+    });
+
     it('/rename renames the chat; unknown commands and paths are sent as messages', async () => {
       const { controller, model } = setup([[new vscode.LanguageModelTextPart('ok')], [new vscode.LanguageModelTextPart('ok')]]);
       await controller.handle({ command: 'chat/send', text: '/rename  Release prep ' });

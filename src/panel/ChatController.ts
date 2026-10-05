@@ -9,6 +9,7 @@ import { displayPath, getScratchRoot, readText, resolveWorkspacePath, workspaceF
 import type { MemoryService } from '../memory/MemoryService';
 import { type PermissionService, suggestRule } from '../permissions/PermissionService';
 import { getSystemRole } from '../core/apiSupport';
+import { COMMAND_SHOW_HELP } from '../core/constants';
 import { buildTranscript, estimateMessagesTokens, summaryBlock, tokenCalibration } from '../agent/ContextManager';
 import { getCompactThreshold, getMaxToolRounds, isAutoCompactEnabled } from '../core/config';
 import { Diagnostics } from '../core/diagnostics';
@@ -36,7 +37,7 @@ import type {
 import { enabledSkills, type Skill, type SkillPaths } from '../skills/SkillService';
 import { buildSkillsPrompt, createLoadSkillTool } from '../skills/skillTools';
 import type { ChatHub } from './ChatHub';
-import { describeSlashCommands, parseSlashCommand, type ParsedSlashCommand } from './slashCommands';
+import { parseSlashCommand, type ParsedSlashCommand } from './slashCommands';
 import { confirmAndDeleteChats, type ChatHistory } from './chatSearch';
 import { fromStoredMessages, type SessionStore, type StoredSession, toStoredMessages } from './SessionStore';
 
@@ -474,7 +475,7 @@ export class ChatController implements vscode.Disposable, ChatHistory {
                 }
                 break;
             case 'help':
-                this.notice('info', describeSlashCommands());
+                await vscode.commands.executeCommand(COMMAND_SHOW_HELP);
                 break;
         }
     }

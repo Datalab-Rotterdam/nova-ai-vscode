@@ -48,7 +48,8 @@
     "onWebviewPanel:nova.chatPanel",
     "onWebviewPanel:nova.skills",
     "onCommand:nova.showHistory",
-    "onCommand:nova.showAccount"
+    "onCommand:nova.showAccount",
+    "onCommand:nova.showHelp"
   ],
   "contributes": {
     "chatParticipants": [
@@ -325,6 +326,12 @@
         "title": "Nova AI: Manage Skills",
         "category": "Nova AI",
         "icon": "$(book)"
+      },
+      {
+        "command": "nova.showHelp",
+        "title": "Nova AI: Help",
+        "category": "Nova AI",
+        "icon": "$(question)"
       }
     ],
     "menus": {
@@ -383,6 +390,11 @@
           "command": "nova.manageSkills",
           "when": "view == nova.sidebar",
           "group": "2_memory@4"
+        },
+        {
+          "command": "nova.showHelp",
+          "when": "view == nova.sidebar",
+          "group": "4_help@1"
         }
       ],
       "editor/context": [

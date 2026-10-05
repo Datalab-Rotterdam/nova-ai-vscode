@@ -34,7 +34,7 @@ Need access or setup details? See the [Nova AI documentation](https://docs.datal
   `/explain`, `/fix`, `/tests` and `/compact` (summarize the conversation to free up context).
 - **Prompt files**: `/nova-review`, `/nova-explain` and `/nova-tests` work in any chat.
 - **Nova chat panel** (the Nova AI sidebar): Nova's own agent with built-in tools — read, list, find and search files, check problems, edit and create files, and run commands. Edits and commands wait for your approval (with a diff preview); read-only tools run automatically by default. Add files or the editor selection as context (**Add to Nova Chat** in the editor context menu), switch models and follow context usage. MCP tools registered in VS Code are available too.
-- **Slash commands** (Nova chat): type `/` in the input box for a menu (**↑/↓**, **Tab** to fill in, **Enter** to run). `/clear` (or `/new`) starts a new chat, the old one stays in Chats; `/compact [focus]` summarizes the conversation so far to free up context (the messages stay visible, Nova continues from the summary); `/model [name]` lists or switches models; `/rename <title>` renames the chat; `/help` lists the commands.
+- **Slash commands** (Nova chat): type `/` in the input box for a menu (**↑/↓**, **Tab** to fill in, **Enter** to run). `/clear` (or `/new`) starts a new chat, the old one stays in Chats; `/compact [focus]` summarizes the conversation so far to free up context (the messages stay visible, Nova continues from the summary); `/model [name]` lists or switches models; `/rename <title>` renames the chat; `/help` opens the help page.
 - **Chats**: the history button opens a list of every chat of the workspace over the conversation, grouped by Today, Yesterday, the last 7 and 30 days and per month. Type to search, **↑/↓** and **Enter** to open, **F2** or the pencil to rename, the trash icon (or **Delete**) to delete a chat or a whole group, **Esc** to go back. **Nova AI: Search Chats** does the same from the command palette. Chats are kept until you delete them.
 - **Chats in editor tabs**: the sidebar shows one chat at a time; **Open Chat in Editor** moves it into an editor tab (even while Nova is working) and every tab holds a chat of its own, so several chats can be open and running side by side. Tabs are named after the chat (its first question, or the name you gave it) and come back after a reload. In a tab, **+** opens a new chat in another tab. On the Chats page, right-click a chat (or use the ↗ button) to open it in the editor. A chat is open in one place only: opening it again shows the tab that has it.
 - **Skills**: reusable instructions (a folder with a `SKILL.md`) that Nova loads when a task fits. **Nova AI: Manage Skills** (also in the Nova sidebar's **…** menu) opens a page like Settings, with **Global** (every project, `~/.nova-ai/skills`) and **Project** (`.nova-ai/skills` in the repository) tabs: create from a template, edit, switch on or off (also a global skill for this project only), move between global and project, and delete. Skills in `.agents`, `.claude` and `.codex` skills folders are found too. To save context, only the names and short descriptions of the skills that are on go into each request, within a fixed budget; Nova reads a skill's instructions only when it uses it. The terminal app (`nova-ai`) uses the same skills and switches.
@@ -43,6 +43,8 @@ Need access or setup details? See the [Nova AI documentation](https://docs.datal
 - **Account view**: connection status, quick actions and the available models with their capabilities. Refresh, settings, model management and sign-out live in the view's title bar.
 
 Long conversations are compacted automatically to fit each model's context window.
+
+For a full guide to every feature, run **Nova AI: Help** (also in the Nova sidebar's **…** menu, or `/help` in the Nova chat). It opens [resources/help/HELP.md](resources/help/HELP.md).
 
 Commands available from the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`):
 
@@ -60,6 +62,7 @@ Commands available from the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`):
 - `Nova AI: Clean Up Projects` (removes data of workspaces that no longer exist)
 - `Nova AI: Manage Language Models`
 - `Nova AI: Open Settings`
+- `Nova AI: Help`
 
 ## Memory, chats and permissions
 

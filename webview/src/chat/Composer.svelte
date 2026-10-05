@@ -146,7 +146,7 @@
             oninput={onInput}
             onkeydown={onKeydown}
             rows="1"
-            placeholder={!chat.models.length ? 'No Nova models available' : questionPending ? 'Answer Nova\'s question…' : chat.running ? 'Steer Nova or queue a follow-up…' : 'Ask Nova to explain, change or build something… (/ for commands)'}
+            placeholder={!chat.models.length ? 'No Nova models available' : questionPending ? 'Answer Nova\'s question…' : chat.running ? 'Steer Nova or queue a follow-up…' : 'Ask Nova to explain, change or build something…'}
             aria-label="Message Nova"
             aria-autocomplete="list"
             aria-controls={suggestions.length ? 'nova-slash-menu' : undefined}

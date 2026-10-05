@@ -19,7 +19,7 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
     { name: 'compact', args: '[focus]', description: 'Summarize the conversation to free up context' },
     { name: 'model', args: '[name]', description: 'Switch the model, or list the models' },
     { name: 'rename', args: '<title>', description: 'Rename this chat' },
-    { name: 'help', description: 'Show the slash commands' }
+    { name: 'help', description: 'Open the Nova AI help' }
 ];
 
 export interface ParsedSlashCommand {
@@ -46,15 +46,6 @@ export function suggestSlashCommands(text: string): SlashCommand[] {
     }
     const prefix = match[1].toLowerCase();
     return SLASH_COMMANDS.filter((command) => [command.name, ...(command.aliases ?? [])].some((name) => name.startsWith(prefix)));
-}
-
-/** `/clear (/new)  Start a new chat…` lines for `/help`. */
-export function describeSlashCommands(): string {
-    return SLASH_COMMANDS.map((command) => {
-        const usage = [`/${command.name}`, command.args].filter(Boolean).join(' ');
-        const aliases = command.aliases?.length ? ` (${command.aliases.map((alias) => `/${alias}`).join(', ')})` : '';
-        return `${usage}${aliases}: ${command.description}`;
-    }).join('\n');
 }
 
 function findSlashCommand(name: string): SlashCommand | undefined {
