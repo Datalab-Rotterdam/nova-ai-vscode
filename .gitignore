@@ -7,6 +7,8 @@ coverage/
 .vscode
 /old
 dist
+# Vendored Nova AI Browser host build; the extension runs it (src/browser/BrowserSetup.ts).
+!resources/browser-host/dist/
 
 .DS_Store
 .env

@@ -132,6 +132,24 @@ describe('ChatStreamParser', () => {
     expect(toolCalls).toEqual([{ id: 'nova-test-0', name: 'read_file', input: { path: 'a.ts' } }]);
   });
 
+  it('converts Gemma 4 <|tool_call>call:name{…}<tool_call|> text, split across chunks', () => {
+    const { text, toolCalls } = run([
+      { content: '<|tool_call>call:run_command{command:<|"|>ls -F /Users/me/.claude/' },
+      { content: 'skills/synced/<|"|>}<tool_call|>' }
+    ], ['run_command']);
+
+    expect(text).toBe('');
+    expect(toolCalls).toEqual([{ id: 'nova-test-0', name: 'run_command', input: { command: 'ls -F /Users/me/.claude/skills/synced/' } }]);
+  });
+
+  it('keeps quotes, colons and nested values in Gemma 4 tool calls', () => {
+    const { toolCalls } = run([
+      { content: '<|tool_call>call:edit_file{path:<|"|>a.ts<|"|>,old_string:<|"|>say("hi"): x<|"|>,line:3,flags:{dry:true},list:[1,2]}<tool_call|>' }
+    ], ['edit_file']);
+
+    expect(toolCalls[0].input).toEqual({ path: 'a.ts', old_string: 'say("hi"): x', line: 3, flags: { dry: true }, list: [1, 2] });
+  });
+
   it('converts Mistral [TOOL_CALLS] arrays', () => {
     const { toolCalls } = run([
       { content: '[TOOL_CALLS][{"name":"a","arguments":"{\\"x\\":1}"},{"name":"b","arguments":{}}]' }

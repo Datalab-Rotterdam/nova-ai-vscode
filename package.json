@@ -335,6 +335,12 @@
         "title": "Nova AI: Help",
         "category": "Nova AI",
         "icon": "$(question)"
+      },
+      {
+        "command": "nova.setUpBrowser",
+        "title": "Nova AI: Set Up Browser Integration",
+        "category": "Nova AI",
+        "icon": "$(globe)"
       }
     ],
     "menus": {
@@ -482,6 +488,11 @@
             "type": "boolean",
             "default": false,
             "description": "Enable verbose Nova AI diagnostics logging in the output panel."
+          },
+          "nova.browser.autoSetup": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Set up the Nova AI browser integration on startup: registers the Nova AI Browser host with your Chromium-based browsers (Chrome, Edge, Brave, …) and installs the `nova-browser` skill, so Nova can use your browser through the Nova AI browser extension. Nothing changes when it is already current. Run **Nova AI: Set Up Browser Integration** to do it by hand."
           },
           "nova.chat.rewriteAssistantIdentity": {
             "type": "boolean",
