@@ -9,6 +9,7 @@ import { displayPath, getScratchRoot, readText, resolveWorkspacePath, workspaceF
 import type { MemoryService } from '../memory/MemoryService';
 import { type PermissionService, suggestRule } from '../permissions/PermissionService';
 import { getSystemRole } from '../core/apiSupport';
+import { estimateMessagesTokens, tokenCalibration } from '../agent/ContextManager';
 import { getCompactThreshold, getMaxToolRounds, isAutoCompactEnabled } from '../core/config';
 import { Diagnostics } from '../core/diagnostics';
 import { createPanelPrompt } from '../core/prompts';
@@ -29,13 +30,31 @@ import type {
     FileChange,
     QuestionItem,
     QueuedMessage,
+    SessionSummary,
     ToolItem
 } from './protocol';
+import { enabledSkills, type Skill, type SkillPaths } from '../skills/SkillService';
+import { buildSkillsPrompt, createLoadSkillTool } from '../skills/skillTools';
+import type { ChatHub } from './ChatHub';
+import { confirmAndDeleteChats, type ChatHistory } from './chatSearch';
 import { fromStoredMessages, type SessionStore, type StoredSession, toStoredMessages } from './SessionStore';
 
 const MAX_ATTACHMENT_CHARS = 60_000;
 const MAX_CARD_OUTPUT_CHARS = 4_000;
 const LAST_SESSION_KEY = 'nova.chat.lastSession';
+
+export interface ChatControllerOptions {
+    /** Knows the other open chats; without it this controller is on its own (tests). */
+    hub?: ChatHub;
+    /** Remember the open chat for the next window (the sidebar); default true. */
+    rememberLast?: boolean;
+    /** Chat to start with: an id, null for a new chat, undefined for the remembered one. */
+    initialSessionId?: string | null;
+    /** Shows this chat's surface. */
+    reveal?: () => Promise<void> | void;
+    /** The chat's title changed (editor tabs show it). */
+    onTitle?: (title: string) => void;
+}
 const MAX_CARD_DIFF_LINES = 400;
 
 interface TrackedChange {
@@ -63,7 +82,7 @@ interface PendingEdit {
  * approvals, persistence through {@link SessionStore}. The webview only renders
  * {@link ChatState} and the incremental {@link ChatEvent}s posted here.
  */
-export class ChatController implements vscode.Disposable {
+export class ChatController implements vscode.Disposable, ChatHistory {
     private session: StoredSession = newSession();
     private messages: vscode.LanguageModelChatMessage[] = [];
     private attachments: Attachment[] = [];
@@ -87,6 +106,11 @@ export class ChatController implements vscode.Disposable {
     private readonly edits = new Map<string, PendingEdit>();
     private readonly disposables: vscode.Disposable[] = [];
     private initialized?: Promise<void>;
+    private rememberLast: boolean;
+    /** Name of the model answering the running reply (steering messages get it too). */
+    private runModelName?: string;
+    /** The session the hub last heard about, so it is only told about changes. */
+    private announcedSessionId?: string;
 
     public constructor(
         private readonly modelProvider: ModelProvider,
@@ -94,15 +118,47 @@ export class ChatController implements vscode.Disposable {
         private readonly workspaceState: vscode.Memento,
         private readonly proposedContent: ProposedContentProvider,
         private readonly diagnostics: Diagnostics,
-        private readonly post: (event: ChatEvent) => void,
-        private readonly services: { memory?: MemoryService; permissions?: PermissionService } = {}
+        private post: (event: ChatEvent) => void,
+        private readonly services: { memory?: MemoryService; permissions?: PermissionService; skillPaths?: () => SkillPaths } = {},
+        private readonly options: ChatControllerOptions = {}
     ) {
+        this.rememberLast = options.rememberLast ?? true;
         this.disposables.push(this.modelProvider.onDidChangeLanguageModelChatInformation(() => void this.refreshModels().then(() => this.postState())));
+        if (options.hub) {
+            this.disposables.push(options.hub.onDidChange(() => this.postSessions()));
+        }
+        if (this.store.onDidChange) {
+            this.disposables.push(this.store.onDidChange(() => this.postSessions()));
+        }
     }
 
     public dispose(): void {
         this.running?.cancel();
         this.disposables.forEach((disposable) => disposable.dispose());
+        this.options.hub?.remove(this);
+    }
+
+    /** Sends this chat's events to another webview (the chat moved to an editor tab) and resyncs it. */
+    public moveTo(post: (event: ChatEvent) => void, options: Pick<ChatControllerOptions, 'reveal' | 'onTitle'>): void {
+        this.post = post;
+        this.rememberLast = false;
+        this.options.reveal = options.reveal;
+        this.options.onTitle = options.onTitle;
+        this.postState();
+    }
+
+    /** Shows this chat's surface (the sidebar or its editor tab). */
+    public async reveal(): Promise<void> {
+        await this.options.reveal?.();
+    }
+
+    /** Nothing to keep: no message yet and nothing running. */
+    public get isEmpty(): boolean {
+        return !this.session.items.length && !this.running;
+    }
+
+    public get title(): string {
+        return this.session.title;
     }
 
     public async handle(command: ChatCommand): Promise<void> {
@@ -125,15 +181,16 @@ export class ChatController implements vscode.Disposable {
                 await this.newChat();
                 break;
             case 'chat/open':
-                await this.open(command.sessionId);
+                await this.openSession(command.sessionId);
+                break;
+            case 'chat/rename':
+                await this.renameSession(command.sessionId, command.title);
                 break;
             case 'chat/delete':
-                await this.deleteSession(command.sessionId);
+                await confirmAndDeleteChats(this, command.sessionIds);
                 break;
             case 'chat/selectModel':
-                this.session.modelId = command.modelId;
-                this.usage = undefined;
-                this.postState();
+                this.selectModel(command.modelId);
                 break;
             case 'chat/addFile':
                 await this.addFile();
@@ -209,7 +266,7 @@ export class ChatController implements vscode.Disposable {
     }
 
     public async newChat(): Promise<void> {
-        this.stop();
+        await this.stopAndWait();
         this.session = newSession();
         this.messages = [];
         this.attachments = [];
@@ -232,6 +289,7 @@ export class ChatController implements vscode.Disposable {
             attachments: this.attachments,
             usage: this.usage,
             sessions: this.store.list(),
+            openElsewhere: this.openElsewhere(),
             approvalMode: getApprovalMode(),
             queue: this.queueView(),
             todos: this.session.todos ?? [],
@@ -241,8 +299,11 @@ export class ChatController implements vscode.Disposable {
 
     private initialize(): Promise<void> {
         this.initialized ??= (async () => {
-            const lastId = this.workspaceState.get<string>(LAST_SESSION_KEY);
-            const last = lastId ? await this.store.load(lastId) : undefined;
+            const wanted = this.options.initialSessionId !== undefined
+                ? this.options.initialSessionId
+                : this.rememberLast ? this.workspaceState.get<string>(LAST_SESSION_KEY) : undefined;
+            // A chat open in another tab stays there.
+            const last = wanted && !this.options.hub?.ownerOf(wanted, this) ? await this.store.load(wanted) : undefined;
             if (last) {
                 this.loadSession(last);
             }
@@ -265,6 +326,79 @@ export class ChatController implements vscode.Disposable {
 
     private postState(): void {
         this.post({ type: 'chat/state', state: this.getState() });
+        this.options.onTitle?.(this.session.title);
+        if (this.announcedSessionId !== this.session.id) {
+            this.announcedSessionId = this.session.id;
+            this.options.hub?.notify();
+        }
+    }
+
+    /** The chat list and where chats are open changed elsewhere. */
+    private postSessions(): void {
+        this.post({ type: 'chat/sessions', sessions: this.store.list(), openElsewhere: this.openElsewhere() });
+    }
+
+    private openElsewhere(): string[] {
+        return this.options.hub?.openElsewhere(this) ?? [];
+    }
+
+    /** The sidebar reopens its last chat after a reload; editor tabs remember their own. */
+    private async rememberAsLast(): Promise<void> {
+        if (this.rememberLast) {
+            await this.workspaceState.update(LAST_SESSION_KEY, this.session.id);
+        }
+    }
+
+    /** The sidebar's chat moved to a tab: after a reload the sidebar starts empty. */
+    public async forgetLast(): Promise<void> {
+        await this.workspaceState.update(LAST_SESSION_KEY, undefined);
+    }
+
+    /**
+     * Switches the model for the next messages (earlier replies keep theirs). A smaller
+     * context window may no longer hold the conversation: the usage meter shows the new
+     * share at once, and the user is told whether the next request compacts it first.
+     */
+    private selectModel(modelId: string): void {
+        const previous = this.models.find((model) => model.id === this.selectedModelId());
+        this.session.modelId = modelId;
+        const next = this.models.find((model) => model.id === modelId);
+        if (!next || !this.messages.length) {
+            this.usage = undefined;
+            this.postState();
+            return;
+        }
+
+        const used = estimateMessagesTokens(this.messages, tokenCalibration.ratio(next.id));
+        const total = next.maxInputTokens;
+        this.usage = { used, total };
+        if (previous?.id !== next.id && used > total * getCompactThreshold()) {
+            const size = `This chat is about ${formatTokens(used)} tokens; ${next.name} takes ${formatTokens(total)}.`;
+            this.addItem(isAutoCompactEnabled()
+                ? {
+                    kind: 'notice',
+                    id: randomUUID(),
+                    tone: 'info',
+                    text: `${size} Older messages will be summarized before the next request.`
+                }
+                : {
+                    kind: 'notice',
+                    id: randomUUID(),
+                    tone: 'warning',
+                    text: used > total
+                        ? `${size} It no longer fits and automatic compaction is off (nova.context.autoCompact): switch back, turn it on, or start a new chat.`
+                        : `${size} It is close to the limit and automatic compaction is off (nova.context.autoCompact).`
+                });
+        }
+        this.postState();
+    }
+
+    /** Stops the running reply and waits until it has been saved to its own chat. */
+    public async stopAndWait(): Promise<void> {
+        if (this.running) {
+            this.stop();
+            await this.currentRun;
+        }
     }
 
     /** Sends a message, or queues it as steering when Nova is already working. */
@@ -322,6 +456,7 @@ export class ChatController implements vscode.Disposable {
             return;
         }
         this.session.modelId = model.id;
+        this.runModelName = info?.name ?? model.name;
 
         this.addItem({
             kind: 'user',
@@ -330,10 +465,12 @@ export class ChatController implements vscode.Disposable {
             attachments: attachments.map((attachment) => attachment.label),
             files: attachments,
             messageIndex: this.messages.length,
+            model: this.runModelName,
             ...(steered ? { steered } : {})
         });
         if (this.session.items.filter((item) => item.kind === 'user').length === 1) {
             this.session.title = summarizeTitle(prompt || attachments[0]?.label || 'New chat');
+            this.options.onTitle?.(this.session.title);
         }
 
         this.messages.push(vscode.LanguageModelChatMessage.User(await buildPrompt(prompt, attachments)));
@@ -342,9 +479,11 @@ export class ChatController implements vscode.Disposable {
         this.running = running;
         this.post({ type: 'chat/running', running: true });
 
-        const conversation = [await createSystemMessage(this.services.memory), ...this.messages];
+        // Only the skills that are on, and their list ranked by this message (see skillTools).
+        const skills = this.services.skillPaths ? enabledSkills(this.services.skillPaths()) : [];
+        const conversation = [await createSystemMessage(this.services.memory, buildSkillsPrompt(skills, prompt)), ...this.messages];
         this.conversation = conversation;
-        const tools = availableTools(this.services.memory, this.interactionHost());
+        const tools = availableTools(this.services.memory, this.interactionHost(), skills);
         let assistantItem: Extract<ChatItem, { kind: 'assistant' }> | undefined;
         let thinkingItem: Extract<ChatItem, { kind: 'thinking' }> | undefined;
 
@@ -600,6 +739,7 @@ export class ChatController implements vscode.Disposable {
                 attachments: item.attachments,
                 files: item.files,
                 messageIndex: offset + messages.length,
+                model: this.runModelName,
                 steered: true
             });
             messages.push(vscode.LanguageModelChatMessage.User(await buildPrompt(item.text, item.files)));
@@ -693,8 +833,7 @@ export class ChatController implements vscode.Disposable {
             }
 
             // Rules from .nova-ai settings first: deny always wins, allow skips the approval card.
-            const subject = toolSubject(call.name, input);
-            const rule = await this.services.permissions?.decide(call.name, subject);
+            const rule = await this.services.permissions?.decide(call.name, input);
             if (rule === 'deny') {
                 item.status = 'rejected';
                 item.output = 'Blocked by a deny rule in the .nova-ai settings.';
@@ -705,7 +844,7 @@ export class ChatController implements vscode.Disposable {
             if (rule !== 'allow' && this.needsApproval(tool)) {
                 item.status = 'awaiting-approval';
                 if (this.services.permissions) {
-                    item.allowRule = suggestRule(call.name, subject);
+                    item.allowRule = suggestRule(call.name, input, workspaceFolders()[0]?.uri.fsPath);
                 }
                 updateItem(item);
                 const decision = await this.waitForApproval(item.id, token);
@@ -825,25 +964,90 @@ export class ChatController implements vscode.Disposable {
         this.post({ type: 'chat/attachments', attachments: this.attachments });
     }
 
-    private async open(sessionId: string): Promise<void> {
+    /** Saved chats of this workspace, newest first. */
+    public listSessions(): SessionSummary[] {
+        return this.store.list();
+    }
+
+    /** The chat shown in the panel; it is only in {@link listSessions} once it has been saved. */
+    public get currentSessionId(): string {
+        return this.session.id;
+    }
+
+    public get isRunning(): boolean {
+        return Boolean(this.running);
+    }
+
+    /** Shows a saved chat in the panel. Refused while Nova is working, so no reply is cut off. */
+    public async openSession(sessionId: string): Promise<boolean> {
+        await this.initialize();
+        if (sessionId === this.session.id) {
+            return true;
+        }
+        const owner = this.options.hub?.ownerOf(sessionId, this);
+        if (owner) {
+            await owner.reveal();
+            return false;
+        }
         if (this.running) {
-            return;
+            void vscode.window.showInformationMessage('Nova is still working in this chat. Stop it first, then open another chat.');
+            return false;
         }
         const session = await this.store.load(sessionId);
         if (!session) {
             void vscode.window.showWarningMessage('This Nova chat could not be loaded.');
-            return;
+            return false;
         }
         this.loadSession(session);
-        await this.workspaceState.update(LAST_SESSION_KEY, session.id);
+        await this.rememberAsLast();
+        this.postState();
+        return true;
+    }
+
+    /** Renames a chat; the open chat is renamed in memory too, so a running reply keeps the name. */
+    public async renameSession(sessionId: string, title: string): Promise<void> {
+        await this.initialize();
+        const name = title.trim();
+        if (!name || name.length > 200) {
+            return;
+        }
+        const owner = this.options.hub?.ownerOf(sessionId, this);
+        if (owner) {
+            await owner.renameSession(sessionId, name);
+            return;
+        }
+        if (sessionId === this.session.id) {
+            this.session.title = name;
+            // A running reply saves the chat (with the new name) when it ends.
+            if (!this.running && this.store.list().some((summary) => summary.id === sessionId)) {
+                await this.store.save(this.session);
+            }
+        } else {
+            await this.store.rename(sessionId, name);
+        }
         this.postState();
     }
 
-    private async deleteSession(sessionId: string): Promise<void> {
-        await this.store.delete(sessionId);
-        if (sessionId === this.session.id) {
-            await this.newChat();
-        } else {
+    /**
+     * Deletes chats; where one of them is open (here or in another tab) Nova's reply is
+     * stopped and that place starts a new chat.
+     */
+    public async deleteSessions(sessionIds: readonly string[]): Promise<void> {
+        await this.initialize();
+        const ids = new Set(sessionIds);
+        const holders = [this, ...[...ids].flatMap((id) => this.options.hub?.ownerOf(id, this) ?? [])]
+            .filter((controller) => ids.has(controller.currentSessionId));
+        // Let stopped replies finish saving first, or they would recreate the chats.
+        for (const holder of holders) {
+            await holder.stopAndWait();
+        }
+        for (const id of ids) {
+            await this.store.delete(id);
+        }
+        for (const holder of holders) {
+            await holder.newChat();
+        }
+        if (!holders.includes(this)) {
             this.postState();
         }
     }
@@ -869,7 +1073,7 @@ export class ChatController implements vscode.Disposable {
         this.session.messages = toStoredMessages(this.messages);
         try {
             await this.store.save(this.session);
-            await this.workspaceState.update(LAST_SESSION_KEY, this.session.id);
+            await this.rememberAsLast();
             this.postState();
         } catch (error) {
             this.diagnostics.error('Saving the Nova chat failed.', error);
@@ -894,9 +1098,10 @@ interface AvailableTool {
 }
 
 /** Nova's built-in tools plus MCP tools registered in VS Code, which can run without a chat request. */
-function availableTools(memory?: MemoryService, interaction?: InteractionHost): AvailableTool[] {
+function availableTools(memory?: MemoryService, interaction?: InteractionHost, skills: readonly Skill[] = []): AvailableTool[] {
     const novaTools = [
         ...BUILT_IN_TOOLS,
+        ...(skills.length ? [createLoadSkillTool(skills) as NovaTool<never>] : []),
         ...(interaction ? createInteractionTools(interaction) : []),
         ...(memory?.isEnabled() ? createMemoryTools(memory) : [])
     ];
@@ -923,18 +1128,14 @@ function getApprovalMode(): ApprovalMode {
 }
 
 /** The call's subject for permission rules: the command, URL or path it acts on. */
-function toolSubject(tool: string, input: Record<string, unknown>): string | undefined {
-    const value = tool === 'run_command' ? input.command : tool === 'fetch_url' ? input.url : input.path;
-    return typeof value === 'string' ? value.trim() : undefined;
-}
-
-async function createSystemMessage(memory?: MemoryService): Promise<vscode.LanguageModelChatMessage> {
+async function createSystemMessage(memory?: MemoryService, skills?: string): Promise<vscode.LanguageModelChatMessage> {
     const prompt = createPanelPrompt({
         folders: workspaceFolders().map((folder) => folder.name),
         platform: process.platform,
         shell: vscode.env.shell || undefined,
         scratch: Boolean(getScratchRoot()),
-        memory: memory?.isEnabled() ? await memory.promptSection().catch(() => '') : undefined
+        memory: memory?.isEnabled() ? await memory.promptSection().catch(() => '') : undefined,
+        skills
     });
     const systemRole = getSystemRole();
     return systemRole !== undefined
@@ -1010,6 +1211,15 @@ function textResult(text: string): vscode.LanguageModelToolResult {
 
 function clip(text: string): string {
     return text.length > MAX_CARD_OUTPUT_CHARS ? `${text.slice(0, MAX_CARD_OUTPUT_CHARS)}\n…` : text;
+}
+
+/** "950", "12.3k", "128k". */
+function formatTokens(tokens: number): string {
+    if (tokens < 1_000) {
+        return String(tokens);
+    }
+    const thousands = tokens / 1_000;
+    return `${thousands < 100 ? thousands.toFixed(1).replace(/\.0$/, '') : Math.round(thousands)}k`;
 }
 
 function summarizeTitle(text: string): string {

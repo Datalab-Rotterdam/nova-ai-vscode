@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 
@@ -34,7 +37,7 @@ function setup(responses: Part[][], approvalMode = 'autoReadOnly', services: Rec
   ];
 
   const events: ChatEvent[] = [];
-  const store = { list: () => [], load: vi.fn(), save: vi.fn(), delete: vi.fn() };
+  const store = { list: vi.fn(() => [] as Array<{ id: string; title: string; updatedAt: number }>), load: vi.fn(), save: vi.fn(), delete: vi.fn(), rename: vi.fn() };
   const memento = { get: () => undefined, update: vi.fn() };
   const controller = new ChatController(modelProvider as never, store as never, memento as never, { register: vi.fn() } as never, new Diagnostics(), (event) => events.push(event), services as never);
   return { controller, events, model, store };
@@ -198,8 +201,8 @@ describe('ChatController', () => {
   it('applies .nova-ai permission rules: deny blocks, allow skips approval, Always allow saves a rule', async () => {
     const rules: Record<string, 'allow' | 'deny'> = { 'rm -rf build': 'deny', 'echo allowed': 'allow' };
     const permissions = {
-      decide: vi.fn(async (_tool: string, subject?: string) => rules[subject ?? '']),
-      allow: vi.fn(async () => '/repo/.nova-ai/settings.local.json')
+      decide: vi.fn(async (_tool: string, input: Record<string, unknown>) => rules[String(input.command ?? '')]),
+      allow: vi.fn(async () => '/home/.nova-ai/projects/repo-12345678/settings.json')
     };
     const { controller, events } = setup([
       [
@@ -264,6 +267,126 @@ describe('ChatController', () => {
     const items = controller.getState().items;
     expect(items.filter((item) => item.kind === 'user').map((item) => (item as { text: string }).text)).toEqual(['edited']);
     expect(items.at(-1)).toMatchObject({ kind: 'assistant', text: 'Edited answer.' });
+  });
+
+  it('renames the open chat in memory and on disk, and other chats through the store', async () => {
+    const { controller, store } = setup([[new vscode.LanguageModelTextPart('Hi.')]]);
+    await controller.handle({ command: 'chat/send', text: 'hello' });
+    const id = controller.currentSessionId;
+    store.list.mockReturnValue([{ id, title: 'hello', updatedAt: 1 }]);
+    store.save.mockClear();
+
+    await controller.handle({ command: 'chat/rename', sessionId: id, title: '  My chat  ' });
+    expect(controller.getState().title).toBe('My chat');
+    expect(store.save).toHaveBeenCalledWith(expect.objectContaining({ id, title: 'My chat' }));
+
+    await controller.handle({ command: 'chat/rename', sessionId: 'other', title: 'Other' });
+    expect(store.rename).toHaveBeenCalledWith('other', 'Other');
+    await controller.handle({ command: 'chat/rename', sessionId: 'other', title: '   ' });
+    await controller.handle({ command: 'chat/rename', sessionId: 'other', title: 'x'.repeat(201) });
+    expect(store.rename).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the new name when the open chat is renamed while Nova is working', async () => {
+    const { controller, events, store } = setup([
+      [new vscode.LanguageModelToolCallPart('c1', 'run_command', { command: 'echo slow' })],
+      [new vscode.LanguageModelTextPart('Done.')]
+    ]);
+    const sending = controller.handle({ command: 'chat/send', text: 'original title' });
+    await until(() => toolItems(events).some((item) => item.status === 'awaiting-approval'));
+    store.list.mockReturnValue([{ id: controller.currentSessionId, title: 'original title', updatedAt: 1 }]);
+
+    await controller.renameSession(controller.currentSessionId, 'Renamed');
+    const pending = toolItems(events).find((item) => item.status === 'awaiting-approval')!;
+    await controller.handle({ command: 'chat/approval', itemId: pending.id, decision: 'approve' });
+    await sending;
+
+    expect(store.save.mock.calls.at(-1)?.[0]).toMatchObject({ title: 'Renamed' });
+  });
+
+  it('deleting the chat Nova is working in stops it, lets it save, then starts a new chat', async () => {
+    const { controller, events, store } = setup([
+      [new vscode.LanguageModelToolCallPart('c1', 'run_command', { command: 'echo slow' })]
+    ]);
+    const sending = controller.handle({ command: 'chat/send', text: 'doomed' });
+    await until(() => toolItems(events).some((item) => item.status === 'awaiting-approval'));
+    const id = controller.currentSessionId;
+
+    await controller.deleteSessions([id, 'other']);
+    await sending;
+
+    expect(store.delete).toHaveBeenCalledWith(id);
+    expect(store.delete).toHaveBeenCalledWith('other');
+    // The stopped reply was saved before the delete, never into the new chat.
+    const lastDelete = Math.max(...store.delete.mock.invocationCallOrder);
+    expect(store.save.mock.invocationCallOrder.every((order) => order < lastDelete)).toBe(true);
+    expect(store.save.mock.calls.every(([session]) => session.id === id)).toBe(true);
+    expect(controller.currentSessionId).not.toBe(id);
+    expect(controller.getState()).toMatchObject({ items: [], running: false });
+  });
+
+  it('lists saved chats in the state and deletes them only after confirmation', async () => {
+    const { controller, store } = setup([]);
+    store.list.mockReturnValue([{ id: 'a', title: 'Alpha', updatedAt: 2 }, { id: 'b', title: 'Beta', updatedAt: 1 }]);
+    expect(controller.getState().sessions.map((chat) => chat.id)).toEqual(['a', 'b']);
+
+    const confirm = vi.spyOn(vscode.window, 'showWarningMessage').mockResolvedValueOnce(undefined as never);
+    await controller.handle({ command: 'chat/delete', sessionIds: ['a', 'b'] });
+    expect(confirm).toHaveBeenCalledWith('Delete 2 chats?', expect.objectContaining({ modal: true }), 'Delete');
+    expect(store.delete).not.toHaveBeenCalled();
+
+    confirm.mockResolvedValueOnce('Delete' as never);
+    await controller.handle({ command: 'chat/delete', sessionIds: ['a', 'unknown'] });
+    expect(confirm).toHaveBeenLastCalledWith('Delete the chat "Alpha"?', expect.anything(), 'Delete');
+    expect(store.delete.mock.calls).toEqual([['a']]);
+  });
+
+  it('opens a saved chat', async () => {
+    const { controller, store } = setup([]);
+    store.load.mockResolvedValue({ id: 'saved', title: 'Saved chat', createdAt: 1, updatedAt: 1, items: [{ kind: 'user', id: 'u1', text: 'hi', attachments: [] }], messages: [] });
+    await controller.handle({ command: 'chat/open', sessionId: 'saved' });
+    expect(controller.getState()).toMatchObject({ sessionId: 'saved', title: 'Saved chat' });
+  });
+
+  it('refuses to switch chats while Nova is working', async () => {
+    const { controller, events, store } = setup([
+      [new vscode.LanguageModelToolCallPart('c1', 'run_command', { command: 'echo slow' })]
+    ]);
+    const info = vi.spyOn(vscode.window, 'showInformationMessage');
+    const sending = controller.handle({ command: 'chat/send', text: 'busy' });
+    await until(() => toolItems(events).some((item) => item.status === 'awaiting-approval'));
+
+    expect(await controller.openSession('elsewhere')).toBe(false);
+    expect(store.load).not.toHaveBeenCalledWith('elsewhere');
+    expect(info).toHaveBeenCalled();
+    expect(await controller.openSession(controller.currentSessionId)).toBe(true);
+
+    await controller.handle({ command: 'chat/stop' });
+    await sending;
+  });
+
+  it('lists the skills that are on in the system prompt and offers load_skill', async () => {
+    const base = mkdtempSync(join(tmpdir(), 'nova-panel-skills-'));
+    try {
+      const novaHome = join(base, '.nova-ai');
+      for (const [name, description] of [['review', 'Review a pull request.'], ['deploy', 'Deploy the app.']]) {
+        mkdirSync(join(novaHome, 'skills', name), { recursive: true });
+        writeFileSync(join(novaHome, 'skills', name, 'SKILL.md'), `---\nname: ${name}\ndescription: ${description}\n---\nsteps`);
+      }
+      writeFileSync(join(novaHome, 'settings.json'), JSON.stringify({ skills: { disabled: ['deploy'] } }));
+      const skillPaths = () => ({ home: base, novaHome, workspaceRoots: [] });
+      const { controller, model } = setup([[new vscode.LanguageModelTextPart('Ok.')]], 'autoReadOnly', { skillPaths });
+
+      await controller.handle({ command: 'chat/send', text: 'review this' });
+
+      const [messages, options] = model.sendRequest.mock.calls[0];
+      const system = JSON.stringify(messages[0].content);
+      expect(system).toContain('- review: Review a pull request.');
+      expect(system).not.toContain('deploy');
+      expect(options.tools.map((tool: { name: string }) => tool.name)).toContain('load_skill');
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
   });
 
   it('keeps a task list from todo_write without adding tool cards', async () => {

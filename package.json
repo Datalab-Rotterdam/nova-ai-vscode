@@ -46,6 +46,7 @@
     "onCommand:nova.addSelectionToChat",
     "onCommand:nova.openChatInEditor",
     "onWebviewPanel:nova.chatPanel",
+    "onWebviewPanel:nova.skills",
     "onCommand:nova.showHistory",
     "onCommand:nova.showAccount"
   ],
@@ -288,7 +289,7 @@
       },
       {
         "command": "nova.showHistory",
-        "title": "Nova AI: Chat History",
+        "title": "Nova AI: Chats",
         "category": "Nova AI",
         "icon": "$(history)"
       },
@@ -297,6 +298,33 @@
         "title": "Nova AI: Account and Models",
         "category": "Nova AI",
         "icon": "$(account)"
+      },
+      {
+        "command": "nova.chats.search",
+        "title": "Nova AI: Search Chats",
+        "category": "Nova AI",
+        "icon": "$(search)"
+      },
+      {
+        "command": "nova.chats.openInEditor",
+        "title": "Open in Editor",
+        "category": "Nova AI"
+      },
+      {
+        "command": "nova.chats.rename",
+        "title": "Rename…",
+        "category": "Nova AI"
+      },
+      {
+        "command": "nova.chats.delete",
+        "title": "Delete",
+        "category": "Nova AI"
+      },
+      {
+        "command": "nova.manageSkills",
+        "title": "Nova AI: Manage Skills",
+        "category": "Nova AI",
+        "icon": "$(book)"
       }
     ],
     "menus": {
@@ -350,6 +378,11 @@
           "command": "nova.signOut",
           "when": "view == nova.sidebar && nova.signedIn",
           "group": "3_settings@2"
+        },
+        {
+          "command": "nova.manageSkills",
+          "when": "view == nova.sidebar",
+          "group": "2_memory@4"
         }
       ],
       "editor/context": [
@@ -363,6 +396,39 @@
         {
           "command": "nova.addSelectionToChat",
           "when": "nova.signedIn && editorIsOpen"
+        },
+        {
+          "command": "nova.chats.search",
+          "when": "nova.signedIn"
+        },
+        {
+          "command": "nova.chats.openInEditor",
+          "when": "false"
+        },
+        {
+          "command": "nova.chats.rename",
+          "when": "false"
+        },
+        {
+          "command": "nova.chats.delete",
+          "when": "false"
+        }
+      ],
+      "webview/context": [
+        {
+          "command": "nova.chats.openInEditor",
+          "when": "webviewSection == 'novaChatRow'",
+          "group": "1_open@1"
+        },
+        {
+          "command": "nova.chats.rename",
+          "when": "webviewSection == 'novaChatRow'",
+          "group": "2_edit@1"
+        },
+        {
+          "command": "nova.chats.delete",
+          "when": "webviewSection == 'novaChatRow'",
+          "group": "2_edit@2"
         }
       ]
     },

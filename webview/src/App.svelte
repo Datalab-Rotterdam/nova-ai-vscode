@@ -2,6 +2,8 @@
     import {onMount, untrack} from 'svelte';
     import type {ChatEvent} from '../../src/panel/protocol';
     import ChatView from './chat/ChatView.svelte';
+    import SkillsPage from './skills/SkillsPage.svelte';
+    import type {SkillScopeName, SkillsPageData} from '../../src/skills/protocol';
     import {createChatStore} from './chat/store.svelte';
     import type {ExtensionMessage, SidebarRenderState, SidebarView, VsCodeApi} from './types';
     import ApiKeyView from './views/ApiKeyView.svelte';
@@ -15,21 +17,35 @@
     let view = $state<SidebarView>(untrack(() => initialState.snapshot.hasApiKey) ? 'chat' : 'welcome');
     let signIn = $state<{ busy: boolean; error?: string }>({busy: false});
     const chat = createChatStore();
-    let historyToggle = $state(0);
+    /** The Chats page over the conversation (history button, title bar). */
+    let chatsOpen = $state(false);
+    /** The Skills tab runs this same app with surface "skills". */
+    const skillsSurface = untrack(() => initialState.surface === 'skills');
+    let skills = $state<SkillsPageData | undefined>();
+    const savedScope = (vscode?.getState?.() as { scope?: SkillScopeName } | undefined)?.scope;
 
     onMount(() => {
         const onMessage = (event: MessageEvent<ExtensionMessage | ChatEvent>) => {
             const message = event.data;
-            if (message.type.startsWith('chat/')) {
+            if (message.type === 'skills') {
+                skills = (message as unknown as { data: SkillsPageData }).data;
+            } else if (message.type.startsWith('chat/')) {
                 chat.apply(message as ChatEvent);
+                if (message.type === 'chat/state') {
+                    // An editor tab reopens this chat after a window reload.
+                    vscode?.setState?.({sessionId: (message as Extract<ChatEvent, {type: 'chat/state'}>).state.sessionId});
+                }
             } else if (message.type === 'ui') {
-                const action = (message as unknown as { action: 'history' | 'account' }).action;
+                const action = (message as unknown as { action: 'history' | 'account' | 'chat' }).action;
                 if (state.snapshot.hasApiKey) {
                     if (action === 'account') {
                         view = view === 'account' ? 'chat' : 'account';
-                    } else {
+                    } else if (action === 'history') {
+                        chatsOpen = view === 'chat' ? !chatsOpen : true;
                         view = 'chat';
-                        historyToggle++;
+                    } else {
+                        chatsOpen = false;
+                        view = 'chat';
                     }
                 }
             } else if (message.type === 'state') {
@@ -47,6 +63,10 @@
         };
 
         window.addEventListener('message', onMessage);
+        if (skillsSurface) {
+            post({command: 'skills/ready'});
+            return () => window.removeEventListener('message', onMessage);
+        }
         post({command: 'ready'});
         post({command: 'chat/ready'});
         return () => window.removeEventListener('message', onMessage);
@@ -66,8 +86,10 @@
     <title>Nova AI</title>
 </svelte:head>
 
-{#if view === 'chat' && chat.state}
-    <ChatView chat={chat.state} {post} logoUri={state.logoUri} surface={state.surface} {historyToggle} profile={state.profile} onAccount={() => view = 'account'}/>
+{#if skillsSurface}
+    <SkillsPage data={skills} {post} initialScope={savedScope ?? 'global'} onScope={(scope) => vscode?.setState?.({scope})}/>
+{:else if view === 'chat' && chat.state}
+    <ChatView chat={chat.state} {post} logoUri={state.logoUri} surface={state.surface} profile={state.profile} onAccount={() => view = 'account'} {chatsOpen} onChats={(open) => chatsOpen = open}/>
 {:else if view === 'chat'}
     <div class="nova-loader" aria-label="Loading Nova chat"></div>
 {:else if view === 'account'}

@@ -7,6 +7,11 @@ import {
     COMMAND_OPEN_PROJECT_MEMORY,
     COMMAND_REVEAL_HOME,
     COMMAND_SHOW_ACCOUNT,
+    COMMAND_CHAT_DELETE,
+    COMMAND_CHAT_OPEN_IN_EDITOR,
+    COMMAND_CHAT_RENAME,
+    COMMAND_MANAGE_SKILLS,
+    COMMAND_SEARCH_CHATS,
     COMMAND_SHOW_HISTORY,
     COMMAND_FOCUS_CHAT,
     COMMAND_MANAGE_MODELS,
@@ -29,12 +34,16 @@ import {SessionService} from './services/SessionService';
 import {toUserMessage} from './core/errors';
 import type {LanguageModelInfo} from './core/types';
 import {StatusBar} from './status/StatusBar';
-import {CHAT_PANEL_VIEW_TYPE, ViewProvider, type SignInResult} from './views';
+import {CHAT_PANEL_VIEW_TYPE, SKILLS_VIEW_TYPE, ViewProvider, type SignInResult} from './views';
+import type {SkillPaths} from './skills/SkillService';
+import * as os from 'node:os';
 import {registerAgentParticipant} from './chat/AgentParticipant';
 import {registerVsCodeTools} from './agent/tools/vscodeTools';
 import {ChatController} from './panel/ChatController';
 import {PROPOSED_SCHEME, ProposedContentProvider} from './panel/ProposedContentProvider';
 import {SessionStore} from './panel/SessionStore';
+import {confirmAndDeleteChats, promptRenameChat, searchChats} from './panel/chatSearch';
+import {ChatHub} from './panel/ChatHub';
 import * as path from 'node:path';
 import {MemoryService, type MemoryScope} from './memory/MemoryService';
 import {PermissionService} from './permissions/PermissionService';
@@ -52,19 +61,42 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
     const nova = await openNovaHome(context, diagnostics);
     const memory = new MemoryService({ global: nova.home.globalMemory, project: nova.project.memory });
-    const permissions = new PermissionService(path.join(nova.home.root, 'settings.json'));
+    const permissions = new PermissionService(
+        path.join(nova.home.root, 'settings.json'),
+        undefined,
+        undefined,
+        () => nova.project.settings
+    );
 
     const proposedContent = new ProposedContentProvider();
-    const chatController = new ChatController(
-        modelProvider,
-        nova.sessions,
-        context.workspaceState,
-        proposedContent,
-        diagnostics,
-        (event) => sidebarProvider.postChat(event),
-        { memory, permissions }
-    );
-    sidebarProvider.chat = chatController;
+    // Skill folders and settings (docs/NOVA_HOME.md, "Skills"), read fresh on every use.
+    const skillPaths = (): SkillPaths => ({
+        home: os.homedir(),
+        novaHome: nova.home.root,
+        projectSettings: nova.project.settings,
+        workspaceRoots: (vscode.workspace.workspaceFolders ?? []).filter((folder) => folder.uri.scheme === 'file').map((folder) => folder.uri.fsPath)
+    });
+    sidebarProvider.useSkills(skillPaths);
+    const chatHub = new ChatHub();
+    // One controller per chat surface (the sidebar, each editor tab), all sharing the store.
+    sidebarProvider.useChats((post, options) => {
+        const controller = new ChatController(
+            modelProvider,
+            nova.sessions,
+            context.workspaceState,
+            proposedContent,
+            diagnostics,
+            post,
+            { memory, permissions, skillPaths },
+            { ...options, hub: chatHub }
+        );
+        chatHub.add(controller);
+        return controller;
+    });
+    /** A chat from a row of the Chats page's context menu (`data-vscode-context`). */
+    const chatFromMenu = (context?: { sessionId?: unknown }) => typeof context?.sessionId === 'string'
+        ? sidebarProvider.sidebar.listSessions().find((chat) => chat.id === context.sessionId)
+        : undefined;
 
     registerAgentParticipant(context, memory);
 
@@ -82,23 +114,53 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         }),
         vscode.commands.registerCommand(COMMAND_CLEAN_UP_PROJECTS, async () => cleanUpProjects(nova.home)),
         proposedContent,
-        chatController,
+        sidebarProvider,
+        chatHub,
         vscode.workspace.registerTextDocumentContentProvider(PROPOSED_SCHEME, proposedContent),
         vscode.commands.registerCommand(COMMAND_NEW_CHAT, async () => {
             await focusSidebar(sidebarProvider);
-            await chatController.newChat();
+            await sidebarProvider.showInSidebar('chat');
+            await sidebarProvider.sidebar.newChat();
         }),
         vscode.commands.registerCommand(COMMAND_ADD_SELECTION, async () => {
-            await focusSidebar(sidebarProvider);
-            await chatController.addSelection();
+            // Into the chat used last: an editor tab, or the sidebar.
+            const target = sidebarProvider.activeChat();
+            await target.controller.addSelection();
+            await target.reveal();
         }),
         vscode.window.registerWebviewPanelSerializer(CHAT_PANEL_VIEW_TYPE, sidebarProvider),
+        vscode.window.registerWebviewPanelSerializer(SKILLS_VIEW_TYPE, sidebarProvider.skillsSerializer),
+        vscode.commands.registerCommand(COMMAND_MANAGE_SKILLS, async () => {
+            await sidebarProvider.openSkills();
+        }),
         vscode.commands.registerCommand(COMMAND_OPEN_CHAT_IN_EDITOR, async () => {
             await sidebarProvider.openInEditor();
         }),
         vscode.commands.registerCommand(COMMAND_SHOW_HISTORY, async () => {
             await focusSidebar(sidebarProvider);
             await sidebarProvider.showInSidebar('history');
+        }),
+        vscode.commands.registerCommand(COMMAND_SEARCH_CHATS, async () => {
+            const target = sidebarProvider.activeChat();
+            await searchChats(target.controller, target.reveal);
+        }),
+        vscode.commands.registerCommand(COMMAND_CHAT_OPEN_IN_EDITOR, async (context?: { sessionId?: unknown }) => {
+            const chat = chatFromMenu(context);
+            if (chat) {
+                await sidebarProvider.openChatInEditor(chat.id);
+            }
+        }),
+        vscode.commands.registerCommand(COMMAND_CHAT_RENAME, async (context?: { sessionId?: unknown }) => {
+            const chat = chatFromMenu(context);
+            if (chat) {
+                await promptRenameChat(sidebarProvider.sidebar, chat);
+            }
+        }),
+        vscode.commands.registerCommand(COMMAND_CHAT_DELETE, async (context?: { sessionId?: unknown }) => {
+            const chat = chatFromMenu(context);
+            if (chat) {
+                await confirmAndDeleteChats(sidebarProvider.sidebar, [chat.id]);
+            }
         }),
         vscode.commands.registerCommand(COMMAND_SHOW_ACCOUNT, async () => {
             await focusSidebar(sidebarProvider);

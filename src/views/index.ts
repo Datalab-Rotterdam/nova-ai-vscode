@@ -1,6 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import { commands, Uri, ViewColumn, Webview, WebviewPanel, WebviewPanelSerializer, WebviewView, WebviewViewProvider, window } from 'vscode';
+import { commands, Disposable, ThemeIcon, Uri, ViewColumn, Webview, WebviewPanel, WebviewPanelSerializer, WebviewView, WebviewViewProvider, window } from 'vscode';
+import type { SkillsCommand } from '../skills/protocol';
+import type { SkillPaths } from '../skills/SkillService';
+import { SkillsController } from '../skills/SkillsController';
 import { Diagnostics } from '../core/diagnostics';
 import {
   COMMAND_MANAGE_MODELS,
@@ -12,13 +15,14 @@ import {
   COMMAND_REFRESH_MODELS,
   COMMAND_SIGN_IN,
   COMMAND_SIGN_OUT,
-  NOVA_SIDEBAR_VIEW_ID
+  NOVA_SIDEBAR_VIEW_ID,
+  NOVA_VIEW_CONTAINER_ID
 } from '../core/constants';
 import { toUserMessage } from '../core/errors';
 import type { LanguageModelInfo, ProfileView, SessionSnapshot } from '../core/types';
 import { ProfileService } from '../services/ProfileService';
 import { ModelProvider, pricingLabel } from '../model/modelProvider';
-import type { ChatController } from '../panel/ChatController';
+import type { ChatController, ChatControllerOptions } from '../panel/ChatController';
 import type { ChatCommand, ChatEvent } from '../panel/protocol';
 import { SessionService } from '../services/SessionService';
 import { Manifest, Resource } from './svelte';
@@ -27,21 +31,28 @@ const WEBVIEW_ENTRY = 'webview/index.html' as const;
 const HEAD_MARKER = '<!--nova:svelte-head-->';
 const BODY_MARKER = '<!--nova:svelte-body-->';
 
-export type Surface = 'sidebar' | 'editor';
+export type Surface = 'sidebar' | 'editor' | 'skills';
 
 export const CHAT_PANEL_VIEW_TYPE = 'nova.chatPanel';
+export const SKILLS_VIEW_TYPE = 'nova.skills';
+
+export type ChatFactory = (post: (event: ChatEvent) => void, options: ChatControllerOptions) => ChatController;
 
 /**
- * Hosts the Nova UI in the sidebar view and, optionally, in an editor tab. Both run the
- * same webview bundle; chat events are broadcast to every open surface so streaming,
- * approvals and the message queue stay in sync.
+ * Hosts the Nova UI in the sidebar view and in editor tabs. The sidebar shows one chat at
+ * a time; every editor tab has a chat of its own (its own controller), so several chats
+ * can be open, and running, side by side. A chat is open in one place only (see ChatHub).
  */
-export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer {
+export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer, Disposable {
   private view?: WebviewView;
-  private panel?: WebviewPanel;
-  /** Runs the Nova chat shown in these views; set after construction. */
-  public chat?: ChatController;
+  private sidebarChat?: ChatController;
+  private readonly panels = new Map<WebviewPanel, ChatController>();
+  /** The editor tab the user used last; undefined: the sidebar. Commands go there. */
+  private lastActivePanel?: WebviewPanel;
+  private createChat?: ChatFactory;
   private readonly profiles = new ProfileService();
+  private skillPaths?: () => SkillPaths;
+  private skills?: { panel: WebviewPanel; controller: SkillsController };
 
   public constructor(
     private readonly extensionUri: Uri,
@@ -51,6 +62,82 @@ export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer
   ) {
     this.sessionService.onDidChangeSession(() => void this.refresh());
     this.modelProvider.onDidChangeLanguageModelChatInformation(() => void this.refresh());
+  }
+
+  /** Sets how chats are created and creates the sidebar's. */
+  public useChats(createChat: ChatFactory): void {
+    this.createChat = createChat;
+    this.sidebarChat = this.newSidebarChat(undefined);
+  }
+
+  /** Where skills live, for the Skills page. */
+  public useSkills(paths: () => SkillPaths): void {
+    this.skillPaths = paths;
+  }
+
+  /** The Skills page (one editor tab): skills of every project, or of this one. */
+  public async openSkills(): Promise<void> {
+    if (this.skills) {
+      this.skills.panel.reveal();
+      return;
+    }
+    await this.adoptSkillsPanel(window.createWebviewPanel(SKILLS_VIEW_TYPE, 'Nova Skills', ViewColumn.Active, {
+      enableScripts: true,
+      localResourceRoots: this.resourceRoots()
+    }));
+  }
+
+  /** Restores the Skills tab after a window reload. */
+  public readonly skillsSerializer: WebviewPanelSerializer = {
+    deserializeWebviewPanel: (panel) => this.adoptSkillsPanel(panel)
+  };
+
+  private async adoptSkillsPanel(panel: WebviewPanel): Promise<void> {
+    if (!this.skillPaths) {
+      panel.dispose();
+      return;
+    }
+    panel.iconPath = new ThemeIcon('book');
+    const controller = new SkillsController(this.skillPaths, (message) => postSafely(panel.webview, message));
+    this.skills = { panel, controller };
+    panel.onDidChangeViewState(() => {
+      if (panel.visible) {
+        controller.refresh();
+      }
+    });
+    panel.onDidDispose(() => {
+      controller.dispose();
+      if (this.skills?.panel === panel) {
+        this.skills = undefined;
+      }
+    });
+    await this.attach(panel.webview, 'skills');
+  }
+
+  /** The sidebar's chat. */
+  public get sidebar(): ChatController {
+    if (!this.sidebarChat) {
+      throw new Error('Nova chats are not set up yet.');
+    }
+    return this.sidebarChat;
+  }
+
+  /** The chat the user used last (an editor tab, else the sidebar) and how to show it. */
+  public activeChat(): { controller: ChatController; reveal: () => Promise<void> } {
+    const panel = this.lastActivePanel && this.panels.has(this.lastActivePanel) ? this.lastActivePanel : undefined;
+    return panel
+      ? { controller: this.panels.get(panel)!, reveal: async () => panel.reveal() }
+      : { controller: this.sidebar, reveal: () => this.revealSidebar() };
+  }
+
+  public dispose(): void {
+    for (const [panel, controller] of this.panels) {
+      controller.dispose();
+      panel.dispose();
+    }
+    this.panels.clear();
+    this.sidebarChat?.dispose();
+    this.skills?.controller.dispose();
   }
 
   public async resolveWebviewView(view: WebviewView): Promise<void> {
@@ -64,41 +151,61 @@ export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer
     await this.attach(view.webview, 'sidebar');
   }
 
-  /** Restores the editor tab after a window reload. */
-  public async deserializeWebviewPanel(panel: WebviewPanel): Promise<void> {
-    await this.adoptPanel(panel);
+  /** Restores an editor tab after a window reload, with the chat it showed. */
+  public async deserializeWebviewPanel(panel: WebviewPanel, state: unknown): Promise<void> {
+    const sessionId = (state as { sessionId?: unknown } | undefined)?.sessionId;
+    await this.adoptPanel(panel, (post, options) => this.chatFactory()(post, {
+      ...options,
+      initialSessionId: typeof sessionId === 'string' ? sessionId : null
+    }));
   }
 
-  /** Opens (or reveals) the Nova chat as an editor tab. */
+  /**
+   * "Open in Editor" from the sidebar: its chat moves to a new tab, running reply and all,
+   * and the sidebar starts a new chat. An empty sidebar chat just opens a new tab.
+   */
   public async openInEditor(): Promise<void> {
-    if (this.panel) {
-      this.panel.reveal();
+    const moving = this.sidebar;
+    if (moving.isEmpty) {
+      await this.openNewTab(null);
       return;
     }
-    const panel = window.createWebviewPanel(CHAT_PANEL_VIEW_TYPE, 'Nova Chat', ViewColumn.Active, {
-      enableScripts: true,
-      localResourceRoots: this.resourceRoots()
-    });
-    await this.adoptPanel(panel);
+    this.sidebarChat = this.newSidebarChat(null);
+    await moving.forgetLast();
+    await this.adoptPanel(this.createPanel(moving.title), () => moving);
+    await this.sidebarChat.handle({ command: 'chat/ready' });
   }
 
-  private async adoptPanel(panel: WebviewPanel): Promise<void> {
-    this.panel = panel;
-    panel.iconPath = {
-      light: Uri.joinPath(this.extensionUri, 'resources', 'nova-dark.svg'),
-      dark: Uri.joinPath(this.extensionUri, 'resources', 'favicon.svg')
-    };
-    panel.onDidDispose(() => {
-      if (this.panel === panel) {
-        this.panel = undefined;
-      }
-    });
-    await this.attach(panel.webview, 'editor');
+  /** Opens a chat (or a new one) in an editor tab; a chat open elsewhere is shown there. */
+  public async openChatInEditor(sessionId: string): Promise<void> {
+    const owner = this.ownerOf(sessionId);
+    if (owner === this.sidebarChat) {
+      await this.openInEditor();
+    } else if (owner) {
+      await owner.reveal();
+    } else {
+      await this.openNewTab(sessionId);
+    }
+  }
+
+  public async openNewTab(sessionId: string | null): Promise<void> {
+    await this.adoptPanel(this.createPanel('New chat'), (post, options) => this.chatFactory()(post, { ...options, initialSessionId: sessionId }));
   }
 
   /** Asks the sidebar webview to show a view (from the VS Code title bar buttons). */
-  public async showInSidebar(view: 'history' | 'account'): Promise<void> {
+  public async showInSidebar(view: 'history' | 'account' | 'chat'): Promise<void> {
     await this.view?.webview.postMessage({ type: 'ui', action: view });
+  }
+
+  public async revealSidebar(): Promise<void> {
+    for (const command of [`workbench.view.extension.${NOVA_VIEW_CONTAINER_ID}`, `${NOVA_SIDEBAR_VIEW_ID}.focus`]) {
+      try {
+        await commands.executeCommand(command);
+      } catch {
+        // older hosts without one of the commands
+      }
+    }
+    await this.showInSidebar('chat');
   }
 
   /** Pushes the current session and model state to every surface. */
@@ -107,18 +214,89 @@ export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer
       webview.postMessage({ type: 'state', state: await this.createState(webview, surface) })));
   }
 
-  /** Sends a chat event to every surface; a surface that is not loaded resyncs on `chat/ready`. */
-  public postChat(event: ChatEvent): void {
-    for (const { webview } of this.surfaces()) {
-      void webview.postMessage(event);
+  private chatFactory(): ChatFactory {
+    if (!this.createChat) {
+      throw new Error('Nova chats are not set up yet.');
     }
+    return this.createChat;
+  }
+
+  private newSidebarChat(initialSessionId: string | null | undefined): ChatController {
+    return this.chatFactory()((event) => this.view && postSafely(this.view.webview, event), {
+      rememberLast: true,
+      initialSessionId,
+      reveal: () => this.revealSidebar()
+    });
+  }
+
+  private ownerOf(sessionId: string): ChatController | undefined {
+    return [this.sidebarChat, ...this.panels.values()].find((controller) => controller?.currentSessionId === sessionId);
+  }
+
+  private createPanel(title: string): WebviewPanel {
+    return window.createWebviewPanel(CHAT_PANEL_VIEW_TYPE, title || 'New chat', ViewColumn.Active, {
+      enableScripts: true,
+      localResourceRoots: this.resourceRoots()
+    });
+  }
+
+  /** Wires a tab to a chat: `chatFor` creates one, or hands over the sidebar's. */
+  private async adoptPanel(panel: WebviewPanel, chatFor: ChatFactory): Promise<void> {
+    panel.iconPath = {
+      light: Uri.joinPath(this.extensionUri, 'resources', 'nova-dark.svg'),
+      dark: Uri.joinPath(this.extensionUri, 'resources', 'favicon.svg')
+    };
+    const post = (event: ChatEvent) => postSafely(panel.webview, event);
+    const reveal = () => panel.reveal();
+    const onTitle = (title: string) => {
+      const next = title || 'New chat';
+      if (panel.title !== next) {
+        panel.title = next;
+      }
+    };
+    const controller = chatFor(post, { rememberLast: false, reveal, onTitle });
+    if (controller === this.sidebarChat || [...this.panels.values()].includes(controller)) {
+      throw new Error('A Nova chat cannot be shown twice.');
+    }
+    // A chat handed over from the sidebar keeps running; point it at this tab.
+    controller.moveTo(post, { reveal, onTitle });
+    this.panels.set(panel, controller);
+    this.lastActivePanel = panel;
+    panel.onDidChangeViewState(() => {
+      if (panel.active) {
+        this.lastActivePanel = panel;
+      }
+    });
+    panel.onDidDispose(() => {
+      this.panels.delete(panel);
+      if (this.lastActivePanel === panel) {
+        this.lastActivePanel = undefined;
+      }
+      // A running reply is stopped; what it produced so far is saved.
+      controller.dispose();
+    });
+    onTitle(controller.title);
+    await this.attach(panel.webview, 'editor');
   }
 
   private surfaces(): Array<{ webview: Webview; surface: Surface }> {
     return [
       ...(this.view ? [{ webview: this.view.webview, surface: 'sidebar' as const }] : []),
-      ...(this.panel ? [{ webview: this.panel.webview, surface: 'editor' as const }] : [])
+      ...[...this.panels.keys()].map((panel) => ({ webview: panel.webview, surface: 'editor' as const })),
+      ...(this.skills ? [{ webview: this.skills.panel.webview, surface: 'skills' as const }] : [])
     ];
+  }
+
+  private chatOf(webview: Webview): ChatController | undefined {
+    if (this.view?.webview === webview) {
+      return this.sidebarChat;
+    }
+    for (const [panel, controller] of this.panels) {
+      if (panel.webview === webview) {
+        return controller;
+      }
+    }
+    return undefined;
   }
 
   private resourceRoots(): Uri[] {
@@ -138,9 +316,23 @@ export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer
   }
 
   private async handleMessage(message: SidebarMessage, source: Webview): Promise<void> {
+    if (message.command.startsWith('skills/')) {
+      if (this.skills?.panel.webview === source) {
+        try {
+          await this.skills.controller.handle(message as unknown as SkillsCommand);
+        } catch (error) {
+          this.diagnostics.error('Nova skills action failed.', error);
+          void window.showErrorMessage(toUserMessage(error));
+          this.skills?.controller.refresh();
+        }
+      }
+      return;
+    }
+    const panel = [...this.panels.keys()].find((candidate) => candidate.webview === source);
+    this.lastActivePanel = panel;
     if (message.command.startsWith('chat/')) {
       try {
-        await this.chat?.handle(message as unknown as ChatCommand);
+        await this.chatOf(source)?.handle(message as unknown as ChatCommand);
       } catch (error) {
         this.diagnostics.error('Nova chat action failed.', error);
         void window.showErrorMessage(toUserMessage(error));
@@ -163,6 +355,14 @@ export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer
           break;
         case 'openInEditor':
           await this.openInEditor();
+          break;
+        case 'newChatTab':
+          await this.openNewTab(null);
+          break;
+        case 'openChatInEditor':
+          if (typeof message.sessionId === 'string') {
+            await this.openChatInEditor(message.sessionId);
+          }
           break;
         case COMMAND_REFRESH_MODELS:
         case COMMAND_SIGN_OUT:
@@ -222,6 +422,7 @@ export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer
 /** Messages posted by the sidebar webview. */
 interface SidebarMessage {
   command: string;
+  sessionId?: string;
   apiKey?: string;
   query?: string;
   mode?: 'ask' | 'agent';
@@ -329,6 +530,15 @@ function createCspMeta(cspSource: string, nonce: string): string {
 
 function createBootstrapScript(state: SidebarRenderState, nonce: string): string {
   return `<script nonce="${escapeAttribute(nonce)}">window.__NOVA_SIDEBAR_STATE__ = ${escapeScript(JSON.stringify(state))};</script>`;
+}
+
+/** A tab can be closed while its chat still reports (a stopped reply saving). */
+function postSafely(webview: Webview, event: unknown): void {
+  try {
+    void Promise.resolve(webview.postMessage(event)).catch(() => undefined);
+  } catch {
+    // disposed webview
+  }
 }
 
 function escapeScript(value: string): string {

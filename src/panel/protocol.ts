@@ -14,6 +14,8 @@ export type ChatItem =
         files?: Attachment[];
         /** Position of this message in the model conversation, used to cut it on edit. */
         messageIndex?: number;
+        /** Name of the model that answered this message (older chats do not have it). */
+        model?: string;
     }
     | { kind: 'assistant'; id: string; text: string }
     | { kind: 'thinking'; id: string; text: string }
@@ -127,7 +129,10 @@ export interface ChatState {
     attachments: Attachment[];
     /** Prompt tokens of the last request and the model's input budget. */
     usage?: { used: number; total: number };
+    /** Saved chats of the workspace, newest first (for the Chats page). */
     sessions: SessionSummary[];
+    /** Chats open in another place (the sidebar or another editor tab). */
+    openElsewhere: string[];
     approvalMode: ApprovalMode;
     queue: QueuedMessage[];
     /** Nova's task list for the current work; empty when there is none or it was closed. */
@@ -143,6 +148,7 @@ export type ApprovalDecision = 'approve' | 'approveSession' | 'approveAlways' | 
 /** Extension → webview. */
 export type ChatEvent =
     | { type: 'chat/state'; state: ChatState }
+    | { type: 'chat/sessions'; sessions: SessionSummary[]; openElsewhere: string[] }
     | { type: 'chat/itemAdded'; item: ChatItem }
     | { type: 'chat/itemUpdated'; item: ChatItem }
     | { type: 'chat/textDelta'; itemId: string; delta: string }
@@ -161,7 +167,8 @@ export type ChatCommand =
     | { command: 'chat/approval'; itemId: string; decision: ApprovalDecision }
     | { command: 'chat/new' }
     | { command: 'chat/open'; sessionId: string }
-    | { command: 'chat/delete'; sessionId: string }
+    | { command: 'chat/rename'; sessionId: string; title: string }
+    | { command: 'chat/delete'; sessionIds: string[] }
     | { command: 'chat/selectModel'; modelId: string }
     | { command: 'chat/addFile' }
     | { command: 'chat/addSelection' }

