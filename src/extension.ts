@@ -39,6 +39,7 @@ import type {SkillPaths} from './skills/SkillService';
 import * as os from 'node:os';
 import {registerAgentParticipant} from './chat/AgentParticipant';
 import {registerVsCodeTools} from './agent/tools/vscodeTools';
+import {registerBrowserSetup} from './browser/BrowserSetup';
 import {ChatController} from './panel/ChatController';
 import {PROPOSED_SCHEME, ProposedContentProvider} from './panel/ProposedContentProvider';
 import {SessionStore} from './panel/SessionStore';
@@ -106,6 +107,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         sessionService.onDidChangeSession(() => void refreshStatusBar(sessionService, modelProvider, statusBar)),
         vscode.lm.registerLanguageModelChatProvider(NOVA_VENDOR, modelProvider),
         registerVsCodeTools(memory),
+        registerBrowserSetup(context, diagnostics, () => NovaHome.resolve().root),
         vscode.commands.registerCommand(COMMAND_OPEN_GLOBAL_MEMORY, async () => openMemoryFile(memory, 'global')),
         vscode.commands.registerCommand(COMMAND_OPEN_PROJECT_MEMORY, async () => openMemoryFile(memory, 'project')),
         vscode.commands.registerCommand(COMMAND_REVEAL_HOME, async () => {

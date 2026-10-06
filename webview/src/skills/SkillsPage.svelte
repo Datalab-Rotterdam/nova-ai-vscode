@@ -181,6 +181,7 @@
                                     <span class="category">{folderLabel(row)}:</span>
                                     <strong>{row.name}</strong>
                                     {#if row.enabled}<span class="badge">in use</span>{/if}
+                                    {#if row.bundledBy}<span class="badge bundled" title={`Installed and kept up to date by ${row.bundledBy}. Read-only: you can only switch it off.`}><span class="codicon codicon-lock" aria-hidden="true"></span>bundled</span>{/if}
                                 </div>
                                 <p class="item-description">{row.description}</p>
                                 <label class="check">
@@ -193,7 +194,14 @@
                                     <span>{state.label}</span>
                                 </label>
                                 {#if state.note}<p class="note">{state.note}</p>{/if}
-                                {#if section.kind === 'own'}
+                                {#if section.kind === 'own' && row.bundledBy}
+                                    <p class="note">Bundled with {row.bundledBy}, which updates it. It can't be edited, moved or deleted; switch it off if you don't want it.</p>
+                                    <div class="actions">
+                                        <span class="location" title={row.path}>{row.location}</span>
+                                        <button class="link" onclick={() => post({command: 'skills/open', path: row.path})}>View</button>
+                                        <button class="link" onclick={() => post({command: 'skills/reveal', path: row.path})}>Reveal</button>
+                                    </div>
+                                {:else if section.kind === 'own'}
                                     <div class="actions">
                                         <span class="location" title={row.path}>{row.location}</span>
                                         <button class="link" onclick={() => post({command: 'skills/open', path: row.path})}>Edit</button>
@@ -451,6 +459,16 @@
     background: var(--nova-badge-bg);
     color: var(--nova-badge-fg);
     font-size: 0.8em;
+
+    &.bundled {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+
+      .codicon {
+        font-size: 11px;
+      }
+    }
   }
 
   .item-description {

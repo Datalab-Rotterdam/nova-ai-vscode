@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import { writePrivateFile } from '../storage/NovaHome';
@@ -21,6 +21,48 @@ export interface Skill {
     root: string;
     scope: SkillScope;
     folder: SkillFolder;
+    /** Set for bundled skills: shipped and updated by a Nova app, read-only, can only be switched off. */
+    bundled?: BundledSkill;
+}
+
+/** Contents of a bundled skill's `.nova-bundled.json` (docs/NOVA_HOME.md, "Bundled skills"). */
+export interface BundledSkill {
+    /** The app that installs and updates it, e.g. "Nova AI Browser". */
+    bundledBy: string;
+    version?: string;
+}
+
+export const BUNDLE_FILE = '.nova-bundled.json';
+
+/** The bundle marker of a skill folder, if it is a bundled skill. */
+export function readBundle(root: string): BundledSkill | undefined {
+    try {
+        const parsed: unknown = JSON.parse(readFileSync(path.join(root, BUNDLE_FILE), 'utf8'));
+        if (isRecord(parsed) && typeof parsed.bundledBy === 'string' && parsed.bundledBy.trim()) {
+            return { bundledBy: parsed.bundledBy, ...(typeof parsed.version === 'string' ? { version: parsed.version } : {}) };
+        }
+    } catch {
+        // No marker: a normal skill.
+    }
+    return undefined;
+}
+
+/**
+ * The bundled skill a file belongs to, if any: walks up from the file to the nearest folder
+ * with a SKILL.md. Nova's file tools refuse to change such files.
+ */
+export function bundledSkillOf(file: string): { root: string; bundle: BundledSkill } | undefined {
+    let dir = path.dirname(path.resolve(file));
+    for (let depth = 0; depth < 6; depth++) {
+        if (existsSync(path.join(dir, 'SKILL.md'))) {
+            const bundle = readBundle(dir);
+            return bundle ? { root: dir, bundle } : undefined;
+        }
+        const parent = path.dirname(dir);
+        if (parent === dir) break;
+        dir = parent;
+    }
+    return undefined;
 }
 
 export interface SkillView extends Skill {
@@ -74,7 +116,8 @@ export function findAllSkills(paths: SkillPaths): Skill[] {
         for (const file of findSkillFiles(root.path)) {
             const metadata = readSkillMetadata(file);
             if (metadata) {
-                skills.push({ ...metadata, path: file, root: path.dirname(file), scope: root.scope, folder: root.folder });
+                const bundle = readBundle(path.dirname(file));
+                skills.push({ ...metadata, path: file, root: path.dirname(file), scope: root.scope, folder: root.folder, ...(bundle ? { bundled: bundle } : {}) });
             }
         }
     }
@@ -158,6 +201,11 @@ export async function createSkill(paths: SkillPaths, scope: SkillScope, name: st
     return file;
 }
 
+/** Why a bundled skill cannot be changed, for messages to the user and the model. */
+export function bundledMessage(skill: Pick<Skill, 'name' | 'bundled'>): string {
+    return `"${skill.name}" is bundled with ${skill.bundled?.bundledBy ?? 'a Nova app'}, which keeps it up to date; it cannot be edited, moved or deleted, only switched off.`;
+}
+
 export function skillTemplate(name: string, description: string): string {
     const summary = description.trim() || 'What this skill does and when to use it.';
     return [
@@ -179,6 +227,9 @@ export function skillTemplate(name: string, description: string): string {
 
 /** Moves a skill's folder into Nova's folder of the other scope; returns the new SKILL.md. */
 export async function moveSkill(paths: SkillPaths, skill: Skill, to: SkillScope, workspaceRoot?: string): Promise<string> {
+    if (skill.bundled) {
+        throw new Error(bundledMessage(skill));
+    }
     const folder = novaSkillsFolder(paths, to, workspaceRoot);
     if (!folder) {
         throw new Error('Open a folder to move skills into the project.');
