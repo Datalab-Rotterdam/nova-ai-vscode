@@ -1,3 +1,22 @@
+# [1.0.0-alpha.18](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.17...v1.0.0-alpha.18) (2026-10-06)
+
+
+### Bug Fixes
+
+* **browser:** commit the vendored browser host build ([e0f7ad3](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/e0f7ad377f3ea900c723c26bdc35d5aacb72e260))
+* **browser:** update the vendored browser host ([94e55fa](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/94e55fa04931c0e3e73562ad81f56b65022f63b7))
+* **chat:** open links in replies safely, after showing where they go ([8c6b0cb](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/8c6b0cbe314d04e790e90e3422d1c4ec75effdb9))
+* **model:** run Gemma 4 tool calls written as text ([4e98144](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/4e98144453edcd5fa2448165f225992069b990db))
+
+
+### Features
+
+* **browser:** set up the Nova AI browser integration on startup ([7848cc4](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/7848cc4fc00715233fa237463b53d796b934a979))
+* **help:** Nova AI logo in the header, DataLab Rotterdam in the footer ([2c192f7](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/2c192f7ce165e141212ccd14f6c9daffb6babe8f))
+* Nova AI help page ([7aea417](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/7aea417b5c39467b9f99848af8d6e5cc96ff99ab))
+* **panel:** slash commands in the Nova chat ([bef5b6e](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/bef5b6ec4ccf9ae691844e4af564049821fb2566))
+* **skills:** bundled skills are read-only and can only be switched off ([e939193](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/e939193e4288c817618467da34c9cbe2cb4b3a61))
+
 # [1.0.0-alpha.17](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.16...v1.0.0-alpha.17) (2026-10-05)
 
 
