@@ -4,6 +4,7 @@ import * as vscode from 'vscode';
 import { ensureDir } from '../storage/NovaHome';
 import type { SkillRow, SkillsCommand, SkillsPageData } from './protocol';
 import {
+    bundledMessage,
     createSkill,
     enabledSkills,
     moveSkill,
@@ -53,9 +54,15 @@ export class SkillsController implements vscode.Disposable {
             case 'skills/create':
                 await this.create(message.scope);
                 break;
-            case 'skills/open':
-                await vscode.window.showTextDocument(vscode.Uri.file(this.known(message.path).path), { preview: false });
+            case 'skills/open': {
+                const skill = this.known(message.path);
+                await vscode.window.showTextDocument(vscode.Uri.file(skill.path), { preview: !skill.bundled });
+                if (skill.bundled) {
+                    // Bundled skills are shown, never edited: updates would overwrite any change anyway.
+                    await vscode.commands.executeCommand('workbench.action.files.setActiveEditorReadonlyInSession');
+                }
                 return;
+            }
             case 'skills/reveal':
                 await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(this.known(message.path).path));
                 return;
@@ -89,7 +96,8 @@ export class SkillsController implements vscode.Disposable {
                     enabled: skill.enabled,
                     offGlobally: skill.offGlobally,
                     offInProject: skill.offInProject,
-                    ...(skill.replacedBy ? { replacedBy: displayLocation(path.dirname(skill.replacedBy), paths) } : {})
+                    ...(skill.replacedBy ? { replacedBy: displayLocation(path.dirname(skill.replacedBy), paths) } : {}),
+                    ...(skill.bundled ? { bundledBy: skill.bundled.bundledBy } : {})
                 })),
                 hasProject: paths.workspaceRoots.length > 0,
                 folders: {
@@ -144,6 +152,10 @@ export class SkillsController implements vscode.Disposable {
 
     private async move(file: string, to: SkillScope): Promise<void> {
         const skill = this.known(file);
+        if (skill.bundled) {
+            void vscode.window.showInformationMessage(bundledMessage(skill));
+            return;
+        }
         const paths = this.paths();
         if (skill.folder !== 'nova') {
             const answer = await vscode.window.showWarningMessage(
@@ -161,6 +173,10 @@ export class SkillsController implements vscode.Disposable {
 
     private async delete(file: string): Promise<void> {
         const skill = this.known(file);
+        if (skill.bundled) {
+            void vscode.window.showInformationMessage(bundledMessage(skill));
+            return;
+        }
         const answer = await vscode.window.showWarningMessage(
             `Delete the skill "${skill.name}"?`,
             { modal: true, detail: `Its folder ${displayLocation(skill.root, this.paths())} goes to the trash.` },

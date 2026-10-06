@@ -18,6 +18,8 @@ export interface SkillRow {
     offInProject: boolean;
     /** Location of the skill with the same name that is used instead. */
     replacedBy?: string;
+    /** Bundled with a Nova app (e.g. "Nova AI Browser"), which keeps it up to date: read-only, can only be switched off. */
+    bundledBy?: string;
 }
 
 export interface SkillsPageData {

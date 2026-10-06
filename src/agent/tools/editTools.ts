@@ -1,6 +1,18 @@
+import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { NovaTool, ToolInputError, type ProposedEdit, type ToolPreparation } from './types';
+import { bundledMessage, bundledSkillOf } from '../../skills/SkillService';
 import { displayPath, exists, readText, resolveWorkspacePath } from './workspacePaths';
+
+/** A path the edit tools may change: in the workspace, and not part of a bundled skill. */
+function resolveEditablePath(input: unknown): vscode.Uri {
+    const uri = resolveWorkspacePath(input);
+    const bundled = bundledSkillOf(uri.fsPath);
+    if (bundled) {
+        throw new ToolInputError(bundledMessage({ name: path.basename(bundled.root), bundled: bundled.bundle }));
+    }
+    return uri;
+}
 
 interface EditFileInput { path: string; old_string: string; new_string: string; replace_all?: boolean }
 
@@ -21,7 +33,7 @@ export const editFileTool: NovaTool<EditFileInput> = {
     },
     readOnly: false,
     async prepare(input) {
-        const uri = resolveWorkspacePath(input.path);
+        const uri = resolveEditablePath(input.path);
         if (typeof input.old_string !== 'string' || typeof input.new_string !== 'string') {
             throw new ToolInputError('"old_string" and "new_string" must be strings.');
         }
@@ -57,7 +69,7 @@ export const createFileTool: NovaTool<CreateFileInput> = {
     },
     readOnly: false,
     async prepare(input) {
-        const uri = resolveWorkspacePath(input.path);
+        const uri = resolveEditablePath(input.path);
         if (typeof input.content !== 'string') {
             throw new ToolInputError('"content" must be a string.');
         }
