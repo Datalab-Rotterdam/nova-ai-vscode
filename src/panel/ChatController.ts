@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import * as vscode from 'vscode';
-import { runAgentLoop } from '../agent/AgentLoop';
+import { runAgentLoop, summarize } from '../agent/AgentLoop';
 import { BUILT_IN_TOOLS, type NovaTool, type ProposedEdit, type ToolPreparation } from '../agent/tools';
 import { diffLines } from './diff';
 import { createInteractionTools, type InteractionHost } from '../agent/tools/interactionTools';
@@ -9,7 +9,8 @@ import { displayPath, getScratchRoot, readText, resolveWorkspacePath, workspaceF
 import type { MemoryService } from '../memory/MemoryService';
 import { type PermissionService, suggestRule } from '../permissions/PermissionService';
 import { getSystemRole } from '../core/apiSupport';
-import { estimateMessagesTokens, tokenCalibration } from '../agent/ContextManager';
+import { COMMAND_SHOW_HELP } from '../core/constants';
+import { buildTranscript, estimateMessagesTokens, summaryBlock, tokenCalibration } from '../agent/ContextManager';
 import { getCompactThreshold, getMaxToolRounds, isAutoCompactEnabled } from '../core/config';
 import { Diagnostics } from '../core/diagnostics';
 import { createPanelPrompt } from '../core/prompts';
@@ -36,6 +37,7 @@ import type {
 import { enabledSkills, type Skill, type SkillPaths } from '../skills/SkillService';
 import { buildSkillsPrompt, createLoadSkillTool } from '../skills/skillTools';
 import type { ChatHub } from './ChatHub';
+import { parseSlashCommand, type ParsedSlashCommand } from './slashCommands';
 import { confirmAndDeleteChats, type ChatHistory } from './chatSearch';
 import { fromStoredMessages, type SessionStore, type StoredSession, toStoredMessages } from './SessionStore';
 
@@ -401,10 +403,16 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         }
     }
 
-    /** Sends a message, or queues it as steering when Nova is already working. */
+    /** Sends a message, or queues it as steering when Nova is already working. Slash commands run here instead. */
     private async send(text: string): Promise<void> {
         const prompt = text.trim();
         if (!prompt && !this.attachments.length) {
+            return;
+        }
+
+        const slash = parseSlashCommand(prompt);
+        if (slash) {
+            await this.runSlashCommand(slash);
             return;
         }
 
@@ -434,13 +442,129 @@ export class ChatController implements vscode.Disposable, ChatHistory {
     }
 
     private run(prompt: string, attachments: Attachment[], steered = false): Promise<void> {
-        const run = this.runInner(prompt, attachments, steered);
-        this.currentRun = run;
-        return run.finally(() => {
-            if (this.currentRun === run) {
+        return this.track(this.runInner(prompt, attachments, steered));
+    }
+
+    /** Remembers work that {@link stopAndWait} has to wait for. */
+    private track(work: Promise<void>): Promise<void> {
+        this.currentRun = work;
+        return work.finally(() => {
+            if (this.currentRun === work) {
                 this.currentRun = undefined;
             }
         });
+    }
+
+    /** Runs a slash command typed in the composer (see slashCommands.ts). */
+    private async runSlashCommand({ command, args }: ParsedSlashCommand): Promise<void> {
+        switch (command.name) {
+            case 'clear':
+                await this.newChat();
+                break;
+            case 'compact':
+                await this.compact(args);
+                break;
+            case 'model':
+                this.switchModel(args);
+                break;
+            case 'rename':
+                if (args) {
+                    await this.renameSession(this.session.id, args);
+                } else {
+                    this.notice('info', 'Give the new name: /rename <title>');
+                }
+                break;
+            case 'help':
+                await vscode.commands.executeCommand(COMMAND_SHOW_HELP);
+                break;
+        }
+    }
+
+    /**
+     * `/compact`: replaces the conversation the model sees with a summary of it, so later
+     * messages start with a nearly empty context. The chat itself stays visible.
+     */
+    private async compact(focus: string): Promise<void> {
+        if (this.running) {
+            this.notice('warning', 'Nova is working. Use /compact after the reply, or stop it first.');
+            return;
+        }
+        if (!this.messages.length) {
+            this.notice('info', 'Nothing to compact yet.');
+            return;
+        }
+        const info = this.models.find((candidate) => candidate.id === this.selectedModelId());
+        const model = info ? createDirectModel(this.modelProvider, info) : undefined;
+        if (!model) {
+            this.notice('error', 'No Nova model is available. Connect Nova AI or refresh the models.');
+            return;
+        }
+        await this.track(this.compactInner(model, focus));
+    }
+
+    private async compactInner(model: vscode.LanguageModelChat, focus: string): Promise<void> {
+        this.stoppedByUser = false;
+        const running = new vscode.CancellationTokenSource();
+        this.running = running;
+        this.post({ type: 'chat/running', running: true });
+
+        const ratio = tokenCalibration.ratio(model.id);
+        const before = estimateMessagesTokens(this.messages, ratio);
+        try {
+            const summary = (await summarize(model, buildTranscript(this.messages), model.maxInputTokens, running.token, focus || undefined)).trim();
+            if (running.token.isCancellationRequested) {
+                this.notice('info', 'Stopped. The conversation was not compacted.');
+                return;
+            }
+            if (!summary) {
+                throw new Error('The model returned an empty summary.');
+            }
+            this.messages = [vscode.LanguageModelChatMessage.User(summaryBlock(summary))];
+            this.forgetMessagePositions();
+            const after = estimateMessagesTokens(this.messages, ratio);
+            this.usage = { used: after, total: model.maxInputTokens };
+            this.post({ type: 'chat/usage', usage: this.usage });
+            this.notice('info', `Conversation compacted from about ${formatTokens(before)} to ${formatTokens(after)} tokens. Nova continues from a summary; the messages above are kept for you to read.`);
+        } catch (error) {
+            if (running.token.isCancellationRequested) {
+                this.notice('info', 'Stopped. The conversation was not compacted.');
+            } else {
+                this.diagnostics.error('Compacting the Nova chat failed.', error);
+                this.notice('error', `Compacting failed: ${error instanceof Error ? error.message : String(error)}`);
+            }
+        } finally {
+            this.running = undefined;
+            running.dispose();
+            this.post({ type: 'chat/running', running: false });
+            await this.persist();
+            this.drainQueue();
+        }
+    }
+
+    /** `/model`: lists the models, or switches to the one whose name or id matches. */
+    private switchModel(query: string): void {
+        const current = this.selectedModelId();
+        const list = (models: readonly LanguageModelInfo[]) => models.map((model) => `${model.id === current ? '● ' : '○ '}${model.name}`).join('\n');
+        if (!query) {
+            this.notice('info', this.models.length ? `Models (switch with /model <name>):\n${list(this.models)}` : 'No Nova models are available.');
+            return;
+        }
+
+        const wanted = query.toLowerCase();
+        const exact = this.models.find((model) => model.id.toLowerCase() === wanted || model.name.toLowerCase() === wanted);
+        const matches = exact ? [exact] : this.models.filter((model) => `${model.id} ${model.name}`.toLowerCase().includes(wanted));
+        if (matches.length !== 1) {
+            this.notice('warning', matches.length
+                ? `"${query}" matches several models:\n${list(matches)}`
+                : `No model matches "${query}". Models:\n${list(this.models)}`);
+            return;
+        }
+        this.notice('info', `Model: ${matches[0].name}`);
+        this.selectModel(matches[0].id);
+    }
+
+    private notice(tone: Extract<ChatItem, { kind: 'notice' }>['tone'], text: string): void {
+        this.addItem({ kind: 'notice', id: randomUUID(), tone, text });
     }
 
     private async runInner(prompt: string, attachments: Attachment[], steered: boolean): Promise<void> {

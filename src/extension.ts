@@ -11,6 +11,7 @@ import {
     COMMAND_CHAT_OPEN_IN_EDITOR,
     COMMAND_CHAT_RENAME,
     COMMAND_MANAGE_SKILLS,
+    COMMAND_SHOW_HELP,
     COMMAND_SEARCH_CHATS,
     COMMAND_SHOW_HISTORY,
     COMMAND_FOCUS_CHAT,
@@ -40,6 +41,7 @@ import * as os from 'node:os';
 import {registerAgentParticipant} from './chat/AgentParticipant';
 import {registerVsCodeTools} from './agent/tools/vscodeTools';
 import {registerBrowserSetup} from './browser/BrowserSetup';
+import {openHelp} from './core/help';
 import {ChatController} from './panel/ChatController';
 import {PROPOSED_SCHEME, ProposedContentProvider} from './panel/ProposedContentProvider';
 import {SessionStore} from './panel/SessionStore';
@@ -134,6 +136,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         vscode.window.registerWebviewPanelSerializer(SKILLS_VIEW_TYPE, sidebarProvider.skillsSerializer),
         vscode.commands.registerCommand(COMMAND_MANAGE_SKILLS, async () => {
             await sidebarProvider.openSkills();
+        }),
+        vscode.commands.registerCommand(COMMAND_SHOW_HELP, async () => {
+            await openHelp(context.extensionUri);
         }),
         vscode.commands.registerCommand(COMMAND_OPEN_CHAT_IN_EDITOR, async () => {
             await sidebarProvider.openInEditor();

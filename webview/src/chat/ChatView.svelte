@@ -275,7 +275,7 @@
                 <QuestionCard {item} {post}/>
             {:else}
                 <p class={`notice ${item.tone}`}>
-                    <span class={`codicon codicon-${item.tone === 'error' ? 'error' : item.tone === 'warning' ? 'warning' : 'info'}`} aria-hidden="true"></span>{item.text}
+                    <span class={`codicon codicon-${item.tone === 'error' ? 'error' : item.tone === 'warning' ? 'warning' : 'info'}`} aria-hidden="true"></span><span class="notice-text">{item.text}</span>
                 </p>
             {/if}
         {/each}
@@ -595,6 +595,11 @@
     gap: 6px;
     color: var(--nova-muted);
     font-size: 0.92em;
+
+    /* /help and /model list one entry per line. */
+    .notice-text {
+      white-space: pre-line;
+    }
 
     &.error .codicon {
       color: var(--nova-error);

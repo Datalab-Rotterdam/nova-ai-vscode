@@ -170,7 +170,7 @@ async function summarizeOlderTurns<T extends ChatMessageLike>(
     return [
         ...pinned,
         create(vscode.LanguageModelChatMessageRole.User, [
-            new vscode.LanguageModelTextPart(`<conversation-summary>\nEarlier parts of this conversation were compacted. Summary:\n\n${summary}\n</conversation-summary>`)
+            new vscode.LanguageModelTextPart(summaryBlock(summary))
         ]),
         ...messages.slice(cut)
     ];
@@ -208,6 +208,11 @@ function safeBoundaries(messages: readonly ChatMessageLike[], pinned: number): n
         }
     }
     return boundaries;
+}
+
+/** How a summary of compacted turns is given to the model. */
+export function summaryBlock(summary: string): string {
+    return `<conversation-summary>\nEarlier parts of this conversation were compacted. Summary:\n\n${summary}\n</conversation-summary>`;
 }
 
 export function buildTranscript(messages: readonly ChatMessageLike[]): string {

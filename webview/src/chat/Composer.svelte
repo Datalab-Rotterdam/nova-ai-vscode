@@ -1,5 +1,6 @@
 <script lang="ts">
     import type {ApprovalMode, ChatState} from '../../../src/panel/protocol';
+    import {parseSlashCommand, suggestSlashCommands, type SlashCommand} from '../../../src/panel/slashCommands';
 
     let {chat, post}: { chat: ChatState; post: (message: Record<string, unknown>) => void } = $props();
 
@@ -8,7 +9,13 @@
 
     const usagePercent = $derived(chat.usage ? Math.min(100, Math.round((chat.usage.used / Math.max(1, chat.usage.total)) * 100)) : 0);
     const questionPending = $derived(chat.items.some((item) => item.kind === 'question' && item.status === 'pending'));
-    const canSend = $derived(Boolean(text.trim() || chat.attachments.length) && Boolean(chat.modelId));
+    // Slash commands (/clear, /model, …) also work without a model.
+    const canSend = $derived(Boolean(text.trim() || chat.attachments.length) && (Boolean(chat.modelId) || Boolean(parseSlashCommand(text))));
+
+    /* Slash command menu: shown while the first word starts with "/"; Esc hides it until the text changes. */
+    let highlighted = $state(0);
+    let menuDismissed = $state(false);
+    const suggestions = $derived(menuDismissed ? [] : suggestSlashCommands(text));
 
     const approvalLabels: Record<ApprovalMode, string> = {
         ask: 'Ask every time',
@@ -25,7 +32,43 @@
         resize();
     }
 
+    /** Fills in a suggested command; Enter runs it at once unless it needs an argument. */
+    function pickCommand(command: SlashCommand, run: boolean) {
+        if (run && !command.args?.startsWith('<')) {
+            text = `/${command.name}`;
+            send();
+            return;
+        }
+        text = `/${command.name} `;
+        textarea?.focus();
+        resize();
+    }
+
+    function onInput() {
+        highlighted = 0;
+        menuDismissed = false;
+        resize();
+    }
+
     function onKeydown(event: KeyboardEvent) {
+        if (suggestions.length && !event.isComposing) {
+            const move = event.key === 'ArrowDown' ? 1 : event.key === 'ArrowUp' ? -1 : 0;
+            if (move) {
+                event.preventDefault();
+                highlighted = (highlighted + move + suggestions.length) % suggestions.length;
+                return;
+            }
+            if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey)) {
+                event.preventDefault();
+                pickCommand(suggestions[Math.min(highlighted, suggestions.length - 1)], event.key === 'Enter');
+                return;
+            }
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                menuDismissed = true;
+                return;
+            }
+        }
         if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
             event.preventDefault();
             send();
@@ -68,6 +111,23 @@
     </ul>
 {/if}
 <form class="composer" onsubmit={(event) => { event.preventDefault(); send(); }}>
+    {#if suggestions.length}
+        <ul class="slash-menu" id="nova-slash-menu" role="listbox" aria-label="Slash commands">
+            {#each suggestions as command, index (command.name)}
+                <li
+                        id={`nova-slash-${command.name}`}
+                        role="option"
+                        aria-selected={index === highlighted}
+                        class:active={index === highlighted}
+                        onmousedown={(event) => { event.preventDefault(); pickCommand(command, true); }}
+                        onmousemove={() => (highlighted = index)}
+                >
+                    <span class="slash-name">/{command.name}{#if command.args}<span class="slash-args"> {command.args}</span>{/if}</span>
+                    <span class="slash-description">{command.description}</span>
+                </li>
+            {/each}
+        </ul>
+    {/if}
     {#if chat.attachments.length}
         <ul class="attachments">
             {#each chat.attachments as attachment (attachment.id)}
@@ -83,11 +143,14 @@
     <textarea
             bind:this={textarea}
             bind:value={text}
-            oninput={resize}
+            oninput={onInput}
             onkeydown={onKeydown}
             rows="1"
             placeholder={!chat.models.length ? 'No Nova models available' : questionPending ? 'Answer Nova\'s question…' : chat.running ? 'Steer Nova or queue a follow-up…' : 'Ask Nova to explain, change or build something…'}
             aria-label="Message Nova"
+            aria-autocomplete="list"
+            aria-controls={suggestions.length ? 'nova-slash-menu' : undefined}
+            aria-activedescendant={suggestions[highlighted] ? `nova-slash-${suggestions[highlighted].name}` : undefined}
     ></textarea>
 
     <div class="toolbar">
@@ -253,6 +316,59 @@
   :global(body.vscode-high-contrast-light) .running .composer {
     border: 1px dashed var(--vscode-contrastActiveBorder, var(--nova-focus));
     box-shadow: none;
+  }
+
+  /* Opens upwards over the conversation, aligned with the composer. */
+  .slash-menu {
+    position: absolute;
+    right: 0;
+    bottom: calc(100% + 4px);
+    left: 0;
+    z-index: 2;
+    margin: 0;
+    padding: 4px;
+    border: 1px solid var(--nova-subtle-border);
+    border-radius: 10px;
+    background: var(--vscode-editorWidget-background, var(--nova-input-bg));
+    box-shadow: 0 4px 16px -6px var(--vscode-widget-shadow, transparent);
+    list-style: none;
+
+    li {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      min-width: 0;
+      padding: 3px 6px;
+      border-radius: var(--nova-radius);
+      cursor: pointer;
+
+      &.active {
+        background: var(--vscode-list-activeSelectionBackground, var(--nova-hover));
+        color: var(--vscode-list-activeSelectionForeground, var(--nova-fg));
+
+        .slash-description,
+        .slash-args {
+          color: inherit;
+        }
+      }
+    }
+  }
+
+  .slash-name {
+    flex: none;
+    font-family: var(--nova-mono);
+  }
+
+  .slash-args,
+  .slash-description {
+    color: var(--nova-muted);
+  }
+
+  .slash-description {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .queue {
