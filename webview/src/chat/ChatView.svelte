@@ -263,7 +263,7 @@
                 </div>
                 {/if}
             {:else if item.kind === 'assistant'}
-                <div class="assistant"><Markdown text={item.text}/></div>
+                <div class="assistant"><Markdown text={item.text} onLink={(href, text) => post({command: 'chat/openLink', href, text})}/></div>
             {:else if item.kind === 'thinking'}
                 <details class="thinking">
                     <summary><span class="codicon codicon-lightbulb" aria-hidden="true"></span>Thinking</summary>

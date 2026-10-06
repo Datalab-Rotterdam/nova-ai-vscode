@@ -341,6 +341,11 @@
         "title": "Nova AI: Set Up Browser Integration",
         "category": "Nova AI",
         "icon": "$(globe)"
+      },
+      {
+        "command": "nova.dev.testLinks",
+        "title": "Nova AI (Dev): Test Chat Links",
+        "category": "Nova AI"
       }
     ],
     "menus": {
@@ -417,6 +422,10 @@
         {
           "command": "nova.addSelectionToChat",
           "when": "nova.signedIn && editorIsOpen"
+        },
+        {
+          "command": "nova.dev.testLinks",
+          "when": "nova.devMode"
         },
         {
           "command": "nova.chats.search",

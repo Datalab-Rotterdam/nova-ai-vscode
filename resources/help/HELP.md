@@ -31,6 +31,7 @@ The account page (**Nova AI: Account and Models**) shows the connection, quick a
 - While Nova is working you can keep typing. A message sent then is **steering**: Nova reads it at its next step. Click its label to turn it into a **queued** follow-up, sent after the reply instead. ▶ sends a waiting message now, ✕ removes it.
 - The red square stops Nova. Waiting messages then stay until you send them.
 - Hover over one of your messages and click the pencil to **edit and resend** it: everything after it is replaced by the new reply.
+- **Links** in replies: hover to see where a link goes. Web and email links ask first and show the full address (with a warning when the link text names another site or the link is not secure); you can open it in your browser or copy it. Links to files open them in the editor. Other kinds of links (`command:`, `file:`, `vscode:`, …) are never opened.
 
 ### Slash commands
 

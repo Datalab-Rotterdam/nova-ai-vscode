@@ -12,6 +12,7 @@ import {
     COMMAND_CHAT_RENAME,
     COMMAND_MANAGE_SKILLS,
     COMMAND_SHOW_HELP,
+    COMMAND_DEV_TEST_LINKS,
     COMMAND_SEARCH_CHATS,
     COMMAND_SHOW_HISTORY,
     COMMAND_FOCUS_CHAT,
@@ -266,6 +267,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         })
     );
 
+    if (context.extensionMode === vscode.ExtensionMode.Development) {
+        void vscode.commands.executeCommand('setContext', 'nova.devMode', true);
+        context.subscriptions.push(vscode.commands.registerCommand(COMMAND_DEV_TEST_LINKS, async () => {
+            const target = sidebarProvider.activeChat();
+            await target.reveal();
+            target.controller.addAssistantMessage(SAMPLE_LINKS_REPLY);
+        }));
+    }
+
     await sessionService.validateExistingSession();
     await modelProvider.warmup();
     await refreshStatusBar(sessionService, modelProvider, statusBar);
@@ -273,6 +283,26 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
 export function deactivate(): void {
 }
+
+/** Every kind of link the chat handles, for `Nova AI (Dev): Test Chat Links`. */
+const SAMPLE_LINKS_REPLY = [
+    '**Link test.** Hover each link to see its address, then click it.',
+    '',
+    '1. Plain web link: [VS Code docs](https://code.visualstudio.com/docs) → dialog, opens on confirm',
+    '2. Bare URL (autolinked): https://github.com/DataLab-Rotterdam',
+    '3. Insecure: [plain http site](http://example.com) → dialog warns about http',
+    '4. Misleading text: [github.com/login](https://example.com/login) → dialog warns the text names another site',
+    '5. Email: [mail Nova](mailto:someone@example.com) → asks to open the mail app',
+    '6. Workspace file: [package.json](package.json) → opens in the editor',
+    '7. File at a line: [README line 5](README.md#L5) → opens at line 5',
+    '8. Outside the workspace: [passwd](../../../../etc/passwd) → refused',
+    '9. Command link: [open terminal](command:workbench.action.terminal.new) → refused',
+    '10. File URI: [hosts](file:///etc/hosts) → refused',
+    '11. VS Code URI: [settings](vscode://settings/editor.fontSize) → refused',
+    '12. Script: [click me](javascript:alert(1)) → stripped (renders as plain text or does nothing)',
+    '',
+    '`https://in-code.example` inside code is not a link.'
+].join('\n');
 
 /**
  * Opens `~/.nova-ai` for this workspace: project folder, scratch sandbox (pruned after

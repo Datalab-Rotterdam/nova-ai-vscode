@@ -1,7 +1,11 @@
 <script lang="ts">
     import {renderMarkdown} from './markdown';
 
-    let {text}: { text: string } = $props();
+    let {text, onLink}: {
+        text: string;
+        /** A link was clicked; the extension decides where it may go and asks first for external ones. */
+        onLink?: (href: string, text: string) => void;
+    } = $props();
 
     const html = $derived(renderMarkdown(text));
 
@@ -24,10 +28,40 @@
                 pre.append(button);
             }
         };
+        // Links carry data-href, not href (see markdown.ts); the extension opens them.
+        const linkOf = (event: Event) => {
+            const link = (event.target as Element | null)?.closest?.('a[data-href]');
+            return link && node.contains(link) ? link : undefined;
+        };
+        const open = (event: Event, link: Element) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onLink?.(link.getAttribute('data-href') ?? '', link.textContent ?? '');
+        };
+        const onClick = (event: MouseEvent) => {
+            const link = linkOf(event);
+            if (link) {
+                open(event, link);
+            }
+        };
+        const onKeyDown = (event: KeyboardEvent) => {
+            const link = event.key === 'Enter' ? linkOf(event) : undefined;
+            if (link) {
+                open(event, link);
+            }
+        };
         const observer = new MutationObserver(decorate);
         observer.observe(node, {childList: true, subtree: true});
+        node.addEventListener('click', onClick);
+        node.addEventListener('keydown', onKeyDown);
         decorate();
-        return {destroy: () => observer.disconnect()};
+        return {
+            destroy: () => {
+                observer.disconnect();
+                node.removeEventListener('click', onClick);
+                node.removeEventListener('keydown', onKeyDown);
+            }
+        };
     }
 </script>
 
@@ -110,6 +144,18 @@
     :global(pre:hover .copy),
     :global(pre .copy:focus-visible) {
       opacity: 1;
+    }
+
+    :global(a) {
+      color: var(--vscode-textLink-foreground);
+      text-decoration: none;
+      cursor: pointer;
+    }
+
+    :global(a:hover),
+    :global(a:focus-visible) {
+      color: var(--vscode-textLink-activeForeground, var(--vscode-textLink-foreground));
+      text-decoration: underline;
     }
 
     :global(blockquote) {

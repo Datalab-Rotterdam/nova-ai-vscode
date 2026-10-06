@@ -348,6 +348,24 @@ describe('ChatController', () => {
     expect(controller.getState()).toMatchObject({ sessionId: 'saved', title: 'Saved chat' });
   });
 
+  it('opens links from replies: web links after confirmation, paths in the workspace, other schemes never', async () => {
+    const { controller } = setup([]);
+    const warn = vi.spyOn(vscode.window, 'showWarningMessage').mockResolvedValue(undefined as never);
+    const open = vi.spyOn(vscode.env, 'openExternal');
+    const show = vi.spyOn(vscode.window, 'showTextDocument');
+
+    await controller.handle({ command: 'chat/openLink', href: 'https://example.com/', text: 'Example' });
+    expect(warn).toHaveBeenLastCalledWith('Open example.com in your browser?', expect.objectContaining({ modal: true }), 'Open in Browser', 'Copy Link');
+    expect(open).not.toHaveBeenCalled();
+
+    await controller.handle({ command: 'chat/openLink', href: 'command:workbench.action.terminal.new', text: 'run' });
+    expect(warn).toHaveBeenLastCalledWith('Nova does not open command: links from the chat.');
+
+    await controller.handle({ command: 'chat/openLink', href: 'package.json#L3', text: 'package.json' });
+    expect(show).toHaveBeenCalledWith(expect.objectContaining({ fsPath: expect.stringContaining('package.json') }), expect.objectContaining({ selection: expect.objectContaining({ start: { line: 2, character: 0 } }) }));
+    expect(open).not.toHaveBeenCalled();
+  });
+
   it('refuses to switch chats while Nova is working', async () => {
     const { controller, events, store } = setup([
       [new vscode.LanguageModelToolCallPart('c1', 'run_command', { command: 'echo slow' })]
