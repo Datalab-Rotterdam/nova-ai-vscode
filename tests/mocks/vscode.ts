@@ -162,6 +162,7 @@ export const window = {
   showErrorMessage: async () => undefined,
   showWarningMessage: async () => undefined,
   showInputBox: async () => undefined,
+  showTextDocument: async () => undefined,
   registerWebviewViewProvider: () => new Disposable()
 };
 
@@ -179,6 +180,11 @@ export class Uri {
 
   public static file(fsPath: string): Uri {
     return new Uri('file', fsPath);
+  }
+
+  public static parse(value: string): Uri {
+    const url = new URL(value);
+    return new Uri(url.protocol.slice(0, -1), value.slice(url.protocol.length));
   }
 
   public static joinPath(base: Uri, ...segments: string[]): Uri {
@@ -224,7 +230,19 @@ export const lm = {
   invokeTool: async () => ({ content: [] })
 };
 
-export const env = { shell: '/bin/sh' };
+export const env = {
+  shell: '/bin/sh',
+  clipboard: { writeText: async (_text: string) => undefined },
+  openExternal: async (_uri: Uri) => true
+};
+
+export class Position {
+  public constructor(public readonly line: number, public readonly character: number) {}
+}
+
+export class Range {
+  public constructor(public readonly start: Position, public readonly end: Position) {}
+}
 
 export const ConfigurationTarget = { Global: 1, Workspace: 2, WorkspaceFolder: 3 };
 

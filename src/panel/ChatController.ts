@@ -38,6 +38,7 @@ import { enabledSkills, type Skill, type SkillPaths } from '../skills/SkillServi
 import { buildSkillsPrompt, createLoadSkillTool } from '../skills/skillTools';
 import type { ChatHub } from './ChatHub';
 import { parseSlashCommand, type ParsedSlashCommand } from './slashCommands';
+import { classifyLink, confirmAndOpenExternal } from './links';
 import { confirmAndDeleteChats, type ChatHistory } from './chatSearch';
 import { fromStoredMessages, type SessionStore, type StoredSession, toStoredMessages } from './SessionStore';
 
@@ -209,6 +210,9 @@ export class ChatController implements vscode.Disposable, ChatHistory {
                 break;
             case 'chat/openFile':
                 await this.openFile(command.path);
+                break;
+            case 'chat/openLink':
+                await this.openLink(command.href, command.text);
                 break;
             case 'chat/queueMode':
                 this.queue = this.queue.map((item) => (item.id === command.id ? { ...item, mode: command.mode } : item));
@@ -1058,13 +1062,26 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         await vscode.commands.executeCommand('vscode.diff', edit.original, edit.proposed, `${edit.path} (${applied ? 'edit by Nova' : 'Nova proposal'})`, { preview: true });
     }
 
-    private async openFile(path: string): Promise<void> {
+    /** Links in replies: web links open in the browser after the user sees where they go, paths open in the workspace. */
+    private async openLink(href: string, text: string): Promise<void> {
+        const link = classifyLink(href);
+        if (link.kind === 'external') {
+            await confirmAndOpenExternal(link.url, text);
+        } else if (link.kind === 'file') {
+            await this.openFile(link.path, link.line);
+        } else {
+            void vscode.window.showWarningMessage(link.reason);
+        }
+    }
+
+    private async openFile(path: string, line?: number): Promise<void> {
         try {
             const memoryFile = /^(Global|Project) memory/.exec(path);
             const uri = memoryFile && this.services.memory
                 ? vscode.Uri.file(this.services.memory.file(memoryFile[1] === 'Global' ? 'global' : 'project'))
                 : resolveWorkspacePath(path);
-            await vscode.window.showTextDocument(uri, { preview: true });
+            const position = line ? new vscode.Position(line - 1, 0) : undefined;
+            await vscode.window.showTextDocument(uri, { preview: true, selection: position && new vscode.Range(position, position) });
         } catch (error) {
             void vscode.window.showWarningMessage(error instanceof Error ? error.message : String(error));
         }
@@ -1202,6 +1219,11 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         } catch (error) {
             this.diagnostics.error('Saving the Nova chat failed.', error);
         }
+    }
+
+    /** Shows a reply without asking the model (development host test command). */
+    public addAssistantMessage(text: string): void {
+        this.addItem({ kind: 'assistant', id: randomUUID(), text });
     }
 
     private addItem(item: ChatItem): void {

@@ -175,6 +175,7 @@ export type ChatCommand =
     | { command: 'chat/removeAttachment'; id: string }
     | { command: 'chat/openDiff'; itemId: string }
     | { command: 'chat/openFile'; path: string }
+    | { command: 'chat/openLink'; href: string; text: string }
     | { command: 'chat/setApprovalMode'; mode: ApprovalMode }
     | { command: 'chat/queueMode'; id: string; mode: QueuedMessage['mode'] }
     | { command: 'chat/queueRemove'; id: string }

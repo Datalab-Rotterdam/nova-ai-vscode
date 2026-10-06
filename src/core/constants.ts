@@ -22,6 +22,8 @@ export const COMMAND_SHOW_HISTORY = 'nova.showHistory';
 export const COMMAND_SEARCH_CHATS = 'nova.chats.search';
 export const COMMAND_MANAGE_SKILLS = 'nova.manageSkills';
 export const COMMAND_SHOW_HELP = 'nova.showHelp';
+/** Development host only: posts a sample reply with every kind of link. */
+export const COMMAND_DEV_TEST_LINKS = 'nova.dev.testLinks';
 /** Context menu of a row on the Chats page. */
 export const COMMAND_CHAT_OPEN_IN_EDITOR = 'nova.chats.openInEditor';
 export const COMMAND_CHAT_RENAME = 'nova.chats.rename';
