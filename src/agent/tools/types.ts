@@ -1,4 +1,4 @@
-import type * as vscode from 'vscode';
+import * as vscode from 'vscode';
 
 /** A file change proposed by a tool, shown as a diff before it is applied. */
 export interface ProposedEdit {
@@ -32,7 +32,34 @@ export interface NovaTool<TInput = Record<string, unknown>> {
     readonly readOnly: boolean;
     prepare(input: TInput, context: ToolContext): Promise<ToolPreparation>;
     /** Runs the tool. `preparation` is the result of `prepare` for this call. */
-    invoke(input: TInput, context: ToolContext, preparation: ToolPreparation): Promise<string>;
+    invoke(input: TInput, context: ToolContext, preparation: ToolPreparation): Promise<string | ToolOutput>;
+}
+
+/** An image a tool returns, such as a screenshot it opened. */
+export interface ToolImage {
+    mimeType: string;
+    data: Uint8Array;
+}
+
+/** A tool's text, with images the model sees when it reads images. */
+export interface ToolOutput {
+    text: string;
+    images: ToolImage[];
+}
+
+export function outputText(output: string | ToolOutput): string {
+    return typeof output === 'string' ? output : output.text;
+}
+
+/** A tool's output as tool result parts: its text, then its images as data parts. */
+export function outputParts(output: string | ToolOutput): Array<vscode.LanguageModelTextPart | vscode.LanguageModelDataPart> {
+    if (typeof output === 'string') {
+        return [new vscode.LanguageModelTextPart(output)];
+    }
+    return [
+        new vscode.LanguageModelTextPart(output.text),
+        ...output.images.map((image) => new vscode.LanguageModelDataPart(image.data, image.mimeType))
+    ];
 }
 
 /** Error whose message is meant for the model, e.g. "old_string not found". */

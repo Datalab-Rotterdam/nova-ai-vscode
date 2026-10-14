@@ -1,8 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { lineStats, replaceSnippet } from '../src/agent/tools/editTools';
 import { runShell } from '../src/agent/tools/terminalTool';
-import { ToolInputError } from '../src/agent/tools/types';
+import { outputParts, ToolInputError } from '../src/agent/tools/types';
+import { readFileTool } from '../src/agent/tools/readTools';
 import { resolveWorkspacePath } from '../src/agent/tools/workspacePaths';
 import { closeDanglingToolCalls } from '../src/panel/ChatController';
 import { fromStoredMessages, toStoredMessages } from '../src/panel/SessionStore';
@@ -131,5 +132,44 @@ describe('editing an earlier message', () => {
 
     const exact = [vscode.LanguageModelChatMessage.User('question'), vscode.LanguageModelChatMessage.Assistant('answer'), vscode.LanguageModelChatMessage.User('follow-up')];
     expect(truncateConversation(exact as never, { ...edited, messageIndex: 2 }, kept)).toHaveLength(2);
+  });
+});
+
+describe('read_file and images', () => {
+  beforeEach(() => {
+    (vscode.workspace as unknown as MutableWorkspace).workspaceFolders = [
+      { name: 'app', uri: vscode.Uri.file('/repo/app'), index: 0 }
+    ];
+    process.env.NOVA_AI_BROWSER_HOME = '/home/me/.nova-ai-browser';
+    vi.spyOn(vscode.workspace, 'fs', 'get').mockReturnValue({ readFile: async () => new Uint8Array([1, 2, 3]) } as never);
+  });
+
+  afterEach(() => {
+    (vscode.workspace as unknown as MutableWorkspace).workspaceFolders = undefined;
+    delete process.env.NOVA_AI_BROWSER_HOME;
+    vi.restoreAllMocks();
+  });
+
+  const token = new vscode.CancellationTokenSource().token;
+  const read = async (path: string) => {
+    const preparation = await readFileTool.prepare({ path }, { token });
+    return readFileTool.invoke({ path }, { token }, preparation);
+  };
+
+  it('returns an image in the workspace as an image', async () => {
+    const output = await read('docs/diagram.png');
+    expect(output).toEqual({
+      text: expect.stringContaining('Image: docs/diagram.png (1 kB)'),
+      images: [{ mimeType: 'image/png', data: new Uint8Array([1, 2, 3]) }]
+    });
+    expect(outputParts(output).map((part) => part.constructor.name)).toEqual(['LanguageModelTextPart', 'LanguageModelDataPart']);
+  });
+
+  it('opens browser screenshots, outside the workspace, but nothing else there', async () => {
+    const shot = '/home/me/.nova-ai-browser/screenshots/shot-1.png';
+    expect(await read(shot)).toMatchObject({ images: [{ mimeType: 'image/png' }] });
+    await expect(read('/home/me/.nova-ai-browser/screenshots/notes.txt')).rejects.toThrow(/outside the workspace/);
+    await expect(read('/home/me/.nova-ai-browser/hosts/1.png')).rejects.toThrow(/outside the workspace/);
+    await expect(read('/home/me/.nova-ai-browser/screenshots/../hosts/1.png')).rejects.toThrow(/outside the workspace/);
   });
 });

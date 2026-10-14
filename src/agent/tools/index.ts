@@ -18,4 +18,5 @@ export const BUILT_IN_TOOLS: readonly NovaTool<never>[] = [
 ] as unknown as NovaTool<never>[];
 
 export type { NovaTool, ProposedEdit, ToolPreparation } from './types';
-export { ToolInputError } from './types';
+export { ToolInputError, outputParts, outputText } from './types';
+export type { ToolOutput } from './types';

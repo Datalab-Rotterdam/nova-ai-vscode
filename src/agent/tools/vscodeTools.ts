@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import type { MemoryService } from '../../memory/MemoryService';
 import { createMemoryTools } from './memoryTools';
-import type { NovaTool } from './types';
+import { outputParts, type NovaTool } from './types';
 import { fetchUrl, parseUrl, type FetchUrlInput } from './webTools';
 
 /** Name in `contributes.languageModelTools`; referenced in chat as `#novaFetch`. */
@@ -38,8 +38,7 @@ function registerNovaTool(name: string, tool: NovaTool<Record<string, unknown>>)
         },
         async invoke(options, token) {
             const preparation = await tool.prepare(options.input, { token });
-            const text = await tool.invoke(options.input, { token }, preparation);
-            return new vscode.LanguageModelToolResult([new vscode.LanguageModelTextPart(text)]);
+            return new vscode.LanguageModelToolResult(outputParts(await tool.invoke(options.input, { token }, preparation)));
         }
     });
 }

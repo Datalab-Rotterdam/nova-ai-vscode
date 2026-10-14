@@ -30,12 +30,12 @@ Two separate build targets in one repo:
 - Entry: `src/extension.ts` — wires all services, registers commands and chat participant
 - `src/services/SessionService.ts` — API key in VS Code SecretStorage, session state machine (`signedOut | connected | degraded`), emits `onDidChangeSession`
 - `src/model/modelProvider.ts` — implements `vscode.LanguageModelChatProvider`, 10-min model cache, maps HTTP errors to `LanguageModelError`, learns tool-calling support per model (unknown = offered as tool-capable), identity rewrite, context safety net + overflow retry
-- `src/model/messages.ts` — VS Code messages → OpenAI-style messages (no empty bodies, tool results right after their calls, orphan pruning, same-role merging, images for vision models)
+- `src/model/messages.ts` — VS Code messages → OpenAI-style messages (no empty bodies, tool results right after their calls, orphan pruning, same-role merging, images for vision models; images inside tool results follow the tool messages as a user message, for the newest such result only)
 - `src/model/streamParser.ts` — stream chunks → text / thinking / tool calls (argument accumulation + JSON repair, `<think>` and `reasoning_content`, text-embedded tool calls via `textToolCalls.ts`)
 - `src/model/toolSchema.ts` — tool payload, schema normalization, tool-name sanitizing (`ToolNameMap`), 128-tool cap
 - `src/model/identity.ts` — rewrites the Copilot identity in system prompts to Nova
 - `src/agent/AgentLoop.ts` — model ↔ tool loop shared by `@nova` and the Nova chat panel; auto-compaction, overflow recovery
-- `src/agent/tools/` — the panel's built-in tools (`NovaTool`: `prepare` for the approval card/diff, then `invoke`); paths are confined to the workspace by `workspacePaths.ts`
+- `src/agent/tools/` — the panel's built-in tools (`NovaTool`: `prepare` for the approval card/diff, then `invoke`, which returns text or `ToolOutput` with images; `outputParts` turns that into result parts); paths are confined to the workspace by `workspacePaths.ts`, except that `read_file` also opens images in the Nova AI Browser's screenshots folder
 - `src/panel/ChatController.ts` — Nova chat panel runtime: sessions, approvals (`nova.agent.approvalMode`), tool dispatch (built-in + `mcp_*`), diff previews via `ProposedContentProvider`; persisted by `SessionStore` (workspace storage)
 - `src/agent/tools/interactionTools.ts` — panel-only `todo_write` (task strip) and `ask_user` (question card; waits like an approval) via an `InteractionHost` implemented by `ChatController`; no tool cards for them
 - `src/panel/slashCommands.ts` — panel slash commands (`/clear`, `/compact`, `/model`, `/rename`, `/help`): definitions, parsing and composer suggestions, shared with the webview (no `vscode` import); `ChatController.send` runs them, unknown `/words` are sent as messages

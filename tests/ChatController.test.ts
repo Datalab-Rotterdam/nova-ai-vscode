@@ -122,6 +122,22 @@ describe('ChatController', () => {
     expect(items.pop()).toMatchObject({ status: 'done', title: 'Read package.json' });
   });
 
+  it('gives the model an image read with read_file, such as a browser screenshot', async () => {
+    const { controller, events, model } = setup([
+      [new vscode.LanguageModelToolCallPart('c1', 'read_file', { path: 'shot.png' })],
+      [new vscode.LanguageModelTextPart('I see it.')]
+    ]);
+    vi.spyOn(vscode.workspace, 'fs', 'get').mockReturnValue({
+      readFile: async () => new Uint8Array([1, 2, 3])
+    } as unknown as vscode.FileSystem);
+
+    await controller.handle({ command: 'chat/send', text: 'look at shot.png' });
+
+    expect(toolItems(events).pop()).toMatchObject({ status: 'done', output: expect.stringContaining('Image: shot.png') });
+    const toolResult = toolResultIn(model.sendRequest.mock.calls[1][0]);
+    expect(toolResult.content[1]).toEqual(new vscode.LanguageModelDataPart(new Uint8Array([1, 2, 3]), 'image/png'));
+  });
+
   it('reports unknown tools back to the model as errors', async () => {
     const { controller, events, model } = setup([
       [new vscode.LanguageModelToolCallPart('c1', 'delete_everything', {})],
