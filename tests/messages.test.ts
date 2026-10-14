@@ -142,4 +142,42 @@ describe('toNovaMessages', () => {
 
     expect((result[0].tool_calls as Array<{ function: { name: string } }>)[0].function.name).toBe('my_tool');
   });
+
+  describe('images in tool results', () => {
+    const png = (bytes: number[]) => new vscode.LanguageModelDataPart(new Uint8Array(bytes), 'image/png');
+    const call = (id: string) => message(Assistant, new vscode.LanguageModelToolCallPart(id, 'read_file', { path: 'shot.png' }));
+    const result = (id: string, ...content: unknown[]) => message(User, new vscode.LanguageModelToolResultPart(id, content));
+
+    it('follow the tool result as the user\'s, for a model that reads images', () => {
+      expect(toNovaMessages([call('c1'), result('c1', text('Image: shot.png'), png([1, 2, 3]))], { supportsImages: true })).toEqual([
+        expect.objectContaining({ role: 'assistant' }),
+        { role: 'tool', tool_call_id: 'c1', content: 'Image: shot.png\n[image]' },
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'The images the tool results above refer to, in order:' },
+            { type: 'image_url', image_url: { url: 'data:image/png;base64,AQID' } }
+          ]
+        }
+      ]);
+    });
+
+    it('stay a placeholder for other models', () => {
+      expect(toNovaMessages([call('c1'), result('c1', text('Image: shot.png'), png([1, 2, 3]))])).toEqual([
+        expect.objectContaining({ role: 'assistant' }),
+        { role: 'tool', tool_call_id: 'c1', content: 'Image: shot.png\n[image]' }
+      ]);
+    });
+
+    it('are sent only for the newest tool result that has them', () => {
+      const messages = toNovaMessages([
+        call('c1'), result('c1', png([1])),
+        call('c2'), result('c2', png([2])),
+        call('c3'), result('c3', text('no image'))
+      ], { supportsImages: true });
+      const images = messages.flatMap((item) => Array.isArray(item.content) ? item.content : [])
+        .filter((part) => (part as { type: string }).type === 'image_url');
+      expect(images).toEqual([{ type: 'image_url', image_url: { url: 'data:image/png;base64,Ag==' } }]);
+    });
+  });
 });

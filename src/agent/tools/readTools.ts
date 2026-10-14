@@ -1,5 +1,7 @@
+import * as os from 'node:os';
+import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { NovaTool, ToolInputError } from './types';
+import { NovaTool, ToolInputError, type ToolOutput } from './types';
 import { displayPath, readText, resolveWorkspacePath, truncateMiddle, workspaceFolders } from './workspacePaths';
 
 const MAX_READ_LINES = 2_000;
@@ -11,9 +13,60 @@ const DEFAULT_EXCLUDE = '{**/node_modules/**,**/.git/**,**/dist/**,**/out/**,**/
 
 interface ReadFileInput { path: string; startLine?: number; endLine?: number }
 
+/** Images `read_file` returns as images, by extension. */
+const IMAGE_TYPES: Record<string, string> = {
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.webp': 'image/webp',
+    '.gif': 'image/gif'
+};
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+
+/**
+ * Where the Nova AI Browser saves screenshots (the nova-browser skill prints
+ * `[image saved: …]`). Outside the workspace, so `read_file` allows images there explicitly.
+ */
+export function browserScreenshots(): string {
+    return path.join(process.env.NOVA_AI_BROWSER_HOME || path.join(os.homedir(), '.nova-ai-browser'), 'screenshots');
+}
+
+/** A workspace path, or an image in the browser's screenshots folder. */
+function resolveReadPath(input: unknown): vscode.Uri {
+    try {
+        return resolveWorkspacePath(input);
+    } catch (error) {
+        const raw = typeof input === 'string' ? input.trim().replace(/^file:\/\//, '') : '';
+        const folder = browserScreenshots();
+        const candidate = path.normalize(raw);
+        const relative = path.relative(folder, candidate);
+        if (path.isAbsolute(raw) && IMAGE_TYPES[path.extname(candidate).toLowerCase()]
+            && relative && !relative.startsWith('..') && !path.isAbsolute(relative)) {
+            return vscode.Uri.file(candidate);
+        }
+        throw error;
+    }
+}
+
+async function readImage(uri: vscode.Uri, mimeType: string): Promise<ToolOutput> {
+    let data: Uint8Array;
+    try {
+        data = await vscode.workspace.fs.readFile(uri);
+    } catch {
+        throw new ToolInputError(`Image "${displayPath(uri)}" does not exist or cannot be read.`);
+    }
+    if (data.byteLength > MAX_IMAGE_BYTES) {
+        throw new ToolInputError(`Image "${displayPath(uri)}" is larger than 5 MB.`);
+    }
+    return {
+        text: `Image: ${displayPath(uri)} (${Math.max(1, Math.round(data.byteLength / 1024))} kB). It is attached for you to look at; if you cannot see it, say so.`,
+        images: [{ mimeType, data }]
+    };
+}
+
 export const readFileTool: NovaTool<ReadFileInput> = {
     name: 'read_file',
-    description: 'Read a text file from the workspace. Optionally pass 1-based startLine/endLine to read part of a large file. Always read a file before editing it.',
+    description: 'Read a text file from the workspace. Optionally pass 1-based startLine/endLine to read part of a large file. Always read a file before editing it. Images (PNG, JPEG, WebP, GIF) are returned as images to look at, also browser screenshots saved by the nova-browser skill (their absolute path).',
     inputSchema: {
         type: 'object',
         properties: {
@@ -25,10 +78,14 @@ export const readFileTool: NovaTool<ReadFileInput> = {
     },
     readOnly: true,
     async prepare(input) {
-        return { title: `Read ${displayPath(resolveWorkspacePath(input.path))}` };
+        return { title: `Read ${displayPath(resolveReadPath(input.path))}` };
     },
     async invoke(input) {
-        const uri = resolveWorkspacePath(input.path);
+        const uri = resolveReadPath(input.path);
+        const imageType = IMAGE_TYPES[path.extname(uri.fsPath).toLowerCase()];
+        if (imageType) {
+            return readImage(uri, imageType);
+        }
         let text: string;
         try {
             text = await readText(uri);

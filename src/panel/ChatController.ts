@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import * as vscode from 'vscode';
 import { runAgentLoop, summarize } from '../agent/AgentLoop';
-import { BUILT_IN_TOOLS, type NovaTool, type ProposedEdit, type ToolPreparation } from '../agent/tools';
+import { BUILT_IN_TOOLS, outputParts, type NovaTool, type ProposedEdit, type ToolPreparation } from '../agent/tools';
 import { diffLines } from './diff';
 import { createInteractionTools, type InteractionHost } from '../agent/tools/interactionTools';
 import { createMemoryTools } from '../agent/tools/memoryTools';
@@ -992,9 +992,12 @@ export class ChatController implements vscode.Disposable, ChatHistory {
             item.status = 'running';
             updateItem(item);
 
-            const output = tool.nova
-                ? await tool.nova.invoke(input as never, { token }, preparation)
-                : toolResultText((await vscode.lm.invokeTool(call.name, { input, toolInvocationToken: undefined }, token)).content);
+            // Images (a screenshot, an image read with read_file) stay in the result, so a model
+            // that reads images gets them; the card shows the text.
+            const content = tool.nova
+                ? outputParts(await tool.nova.invoke(input as never, { token }, preparation))
+                : (await vscode.lm.invokeTool(call.name, { input, toolInvocationToken: undefined }, token)).content;
+            const output = toolResultText(content);
 
             item.status = 'done';
             item.output = clip(output);
@@ -1003,7 +1006,7 @@ export class ChatController implements vscode.Disposable, ChatHistory {
                 this.recordChange(preparation.edit);
             }
             updateItem(item);
-            return textResult(output);
+            return new vscode.LanguageModelToolResult(content);
         } catch (error) {
             item.status = 'error';
             item.output = error instanceof Error ? error.message : String(error);

@@ -32,7 +32,11 @@ interface ClassifiedMessage {
     images: ContentPart[];
     toolCalls: ToolCallPayload[];
     toolResults: Array<{ callId: string; content: string }>;
+    /** Images inside tool results (a screenshot), which a `tool` message cannot carry. */
+    toolImages: ContentPart[];
 }
+
+const TOOL_IMAGES_INTRO = 'The images the tool results above refer to, in order:';
 
 /**
  * Translates VS Code chat messages into OpenAI-compatible Nova chat messages.
@@ -46,9 +50,17 @@ export function toNovaMessages(
     options: ToNovaMessagesOptions = {}
 ): ChatMessage[] {
     const result: ChatMessage[] = [];
+    const classified = messages.map((message) => classifyParts(message.content, options));
+    // Only the newest tool images are sent: they are large, and the model saw the earlier ones.
+    let newestToolImages = -1;
+    classified.forEach((parts, index) => {
+        if (parts.toolImages.length) {
+            newestToolImages = index;
+        }
+    });
 
-    for (const message of messages) {
-        const parts = classifyParts(message.content, options);
+    for (const [index, message] of messages.entries()) {
+        const parts = classified[index];
         const role = message.role as number;
 
         if (role === SYSTEM_ROLE) {
@@ -64,6 +76,10 @@ export function toNovaMessages(
             // so they go before any user text carried in the same message.
             for (const toolResult of parts.toolResults) {
                 result.push({ role: 'tool', tool_call_id: toolResult.callId, content: toolResult.content });
+            }
+            // Tool messages hold text only, so the images follow as the user's.
+            if (index === newestToolImages && options.supportsImages) {
+                result.push({ role: 'user', content: [{ type: 'text', text: TOOL_IMAGES_INTRO }, ...parts.toolImages] });
             }
 
             const content = toUserContent(parts);
@@ -89,7 +105,7 @@ export function toNovaMessages(
 }
 
 function classifyParts(content: readonly unknown[], options: ToNovaMessagesOptions): ClassifiedMessage {
-    const classified: ClassifiedMessage = { texts: [], images: [], toolCalls: [], toolResults: [] };
+    const classified: ClassifiedMessage = { texts: [], images: [], toolCalls: [], toolResults: [], toolImages: [] };
 
     for (const part of content) {
         if (part instanceof vscode.LanguageModelTextPart) {
@@ -108,6 +124,12 @@ function classifyParts(content: readonly unknown[], options: ToNovaMessagesOptio
                 callId: part.callId,
                 content: toolResultText(part.content) || EMPTY_TOOL_RESULT
             });
+            for (const item of part.content) {
+                const decoded = item instanceof vscode.LanguageModelDataPart ? decodeDataPart(item) : undefined;
+                if (decoded?.kind === 'image') {
+                    classified.toolImages.push({ type: 'image_url', image_url: { url: decoded.url } });
+                }
+            }
         } else if (part instanceof vscode.LanguageModelDataPart) {
             const decoded = decodeDataPart(part);
             if (decoded?.kind === 'text') {
