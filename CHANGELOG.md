@@ -1,3 +1,10 @@
+# [1.0.0-alpha.19](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.18...v1.0.0-alpha.19) (2026-10-14)
+
+
+### Bug Fixes
+
+* **images:** Nova sees screenshots and images that tools return ([ad21837](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/ad2183764603a42cb22a6929b30ccb0157d7c1ab))
+
 # [1.0.0-alpha.18](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.17...v1.0.0-alpha.18) (2026-10-06)
 
 
