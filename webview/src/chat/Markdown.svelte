@@ -28,6 +28,26 @@
                 pre.append(button);
             }
         };
+        // A copy button on each equation, shown on hover; it copies the LaTeX source.
+        const decorateMath = () => {
+            for (const math of node.querySelectorAll<HTMLElement>('[data-tex]')) {
+                if (math.querySelector('.math-copy')) {
+                    continue;
+                }
+                const button = document.createElement('button');
+                button.className = 'math-copy codicon codicon-copy';
+                button.title = 'Copy LaTeX';
+                button.setAttribute('aria-label', 'Copy LaTeX');
+                button.addEventListener('click', (event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    void navigator.clipboard.writeText(math.dataset.tex ?? '');
+                    button.classList.replace('codicon-copy', 'codicon-check');
+                    setTimeout(() => button.classList.replace('codicon-check', 'codicon-copy'), 1200);
+                });
+                math.append(button);
+            }
+        };
         // Links carry data-href, not href (see markdown.ts); the extension opens them.
         const linkOf = (event: Event) => {
             const link = (event.target as Element | null)?.closest?.('a[data-href]');
@@ -50,11 +70,15 @@
                 open(event, link);
             }
         };
-        const observer = new MutationObserver(decorate);
+        const observer = new MutationObserver(() => {
+            decorate();
+            decorateMath();
+        });
         observer.observe(node, {childList: true, subtree: true});
         node.addEventListener('click', onClick);
         node.addEventListener('keydown', onKeyDown);
         decorate();
+        decorateMath();
         return {
             destroy: () => {
                 observer.disconnect();
@@ -70,6 +94,57 @@
 <style lang="scss">
   .markdown {
     overflow-wrap: anywhere;
+
+    :global(.math-display) {
+      position: relative;
+      margin: 0.6em 0;
+      overflow-x: auto;
+      text-align: center;
+    }
+
+    :global(.math-inline) {
+      position: relative;
+    }
+
+    /* Subtle: only on hover or keyboard focus, in the corner so the equation does not shift. */
+    :global(.math-copy) {
+      position: absolute;
+      top: -0.9em;
+      right: -0.6em;
+      padding: 1px 3px;
+      border: 0;
+      border-radius: var(--nova-radius);
+      background: var(--nova-surface);
+      color: var(--nova-muted);
+      font-size: 12px;
+      line-height: 1;
+      opacity: 0;
+      cursor: pointer;
+      transition: opacity 0.12s;
+    }
+
+    :global(.math-display .math-copy) {
+      top: 2px;
+      right: 2px;
+    }
+
+    :global([data-tex]:hover .math-copy),
+    :global(.math-copy:focus-visible) {
+      opacity: 1;
+    }
+
+    :global(.math-copy:hover) {
+      color: var(--nova-fg);
+    }
+
+    :global(.math-error) {
+      color: var(--nova-error);
+    }
+
+    :global(math) {
+      font-size: 1.05em;
+    }
+
     line-height: 1.5;
 
     :global(> :first-child) {

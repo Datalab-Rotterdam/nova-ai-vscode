@@ -1,5 +1,6 @@
 import DOMPurify from 'dompurify';
 import { Marked } from 'marked';
+import { extractMath, restoreMath } from '../../../src/panel/math';
 
 const marked = new Marked({ gfm: true, breaks: false });
 
@@ -25,12 +26,14 @@ DOMPurify.addHook('afterSanitizeAttributes', (node) => {
 
 /** Renders model markdown to sanitized HTML. Raw HTML from the model is escaped, not rendered. */
 export function renderMarkdown(text: string): string {
-    const html = marked.parse(escapeRawHtml(text), { async: false });
-    return DOMPurify.sanitize(html, {
+    const { text: withoutMath, math } = extractMath(text);
+    const html = marked.parse(escapeRawHtml(withoutMath), { async: false });
+    const clean = DOMPurify.sanitize(html, {
         USE_PROFILES: { html: true },
         FORBID_TAGS: ['style', 'img', 'form', 'input', 'button', 'iframe'],
         FORBID_ATTR: ['style']
     });
+    return restoreMath(clean, math);
 }
 
 /** Escapes `<` outside code so model output cannot inject markup; code spans and fences are left to marked. */
