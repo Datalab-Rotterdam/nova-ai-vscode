@@ -604,4 +604,53 @@ describe('ChatController', () => {
       expect(controller.getState().items.filter((item) => item.kind === 'user').map((item) => item.text)).toEqual(['/deploy now', '/etc/hosts looks wrong']);
     });
   });
+
+  describe('composer @-mentions and attachments', () => {
+    it('attaches a file the composer picked, and its content follows the next message to the model', async () => {
+      const { controller, model } = setup([[new vscode.LanguageModelTextPart('ok')]]);
+      vi.spyOn(vscode.workspace, 'fs', 'get').mockReturnValue({
+        readFile: async () => new TextEncoder().encode('export const a = 1;')
+      } as never);
+
+      await controller.handle({ command: 'chat/attachFile', path: 'src/one.ts' });
+
+      expect(controller.getState().attachments).toEqual([{ id: expect.any(String), label: 'src/one.ts', path: 'src/one.ts' }]);
+      expect(Array.from(controller.getState().attachments.map((attachment) => 'path' in attachment))).toEqual([true]);
+
+      await controller.handle({ command: 'chat/attachFile', path: 'src/one.ts' });
+      expect(controller.getState().attachments).toHaveLength(1);
+
+      await controller.handle({ command: 'chat/send', text: 'explain' });
+
+      // The request array is mutated after the call, so search it instead of indexing it.
+      const sent = (model.sendRequest.mock.calls[0][0] as vscode.LanguageModelChatMessage[])
+        .flatMap((message) => message.content)
+        .find((part) => part instanceof vscode.LanguageModelTextPart && (part.value as string).includes('<attachments>'));
+      expect((sent as vscode.LanguageModelTextPart).value).toContain('<attachment path="src/one.ts">\nexport const a = 1;\n</attachment>');
+      expect(controller.getState().attachments).toEqual([]);
+      const sentItem = controller.getState().items.find((item) => item.kind === 'user');
+      expect(sentItem).toMatchObject({ text: 'explain', attachments: ['src/one.ts'] });
+    });
+
+    it('offers the workspace files to the composer, newest first', async () => {
+      const root = process.cwd();
+      const scan = vi
+        .spyOn(vscode.workspace, 'findFiles')
+        .mockResolvedValue(['old.ts', 'brand-new.ts', 'recent.ts'].map((name) => vscode.Uri.file(join(root, name))));
+      vi.spyOn(vscode.workspace, 'fs', 'get').mockReturnValue({
+        stat: async (uri: vscode.Uri) => ({
+          mtime: uri.fsPath.includes('new') ? 3 : uri.fsPath.includes('recent') ? 2 : 1
+        })
+      } as never);
+      const { controller } = setup([]);
+
+      // The scan runs in the background: the first state starts it, the settled one holds it.
+      await until(() => controller.getState().fileOptions.length === 3);
+      expect(controller.getState().fileOptions).toEqual(['brand-new.ts', 'recent.ts', 'old.ts']);
+      expect(scan).toHaveBeenCalledTimes(1);
+      // A repeat within the stale window reuses the scan.
+      expect(controller.getState().fileOptions).toEqual(['brand-new.ts', 'recent.ts', 'old.ts']);
+      expect(scan).toHaveBeenCalledTimes(1);
+    });
+  });
 });

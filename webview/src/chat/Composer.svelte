@@ -5,6 +5,7 @@
     suggestSlashCommands,
     type SlashCommand,
   } from "../../../src/panel/slashCommands";
+  import { filterMentionFiles, findMention } from "../../../src/panel/mentions";
 
   let {
     chat,
@@ -65,10 +66,45 @@
       (Boolean(chat.modelId) || Boolean(parseSlashCommand(text))),
   );
 
-  /* Slash command menu: shown while the first word starts with "/"; Esc hides it until the text changes. */
+  /*
+   * The composition menu: slash commands while the first word starts with "/", file
+   * mentions while the token at the caret starts with "@". Esc hides whatever menu is
+   * shown until the text changes.
+   */
   let highlighted = $state(0);
   let menuDismissed = $state(false);
+  let mentionStart = $state(-1);
+  /** The user arrowed through the file list: Enter then inserts, not sends. */
+  let mentionNavigated = $state(false);
   const suggestions = $derived(menuDismissed ? [] : suggestSlashCommands(text));
+  const mentionOptions = $derived(
+    mentionStart < 0 || menuDismissed
+      ? []
+      : filterMentionFiles(
+          chat.fileOptions ?? [],
+          text.slice(mentionStart + 1, textarea?.selectionStart ?? text.length),
+        ),
+  );
+  /** What the keys steer right now: the commands, the files, or nothing. */
+  const slashMode = $derived(suggestions.length > 0);
+  const mentionMode = $derived(mentionOptions.length > 0);
+  const menuLength = $derived(
+    slashMode ? suggestions.length : mentionOptions.length,
+  );
+  /** Keep the active menu's highlight in range when the options change. */
+  $effect(() => {
+    highlighted = Math.min(highlighted, Math.max(0, menuLength - 1));
+  });
+
+  /** The `@` token at the caret (see mentions.ts); resets file navigation too. */
+  function checkMention() {
+    mentionStart =
+      findMention(text, textarea?.selectionStart ?? text.length)?.start ?? -1;
+    if (mentionStart < 0) {
+      mentionNavigated = false;
+    }
+    return mentionStart >= 0;
+  }
 
   const approvalLabels: Record<ApprovalMode, string> = {
     ask: "Ask every time",
@@ -82,6 +118,27 @@
     }
     post({ command: "chat/send", text });
     text = "";
+    mentionStart = -1;
+    menuDismissed = false;
+    resize();
+  }
+
+  /**
+   * Accepts a file from the `@` list: the `@` token leaves the message and the file is
+   * attached as a chip (like the picker), so its content joins the prompt.
+   */
+  function pickMention(path: string) {
+    // The token holds the typed path (slashes included); it ends at a space or backquote.
+    const rest = text.slice(mentionStart);
+    const boundary = rest.search(/[\s`]/);
+    text =
+      text.slice(0, mentionStart) +
+      text.slice(boundary < 0 ? text.length : mentionStart + boundary + 1);
+    mentionStart = -1;
+    mentionNavigated = false;
+    highlighted = 0;
+    post({ command: "chat/attachFile", path });
+    textarea?.focus();
     resize();
   }
 
@@ -100,25 +157,43 @@
   function onInput() {
     highlighted = 0;
     menuDismissed = false;
+    checkMention();
     resize();
   }
 
   function onKeydown(event: KeyboardEvent) {
-    if (suggestions.length && !event.isComposing) {
+    if (!event.isComposing && (slashMode || mentionMode)) {
+      const commands = slashMode && !mentionMode;
+      const options = commands ? suggestions : mentionOptions;
+      const length = options.length;
       const move =
         event.key === "ArrowDown" ? 1 : event.key === "ArrowUp" ? -1 : 0;
       if (move) {
         event.preventDefault();
-        highlighted =
-          (highlighted + move + suggestions.length) % suggestions.length;
+        highlighted = (highlighted + move + length) % length;
+        if (!commands) {
+          // Once the user navigates the file list, Enter inserts a file.
+          mentionNavigated = true;
+        }
         return;
       }
-      if (event.key === "Tab" || (event.key === "Enter" && !event.shiftKey)) {
+      // Tab accepts the highlighted entry; Enter always does for commands, but files
+      // only after the list was navigated (a plain Enter still sends the message).
+      const pick =
+        event.key === "Tab" ||
+        (event.key === "Enter" &&
+          !event.shiftKey &&
+          (commands || mentionNavigated));
+      if (pick && length) {
         event.preventDefault();
-        pickCommand(
-          suggestions[Math.min(highlighted, suggestions.length - 1)],
-          event.key === "Enter",
-        );
+        if (commands) {
+          pickCommand(
+            options[Math.min(highlighted, length - 1)],
+            event.key === "Enter",
+          );
+        } else {
+          pickMention(options[Math.min(highlighted, length - 1)]);
+        }
         return;
       }
       if (event.key === "Escape") {
@@ -277,16 +352,16 @@
     ondragleave={onDragLeave}
     ondrop={onDrop}
   >
-    {#if suggestions.length}
+    {#if slashMode}
       <ul
-        class="slash-menu"
-        id="nova-slash-menu"
+        class="compose-menu"
+        id="nova-compose-menu"
         role="listbox"
         aria-label="Slash commands"
       >
         {#each suggestions as command, index (command.name)}
           <li
-            id={`nova-slash-${command.name}`}
+            id={`nova-compose-${command.name}`}
             role="option"
             aria-selected={index === highlighted}
             class:active={index === highlighted}
@@ -296,12 +371,38 @@
             }}
             onmousemove={() => (highlighted = index)}
           >
-            <span class="slash-name"
-              >/{command.name}{#if command.args}<span class="slash-args">
+            <span class="codicon codicon-terminal" aria-hidden="true"></span>
+            <span class="compose-name"
+              >/{command.name}{#if command.args}<span class="compose-args">
                   {command.args}</span
                 >{/if}</span
             >
-            <span class="slash-description">{command.description}</span>
+            <span class="compose-description">{command.description}</span>
+          </li>
+        {/each}
+      </ul>
+    {:else if mentionMode}
+      <ul
+        class="compose-menu"
+        id="nova-compose-menu"
+        role="listbox"
+        aria-label="Files to mention"
+      >
+        {#each mentionOptions as path, index (path)}
+          <li
+            id={`nova-file-${index}`}
+            role="option"
+            aria-selected={index === highlighted}
+            class:active={index === highlighted}
+            title={path}
+            onmousedown={(event) => {
+              event.preventDefault();
+              pickMention(path);
+            }}
+            onmousemove={() => (highlighted = index)}
+          >
+            <span class="codicon codicon-file" aria-hidden="true"></span>
+            <span class="compose-name">{path}</span>
           </li>
         {/each}
       </ul>
@@ -345,6 +446,7 @@
       bind:this={textarea}
       bind:value={text}
       oninput={onInput}
+      onselect={checkMention}
       onkeydown={onKeydown}
       onpaste={onPaste}
       rows="1"
@@ -353,14 +455,18 @@
         : questionPending
           ? "Answer Nova's question…"
           : chat.running
-            ? "Steer Nova or queue a follow-up…"
-            : "Ask Nova to explain, change or build something…"}
+            ? "Steer Nova, or queue a follow-up…"
+            : "Ask Nova — use @ for files"}
       aria-label="Message Nova"
-      aria-autocomplete="list"
-      aria-controls={suggestions.length ? "nova-slash-menu" : undefined}
+      aria-autocomplete={slashMode || mentionMode ? "list" : undefined}
+      aria-controls={suggestions.length || mentionOptions.length
+        ? "nova-compose-menu"
+        : undefined}
       aria-activedescendant={suggestions[highlighted]
-        ? `nova-slash-${suggestions[highlighted].name}`
-        : undefined}></textarea>
+        ? `nova-compose-${suggestions[highlighted].name}`
+        : mentionOptions[highlighted]
+          ? `nova-file-${highlighted}`
+          : undefined}></textarea>
 
     <input
       bind:this={imageInput}
@@ -374,13 +480,15 @@
     />
 
     <div class="toolbar">
-      <button
-        class="icon codicon codicon-attach"
-        type="button"
-        title="Add files"
-        aria-label="Add files"
-        onclick={() => post({ command: "chat/addFile" })}
-      ></button>
+      {#if chat.attachButtonEnabled}
+        <button
+          class="icon codicon codicon-attach"
+          type="button"
+          title="Add a file (or type @ in the message)"
+          aria-label="Add a file (or type @ in the message)"
+          onclick={() => post({ command: "chat/addFile" })}
+        ></button>
+      {/if}
       <button
         class="icon codicon codicon-file-media"
         type="button"
@@ -644,12 +752,14 @@
   }
 
   /* Opens upwards over the conversation, aligned with the composer. */
-  .slash-menu {
+  .compose-menu {
     position: absolute;
     right: 0;
     bottom: calc(100% + 4px);
     left: 0;
     z-index: 2;
+    max-height: 240px;
+    overflow-y: auto;
     margin: 0;
     padding: 4px;
     border: 1px solid var(--nova-subtle-border);
@@ -667,6 +777,11 @@
       border-radius: var(--nova-radius);
       cursor: pointer;
 
+      > .codicon {
+        flex: none;
+        color: var(--nova-muted);
+      }
+
       &.active {
         background: var(
           --vscode-list-activeSelectionBackground,
@@ -674,25 +789,36 @@
         );
         color: var(--vscode-list-activeSelectionForeground, var(--nova-fg));
 
-        .slash-description,
-        .slash-args {
+        .compose-description,
+        .compose-args,
+        > .codicon {
           color: inherit;
         }
       }
     }
   }
 
-  .slash-name {
-    flex: none;
+  .compose-name {
+    min-width: 0;
+    overflow: hidden;
     font-family: var(--nova-mono);
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
-  .slash-args,
-  .slash-description {
+  .compose-args {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+
+  .compose-args,
+  .compose-description {
     color: var(--nova-muted);
   }
 
-  .slash-description {
+  .compose-description {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -758,6 +884,7 @@
   textarea {
     width: 100%;
     min-height: 36px;
+    min-width: 0;
     max-height: 240px;
     resize: none;
     padding: 2px;
@@ -772,11 +899,16 @@
     }
   }
 
+  /*
+   * The composer is a grid: without min-width 0 on its items, one unbreakable file
+   * path (no spaces) widens the track and the whole box, instead of ellipsizing.
+   */
   .attachments {
     display: flex;
     flex-wrap: wrap;
     gap: 4px;
     margin: 0;
+    min-width: 0;
     padding: 0;
     list-style: none;
 
@@ -784,6 +916,7 @@
       display: inline-flex;
       align-items: center;
       gap: 3px;
+      min-width: 0;
       max-width: 100%;
       padding: 1px 2px 1px 5px;
       border: 1px solid var(--nova-subtle-border);
@@ -818,7 +951,14 @@
     cursor: pointer;
   }
 
+  /*
+   * A pill shrinks instead of widening the composer: the label takes the slack
+   * (ellipsized) while the icon and the close button keep their size.
+   */
   .chip-label {
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 100%;
     font: inherit;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -826,6 +966,7 @@
   }
 
   .chip-remove {
+    flex: none;
     color: var(--nova-muted);
   }
 

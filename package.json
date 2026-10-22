@@ -503,6 +503,11 @@
             "default": true,
             "markdownDescription": "Set up the Nova AI browser integration on startup: registers the Nova AI Browser host with your Chromium-based browsers (Chrome, Edge, Brave, …) and installs the `nova-browser` skill, so Nova can use your browser through the Nova AI browser extension. Nothing changes when it is already current. Run **Nova AI: Set Up Browser Integration** to do it by hand."
           },
+          "nova.chat.attachButton": {
+            "type": "boolean",
+            "default": false,
+            "markdownDescription": "Show the paperclip “Add a file” button in the Nova chat composer. Off by default: attach a file by typing `@` in the message instead. Enable it to restore the old multi-select file picker button."
+          },
           "nova.chat.rewriteAssistantIdentity": {
             "type": "boolean",
             "default": true,

@@ -1,7 +1,7 @@
 type Listener<T> = (event: T) => unknown;
 
 export class Disposable {
-  public constructor(private readonly fn: () => void = () => {}) {}
+  public constructor(private readonly fn: () => void = () => { }) { }
   public dispose(): void {
     this.fn();
   }
@@ -60,7 +60,7 @@ export enum LanguageModelChatToolMode {
 }
 
 export class LanguageModelTextPart {
-  public constructor(public readonly value: string) {}
+  public constructor(public readonly value: string) { }
 }
 
 export class LanguageModelToolCallPart {
@@ -68,21 +68,21 @@ export class LanguageModelToolCallPart {
     public readonly callId: string,
     public readonly name: string,
     public readonly input: object
-  ) {}
+  ) { }
 }
 
 export class LanguageModelToolResultPart {
   public constructor(
     public readonly callId: string,
     public readonly content: unknown[]
-  ) {}
+  ) { }
 }
 
 export class LanguageModelDataPart {
   public constructor(
     public readonly data: Uint8Array,
     public readonly mimeType: string
-  ) {}
+  ) { }
 
   public static text(value: string, mimeType = 'text/plain'): LanguageModelDataPart {
     return new LanguageModelDataPart(new TextEncoder().encode(value), mimeType);
@@ -97,7 +97,7 @@ export class ChatRequestTurn {
   public constructor(
     public readonly prompt: string,
     public readonly command?: string
-  ) {}
+  ) { }
 }
 
 export class ChatResponseMarkdownPart {
@@ -111,7 +111,7 @@ export class ChatResponseTurn {
   public constructor(
     public readonly response: unknown[],
     public readonly result: { metadata?: Record<string, unknown> }
-  ) {}
+  ) { }
 }
 
 export class LanguageModelChatMessage {
@@ -162,6 +162,7 @@ export const window = {
   showErrorMessage: async () => undefined,
   showWarningMessage: async () => undefined,
   showInputBox: async () => undefined,
+  showQuickPick: async (_items: unknown, _options?: unknown) => undefined as unknown[],
   showTextDocument: async () => undefined,
   registerWebviewViewProvider: () => new Disposable()
 };
@@ -172,7 +173,7 @@ export const commands = {
 };
 
 export class Uri {
-  private constructor(public readonly scheme: string, public readonly fsPath: string, public readonly query = '') {}
+  private constructor(public readonly scheme: string, public readonly fsPath: string, public readonly query = '') { }
 
   public get path(): string {
     return this.fsPath;
@@ -203,10 +204,13 @@ export const workspace = {
   get fs(): unknown {
     return {
       readFile: async () => new Uint8Array(),
-      stat: async () => ({}),
+      stat: async () => ({ mtime: 0 }),
       readDirectory: async () => []
     };
   },
+  /** Filled by tests (or the default empty answer) before a `findFiles` call. */
+  findFiles: async (): Promise<Uri[]> => [],
+  onDidChangeConfiguration: (_listener: (event: { affectsConfiguration(key: string): boolean }) => unknown) => new Disposable(),
   textDocuments: [] as unknown[],
   getConfiguration: () => ({
     get: <T>(_key: string, defaultValue: T) => defaultValue
@@ -219,7 +223,7 @@ export const workspace = {
 };
 
 export class LanguageModelToolResult {
-  public constructor(public readonly content: unknown[]) {}
+  public constructor(public readonly content: unknown[]) { }
 }
 
 
@@ -236,12 +240,19 @@ export const env = {
   openExternal: async (_uri: Uri) => true
 };
 
+export class RelativePattern {
+  public constructor(
+    public readonly base: unknown,
+    public readonly pattern: string
+  ) { }
+}
+
 export class Position {
-  public constructor(public readonly line: number, public readonly character: number) {}
+  public constructor(public readonly line: number, public readonly character: number) { }
 }
 
 export class Range {
-  public constructor(public readonly start: Position, public readonly end: Position) {}
+  public constructor(public readonly start: Position, public readonly end: Position) { }
 }
 
 export const ConfigurationTarget = { Global: 1, Workspace: 2, WorkspaceFolder: 3 };

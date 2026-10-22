@@ -18,6 +18,14 @@ export function shouldRewriteAssistantIdentity(): boolean {
   return configuration().get<boolean>('chat.rewriteAssistantIdentity', true);
 }
 
+/**
+ * Shows the paperclip "Add file" button in the composer. Off by default: files are
+ * attached inline with `@`, the selection button, paste or drag-and-drop.
+ */
+export function isAttachButtonEnabled(): boolean {
+  return configuration().get<boolean>('chat.attachButton', false);
+}
+
 /** Edit tools VS Code agent mode should offer Nova models. */
 export function getEditTools(): string[] {
   const value = configuration().get<unknown>('models.editTools', DEFAULT_EDIT_TOOLS);

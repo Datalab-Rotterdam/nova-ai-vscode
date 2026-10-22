@@ -149,6 +149,13 @@ export interface ChatState {
     todos: TodoItem[];
     /** Files Nova changed that are waiting for Keep or Undo. */
     changes: FileChange[];
+    /** Workspace files offered by `@` in the composer, newest-touched first. */
+    fileOptions: string[];
+    /**
+     * The paperclip "Add a file" button is on. Off by default: files can be attached
+     * inline with `@`, with the selection button, by paste or by drag-and-drop.
+     */
+    attachButtonEnabled: boolean;
 }
 
 export type ApprovalMode = 'ask' | 'autoReadOnly' | 'autoAll';
@@ -181,6 +188,8 @@ export type ChatCommand =
     | { command: 'chat/delete'; sessionIds: string[] }
     | { command: 'chat/selectModel'; modelId: string }
     | { command: 'chat/addFile' }
+    /** Attaches a file from the composer's `@` list. */
+    | { command: 'chat/attachFile'; path: string }
     | { command: 'chat/addSelection' }
     | { command: 'chat/addImage'; name: string; dataUrl: string }
     | { command: 'chat/removeAttachment'; id: string }

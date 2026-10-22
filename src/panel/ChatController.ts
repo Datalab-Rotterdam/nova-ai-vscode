@@ -11,7 +11,7 @@ import { type PermissionService, suggestRule } from '../permissions/PermissionSe
 import { getSystemRole } from '../core/apiSupport';
 import { COMMAND_SHOW_HELP } from '../core/constants';
 import { buildTranscript, estimateMessagesTokens, summaryBlock, tokenCalibration } from '../agent/ContextManager';
-import { getCompactThreshold, getMaxToolRounds, isAutoCompactEnabled } from '../core/config';
+import { getCompactThreshold, getMaxToolRounds, isAttachButtonEnabled, isAutoCompactEnabled } from '../core/config';
 import { Diagnostics } from '../core/diagnostics';
 import { createPanelPrompt } from '../core/prompts';
 import type { LanguageModelInfo } from '../core/types';
@@ -101,6 +101,14 @@ export class ChatController implements vscode.Disposable, ChatHistory {
     private messages: vscode.LanguageModelChatMessage[] = [];
     private attachments: Attachment[] = [];
     private models: LanguageModelInfo[] = [];
+    /** Last workspace scan behind the `@` file list, and when it was completed. */
+    private fileOptionsCache: string[] = [];
+    private fileOptionsAt = 0;
+    private fileOptionsStamp = '';
+    private fileOptionsScan?: Promise<string[]>;
+
+    /** Re-scan the workspace for `@` suggestions older than this. */
+    private static readonly FILE_OPTIONS_STALE_MS = 2_000;
     private running?: vscode.CancellationTokenSource;
     private usage?: { used: number; total: number };
     private sessionApproved = false;
@@ -149,6 +157,11 @@ export class ChatController implements vscode.Disposable, ChatHistory {
     ) {
         this.rememberLast = options.rememberLast ?? true;
         this.disposables.push(this.modelProvider.onDidChangeLanguageModelChatInformation(() => void this.refreshModels().then(() => this.postState())));
+        this.disposables.push(vscode.workspace.onDidChangeConfiguration((event) => {
+            if (event.affectsConfiguration('nova.chat.attachButton')) {
+                this.postState();
+            }
+        }));
         if (options.hub) {
             this.disposables.push(options.hub.onDidChange(() => this.postSessions()));
         }
@@ -222,6 +235,9 @@ export class ChatController implements vscode.Disposable, ChatHistory {
                 break;
             case 'chat/addFile':
                 await this.addFile();
+                break;
+            case 'chat/attachFile':
+                this.addAttachment({ id: randomUUID(), path: command.path, label: command.path });
                 break;
             case 'chat/addSelection':
                 await this.addSelection();
@@ -379,7 +395,9 @@ export class ChatController implements vscode.Disposable, ChatHistory {
             approvalMode: getApprovalMode(),
             queue: this.queueView(),
             todos: this.session.todos ?? [],
-            changes: this.changesView()
+            changes: this.changesView(),
+            fileOptions: this.fileOptions(),
+            attachButtonEnabled: isAttachButtonEnabled()
         };
     }
 
@@ -1399,15 +1417,76 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         }
     }
 
+    /** Picks files from the workspace and attaches them. */
     private async addFile(): Promise<void> {
-        const files = await vscode.workspace.findFiles('**/*', '{**/node_modules/**,**/.git/**,**/dist/**,**/out/**}', 5_000);
+        await this.fileOptionsScan;
         const picked = await vscode.window.showQuickPick(
-            files.map((uri) => displayPath(uri)).sort().map((label) => ({ label })),
-            { placeHolder: 'Add a file to the Nova chat', canPickMany: true, matchOnDescription: true }
+            this.fileOptions().map((label) => ({ label })),
+            { placeHolder: 'Add a file to the Nova chat (or type @ in the message)', canPickMany: true, matchOnDescription: true }
         );
         for (const { label } of picked ?? []) {
             this.addAttachment({ id: randomUUID(), path: label, label });
         }
+    }
+
+    /** Subfolders never mentioned in `@` (e.g. out/) get no suggestions. */
+    private static readonly FILE_EXCLUDE = '**/node_modules/**,**/.git/**,**/dist/**,**/out/**';
+
+    /**
+     * The workspace files the composer's `@` list offers, newest-first. Synchronous: it
+     * returns the last scan and, when it is stale (folders changed, or files were created
+     * or edited since), starts a background re-scan that pushes the refreshed list.
+     */
+    private fileOptions(): string[] {
+        const folders = workspaceFolders();
+        if (!folders.length) {
+            return ['scratch'];
+        }
+        const stamp = folders.map((folder) => folder.uri.toString()).join('\0');
+        const stale = this.fileOptionsStamp !== stamp || Date.now() - this.fileOptionsAt > ChatController.FILE_OPTIONS_STALE_MS;
+        if (stale) {
+            // Claim the scan now, so stale callers during it do not start second scans.
+            this.fileOptionsStamp = stamp;
+            this.refreshFileOptions(folders);
+        }
+        return this.fileOptionsCache;
+    }
+
+    private refreshFileOptions(folders: readonly vscode.WorkspaceFolder[]): void {
+        if (this.fileOptionsScan) {
+            return;
+        }
+        const work = this.scanFileOptions(folders)
+            .then((options) => {
+                this.fileOptionsCache = options;
+                this.fileOptionsAt = Date.now();
+                this.postState();
+                return options;
+            })
+            .catch(() => [])
+            .finally(() => {
+                this.fileOptionsScan = undefined;
+            });
+        this.fileOptionsScan = work;
+    }
+
+    private async scanFileOptions(folders: readonly vscode.WorkspaceFolder[]): Promise<string[]> {
+        const roots = await Promise.all(folders.map((folder) =>
+            vscode.workspace.findFiles(new vscode.RelativePattern(folder, '**/*'), ChatController.FILE_EXCLUDE, 5_000)
+        ));
+        const uris = roots.flat();
+        const withMtimes = await Promise.all(uris.map(async (uri) => {
+            try {
+                return { uri, mtime: (await vscode.workspace.fs.stat(uri)).mtime };
+            } catch {
+                return { uri, mtime: 0 };
+            }
+        }));
+        // Newest first only orders the empty-query list; every file stays offerable, so
+        // `@<typeahead>` finds sources that have not been touched in a while.
+        return withMtimes
+            .sort((a, b) => b.mtime - a.mtime || a.uri.fsPath.localeCompare(b.uri.fsPath))
+            .map(({ uri }) => displayPath(uri));
     }
 
     private addAttachment(attachment: Attachment): void {
