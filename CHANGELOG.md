@@ -1,3 +1,10 @@
+# [1.0.0-alpha.21](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.20...v1.0.0-alpha.21) (2026-10-22)
+
+
+### Bug Fixes
+
+* **chat:** cap agent strip to composer width, collapse mode chips only when labels overflow ([3fe871a](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/3fe871ac9e8f43f3071be573110a048d23d3a29b))
+
 # [1.0.0-alpha.20](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.19...v1.0.0-alpha.20) (2026-10-22)
 
 
