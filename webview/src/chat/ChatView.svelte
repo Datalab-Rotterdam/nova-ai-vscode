@@ -6,6 +6,8 @@
   import ChangesStrip from "./ChangesStrip.svelte";
   import ChatsPage from "./ChatsPage.svelte";
   import Composer from "./Composer.svelte";
+  import ImageViewer from "./ImageViewer.svelte";
+  import { openImage } from "./viewer.svelte";
   import QuestionCard from "./QuestionCard.svelte";
   import TodoStrip from "./TodoStrip.svelte";
   import Markdown from "./Markdown.svelte";
@@ -448,15 +450,28 @@
                           aria-hidden="true"
                         ></span>Steered</span
                       >{/if}
-                    {#if item.attachments.length}
+                    {#if item.files?.length || item.attachments.length}
                       <div class="user-attachments">
-                        {#each item.attachments as attachment (attachment)}
-                          <span
-                            ><span
-                              class="codicon codicon-file"
-                              aria-hidden="true"
-                            ></span>{attachment}</span
-                          >
+                        {#each item.files ?? item.attachments.map( (label) => ({ id: label, label }), ) as file (file.id)}
+                          {#if file.image}
+                            {@const src = `data:${file.image.mimeType};base64,${file.image.data}`}
+                            <button
+                              class="sent-image"
+                              type="button"
+                              title={file.label}
+                              aria-label={`View ${file.label}`}
+                              onclick={() => openImage(src, file.label)}
+                            >
+                              <img {src} alt={file.label} />
+                            </button>
+                          {:else}
+                            <span
+                              ><span
+                                class="codicon codicon-file"
+                                aria-hidden="true"
+                              ></span>{file.label}</span
+                            >
+                          {/if}
                         {/each}
                       </div>
                     {/if}
@@ -549,6 +564,7 @@
       />
     {/if}
   </div>
+<ImageViewer />
 </section>
 
 <style lang="scss">
@@ -862,6 +878,27 @@
     margin-bottom: 4px;
     color: var(--nova-muted);
     font-size: 0.9em;
+
+    .sent-image {
+      display: block;
+      padding: 0;
+      border: 1px solid var(--nova-subtle-border);
+      border-radius: var(--nova-radius);
+      overflow: hidden;
+      background: none;
+      cursor: zoom-in;
+
+      &:focus-visible {
+        outline: 1px solid var(--nova-focus);
+      }
+
+      img {
+        display: block;
+        max-width: 160px;
+        max-height: 120px;
+        object-fit: cover;
+      }
+    }
 
     span {
       display: inline-flex;

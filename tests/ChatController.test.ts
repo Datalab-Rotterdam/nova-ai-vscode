@@ -632,6 +632,38 @@ describe('ChatController', () => {
       expect(sentItem).toMatchObject({ text: 'explain', attachments: ['src/one.ts'] });
     });
 
+    it('attaches a text file dropped from outside the workspace as inline content', async () => {
+      const { controller, model } = setup([[new vscode.LanguageModelTextPart('ok')]]);
+
+      await controller.handle({ command: 'chat/addTextFile', name: 'notes.md', content: '# hi' });
+      expect(controller.getState().attachments).toEqual([{ id: expect.any(String), label: 'notes.md', content: '# hi' }]);
+
+      await controller.handle({ command: 'chat/send', text: 'read it' });
+      const sent = (model.sendRequest.mock.calls[0][0] as vscode.LanguageModelChatMessage[])
+        .flatMap((message) => message.content)
+        .find((part) => part instanceof vscode.LanguageModelTextPart && (part.value as string).includes('<attachments>'));
+      expect((sent as vscode.LanguageModelTextPart).value).toContain('<attachment path="notes.md">\n# hi\n</attachment>');
+    });
+
+    it('stores a pasted image as bare base64 so the chip preview and the model can decode it', async () => {
+      const { controller } = setup([]);
+
+      await controller.handle({ command: 'chat/addImage', name: 'image.png', dataUrl: 'data:image/png;base64,iVBORw0KGgo=' });
+
+      expect(controller.getState().attachments).toEqual([
+        { id: expect.any(String), label: 'image.png', image: { mimeType: 'image/png', data: 'iVBORw0KGgo=' } }
+      ]);
+    });
+
+    it('refuses dropped binaries with a notice', async () => {
+      const { controller } = setup([]);
+
+      await controller.handle({ command: 'chat/addTextFile', name: 'report.pdf', content: '' });
+
+      expect(controller.getState().attachments).toEqual([]);
+      expect(controller.getState().items.at(-1)).toMatchObject({ kind: 'notice', tone: 'warning' });
+    });
+
     it('offers the workspace files to the composer, newest first', async () => {
       const root = process.cwd();
       const scan = vi

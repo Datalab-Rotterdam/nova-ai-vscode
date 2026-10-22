@@ -108,6 +108,8 @@ export interface Attachment {
     path?: string;
     /** 1-based inclusive line range for selections. */
     lines?: [number, number];
+    /** Text of a file dropped from outside the workspace, sent as is instead of read from `path`. */
+    content?: string;
     /** An image attached from the composer: base64 while it is in the message. */
     image?: { mimeType: string; data: string };
 }
@@ -192,6 +194,10 @@ export type ChatCommand =
     | { command: 'chat/attachFile'; path: string }
     | { command: 'chat/addSelection' }
     | { command: 'chat/addImage'; name: string; dataUrl: string }
+    /** Files dropped or pasted as `file:` URIs (from the Explorer, an editor tab or the OS). */
+    | { command: 'chat/attachUris'; uris: string[] }
+    /** A text file dropped or pasted from outside VS Code, read by the webview. */
+    | { command: 'chat/addTextFile'; name: string; content: string }
     | { command: 'chat/removeAttachment'; id: string }
     | { command: 'chat/openDiff'; itemId: string }
     | { command: 'chat/openFile'; path: string }

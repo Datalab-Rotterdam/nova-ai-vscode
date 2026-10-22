@@ -41,6 +41,7 @@ import { parseSlashCommand, type ParsedSlashCommand } from './slashCommands';
 import { runIdOf, setRunId, visibleChatItems } from './steps';
 import { classifyLink, confirmAndOpenExternal } from './links';
 import { confirmAndDeleteChats, type ChatHistory } from './chatSearch';
+import { classifyFile } from './drop';
 import { fromStoredMessages, type SessionStore, type StoredSession, toStoredMessages } from './SessionStore';
 
 const MAX_ATTACHMENT_CHARS = 60_000;
@@ -249,6 +250,12 @@ export class ChatController implements vscode.Disposable, ChatHistory {
             case 'chat/addImage':
                 this.addImage(command.name, command.dataUrl);
                 break;
+            case 'chat/attachUris':
+                await this.attachUris(command.uris);
+                break;
+            case 'chat/addTextFile':
+                this.addTextFile(command.name, command.content);
+                break;
             case 'chat/openDiff':
                 await this.openDiff(command.itemId);
                 break;
@@ -328,7 +335,7 @@ export class ChatController implements vscode.Disposable, ChatHistory {
 
     /** Adds an image the user pasted or dropped into the composer, sent to Nova as vision input. */
     private addImage(name: string, dataUrl: string): void {
-        const match = /^data:([a-z.+-]+);base64,([\s\S]*)$/.exec(dataUrl);
+        const match = /^data:([a-z0-9.+/-]+);base64,([\s\S]*)$/.exec(dataUrl);
         const mimeType = (name && IMAGE_MIME.get(name.split('.').pop()?.toLowerCase() ?? '')) || match?.[1];
         const source = match ? match[2] : dataUrl;
         if (!mimeType || !mimeType.startsWith('image/') || !source) {
@@ -340,6 +347,56 @@ export class ChatController implements vscode.Disposable, ChatHistory {
             return;
         }
         this.addAttachment({ id: randomUUID(), label: name || 'image', image: { mimeType, data: source } });
+    }
+
+    /** Adds a text file from outside the workspace as inline content, clipped like attached files. */
+    private addTextFile(name: string, content: string): void {
+        if (classifyFile(name) !== 'text' || content.includes('\u0000')) {
+            this.notice('warning', `${name} cannot be attached: only text files and PNG, JPEG or WebP images.`);
+            return;
+        }
+        if (content.length > MAX_ATTACHMENT_CHARS) {
+            this.notice('info', `${name} is long; only the first ${MAX_ATTACHMENT_CHARS.toLocaleString()} characters are sent.`);
+        }
+        this.addAttachment({ id: randomUUID(), label: name, content: content.slice(0, MAX_ATTACHMENT_CHARS) });
+    }
+
+    /**
+     * Attaches dropped or pasted files. Workspace files attach by path like an `@` mention;
+     * images go through {@link addImage}; other files are read and attached as inline text.
+     */
+    private async attachUris(uris: readonly string[]): Promise<void> {
+        for (const value of uris) {
+            let uri: vscode.Uri;
+            try {
+                uri = vscode.Uri.parse(value);
+            } catch {
+                continue;
+            }
+            const name = uri.path.split('/').pop() || 'file';
+            try {
+                const kind = classifyFile(name);
+                if (kind === 'unsupported') {
+                    this.notice('warning', `${name} cannot be attached: only text files and PNG, JPEG or WebP images.`);
+                    continue;
+                }
+                if ((await vscode.workspace.fs.stat(uri)).type & vscode.FileType.Directory) {
+                    this.notice('warning', `${name} is a folder; attach the files in it instead.`);
+                    continue;
+                }
+                if (kind === 'image') {
+                    const bytes = await vscode.workspace.fs.readFile(uri);
+                    this.addImage(name, `data:application/octet-stream;base64,${Buffer.from(bytes).toString('base64')}`);
+                } else if (vscode.workspace.getWorkspaceFolder(uri)) {
+                    const path = displayPath(uri);
+                    this.addAttachment({ id: randomUUID(), path, label: path });
+                } else {
+                    this.addTextFile(name, await readText(uri));
+                }
+            } catch {
+                this.notice('warning', `${name} could not be read.`);
+            }
+        }
     }
 
     /**
@@ -1703,6 +1760,10 @@ async function buildPrompt(prompt: string, attachments: readonly Attachment[]): 
         if (attachment.image) {
             const data = Uint8Array.from(atob(attachment.image.data), (character) => character.charCodeAt(0));
             parts.push(new vscode.LanguageModelDataPart(data, attachment.image.mimeType));
+            continue;
+        }
+        if (attachment.content !== undefined) {
+            blocks.push(`<attachment path="${attachment.label}">\n${attachment.content}\n</attachment>`);
             continue;
         }
         if (!attachment.path) {

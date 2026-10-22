@@ -6,6 +6,12 @@
     type SlashCommand,
   } from "../../../src/panel/slashCommands";
   import { filterMentionFiles, findMention } from "../../../src/panel/mentions";
+  import { openImage } from "./viewer.svelte";
+  import {
+    classifyFile,
+    isOnlyFileUris,
+    parseDroppedUris,
+  } from "../../../src/panel/drop";
 
   let {
     chat,
@@ -217,54 +223,94 @@
   }
 
   /*
-   * Images as context: pick one with the camera button, paste (Ctrl/Cmd+V), or drop a file
-   * on the composer. The extension decides which models actually send them.
+   * Files and images as context: pick an image with the camera button, paste (Ctrl/Cmd+V), or
+   * drop files on the composer (from the OS, or from the VS Code Explorer and editor tabs). The extension decides which models actually send them.
    */
   function addImageDataUrl(name: string, dataUrl: string) {
     post({ command: "chat/addImage", name, dataUrl });
   }
 
-  function addImageFiles(files: File[]) {
-    for (const file of files.filter((file) => file.type.startsWith("image/"))) {
+  /** Images go to the vision path; text files are read here and sent inline. */
+  function addFiles(files: File[]) {
+    for (const file of files) {
+      const kind = classifyFile(file.name, file.type);
+      if (kind === "unsupported") {
+        // The extension explains why it is refused.
+        post({ command: "chat/addTextFile", name: file.name, content: "" });
+        continue;
+      }
       const reader = new FileReader();
-      reader.onload = () => addImageDataUrl(file.name, String(reader.result));
-      reader.readAsDataURL(file);
+      if (kind === "image") {
+        reader.onload = () => addImageDataUrl(file.name, String(reader.result));
+        reader.readAsDataURL(file);
+      } else {
+        reader.onload = () =>
+          post({
+            command: "chat/addTextFile",
+            name: file.name,
+            content: String(reader.result),
+          });
+        reader.readAsText(file);
+      }
     }
+  }
+
+  function addImageFiles(files: File[]) {
+    addFiles(files.filter((file) => file.type.startsWith("image/")));
+  }
+
+  /** Handles files and `file:` URIs in paste or drop data; false when there is neither. */
+  function takeData(data: DataTransfer | null): boolean {
+    if (!data) {
+      return false;
+    }
+    const files = [...(data.files ?? [])];
+    if (files.length) {
+      addFiles(files);
+      return true;
+    }
+    const uris = parseDroppedUris(data);
+    if (uris.length) {
+      post({ command: "chat/attachUris", uris });
+      return true;
+    }
+    return false;
   }
 
   function onPaste(event: ClipboardEvent) {
-    const files = [...(event.clipboardData?.files ?? [])];
-    if (!files.some((file) => file.type.startsWith("image/"))) {
+    const data = event.clipboardData;
+    const pastedText = data?.getData("text/plain") ?? "";
+    // Plain text pastes as text, except a copied Explorer file, which arrives as its URI.
+    if (data && !data.files?.length && !isOnlyFileUris(pastedText)) {
       return;
     }
-    event.preventDefault();
-    addImageFiles(files);
+    if (takeData(data)) {
+      event.preventDefault();
+    }
   }
 
   let dragDepth = 0;
-  function hasImage(dataTransfer: DataTransfer | null): boolean {
+  function hasDroppable(dataTransfer: DataTransfer | null): boolean {
     if (!dataTransfer) {
       return false;
     }
-    if (dataTransfer.types.includes("Files")) {
-      return [...(dataTransfer.files ?? [])].some((file) =>
-        file.type.startsWith("image/"),
-      );
-    }
     return (
+      dataTransfer.types.includes("Files") ||
+      dataTransfer.types.includes("resourceurls") ||
+      dataTransfer.types.includes("text/uri-list") ||
       dataTransfer.types.includes("image/png") ||
       dataTransfer.types.includes("image/jpeg") ||
       dataTransfer.types.includes("image/webp")
     );
   }
   function onDragEnter(event: DragEvent) {
-    if (hasImage(event.dataTransfer)) {
+    if (hasDroppable(event.dataTransfer)) {
       dragDepth += 1;
       draggingImage = true;
     }
   }
   function onDragLeave(event: DragEvent) {
-    if (hasImage(event.dataTransfer) && --dragDepth <= 0) {
+    if (hasDroppable(event.dataTransfer) && --dragDepth <= 0) {
       dragDepth = 0;
       draggingImage = false;
     }
@@ -272,12 +318,9 @@
   function onDrop(event: DragEvent) {
     dragDepth = 0;
     draggingImage = false;
-    const files = [...(event.dataTransfer?.files ?? [])];
-    if (!files.some((file) => file.type.startsWith("image/"))) {
-      return;
+    if (takeData(event.dataTransfer)) {
+      event.preventDefault();
     }
-    event.preventDefault();
-    addImageFiles(files);
   }
 
   function onPickedImages(event: Event) {
@@ -345,7 +388,7 @@
     }}
     ondragenter={onDragEnter}
     ondragover={(event) => {
-      if (hasImage(event.dataTransfer)) {
+      if (hasDroppable(event.dataTransfer)) {
         event.preventDefault();
       }
     }}
@@ -412,12 +455,16 @@
         {#each chat.attachments as attachment (attachment.id)}
           <li>
             {#if attachment.image}
-              <img
-                class="chip-image"
-                src={`data:${attachment.image.mimeType};base64,${attachment.image.data}`}
-                alt=""
-                title={attachment.label}
-              />
+              {@const src = `data:${attachment.image.mimeType};base64,${attachment.image.data}`}
+              <button
+                class="chip-thumb"
+                type="button"
+                title={`View ${attachment.label}`}
+                aria-label={`View ${attachment.label}`}
+                onclick={() => openImage(src, attachment.label)}
+              >
+                <img class="chip-image" {src} alt="" />
+              </button>
             {:else}
               <span class="codicon codicon-file" aria-hidden="true"></span>
             {/if}
@@ -426,9 +473,14 @@
               type="button"
               title={attachment.label}
               onclick={() =>
-                attachment.path
-                  ? post({ command: "chat/openFile", path: attachment.path })
-                  : undefined}>{attachment.label}</button
+                attachment.image
+                  ? openImage(
+                      `data:${attachment.image.mimeType};base64,${attachment.image.data}`,
+                      attachment.label,
+                    )
+                  : attachment.path
+                    ? post({ command: "chat/openFile", path: attachment.path })
+                    : undefined}>{attachment.label}</button
             >
             <button
               class="chip-remove codicon codicon-close"
@@ -456,7 +508,7 @@
           ? "Answer Nova's question…"
           : chat.running
             ? "Steer Nova, or queue a follow-up…"
-            : "Ask Nova — use @ for files"}
+            : "Ask Nova — @ for files, or paste / drop"}
       aria-label="Message Nova"
       aria-autocomplete={slashMode || mentionMode ? "list" : undefined}
       aria-controls={suggestions.length || mentionOptions.length
@@ -923,6 +975,15 @@
       border-radius: var(--nova-radius);
       font-size: 0.9em;
     }
+  }
+
+  .chip-thumb {
+    display: flex;
+    flex: none;
+    padding: 0;
+    border: 0;
+    background: none;
+    cursor: zoom-in;
   }
 
   .chip-image {
