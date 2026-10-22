@@ -129,7 +129,7 @@
     >
       <span class={`codicon codicon-${agent?.icon ?? "comment"}`} aria-hidden="true"
       ></span>
-      {agent?.name ?? "Interactive"}
+      <span class="label">{agent?.name ?? "Interactive"}</span>
       <span class="codicon codicon-chevron-up caret" aria-hidden="true"></span>
     </button>
     {#if open === "agent"}
@@ -174,7 +174,7 @@
     >
       <span class={`codicon codicon-${permission.icon}`} aria-hidden="true"
       ></span>
-      {permission.label}
+      <span class="label">{permission.label}</span>
       <span class="codicon codicon-chevron-up caret" aria-hidden="true"></span>
     </button>
     {#if open === "permission"}
@@ -219,7 +219,15 @@
     flex-wrap: wrap;
     align-items: center;
     gap: 2px 6px;
-    padding: 4px 4px 0;
+    padding: 2px 4px 0;
+    /* Lets the chips drop their text when the panel is narrow (container query below). */
+    container-type: inline-size;
+  }
+
+  @container (max-width: 300px) {
+    .label {
+      display: none;
+    }
   }
 
   .chip {
@@ -249,6 +257,7 @@
 
   .drop {
     position: relative;
+    min-width: 0;
   }
 
   .caret {

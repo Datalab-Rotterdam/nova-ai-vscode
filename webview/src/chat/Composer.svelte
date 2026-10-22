@@ -687,7 +687,7 @@
     position: relative;
     isolation: isolate;
     flex: none;
-    margin: 4px 10px 12px;
+    margin: 4px 10px 4px;
     animation: nova-chatbar-enter 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
 
     &::before,

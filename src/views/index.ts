@@ -197,6 +197,8 @@ export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer
     view.onDidChangeVisibility(() => {
       if (view.visible) {
         void this.refresh();
+        // The page may have been rebuilt while hidden: send the chat again.
+        void this.sidebarChat?.handle({ command: 'chat/ready' });
       }
     });
     await this.attach(view.webview, 'sidebar');

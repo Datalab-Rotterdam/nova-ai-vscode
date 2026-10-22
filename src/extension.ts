@@ -195,7 +195,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         vscode.commands.registerCommand(COMMAND_FOCUS_CHAT, async () => {
             await focusSidebar(sidebarProvider);
         }),
-        vscode.window.registerWebviewViewProvider(NOVA_SIDEBAR_VIEW_ID, sidebarProvider),
+        vscode.window.registerWebviewViewProvider(NOVA_SIDEBAR_VIEW_ID, sidebarProvider, { webviewOptions: { retainContextWhenHidden: true } }),
         vscode.commands.registerCommand(COMMAND_MANAGE, async () => {
             await focusSidebar(sidebarProvider);
         }),
