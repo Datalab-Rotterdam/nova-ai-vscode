@@ -878,7 +878,8 @@
     }
 
     :global(.todos),
-    :global(.changes) {
+    :global(.changes),
+    :global(.subagents) {
       width: calc(100% - 48px);
       max-width: 860px;
       margin: 0 auto 6px;

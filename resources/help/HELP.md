@@ -51,8 +51,8 @@ Anything else that starts with `/` (for example a path such as `/etc/hosts`) is 
 
 ### Context
 
-- **Attach files** with the paperclip, or the **editor selection** with the selection button. In the editor, right-click → **Add to Nova Chat** does the same.
-- The ring next to the send button shows how full the model's context window is: yellow from 70%, red from 90%. Hover for the numbers.
+- Type **`@`** to mention a workspace file. Use the **paperclip** to attach files and images, or the **editor selection** with the selection button. In the editor, right-click → **Add to Nova Chat** does the same.
+- The ring next to the send button shows how full the model's context window is: yellow from 70%, red from 90%. Click it for the numbers and a **Compact** button.
 - Long conversations are **compacted automatically** (`nova.context.autoCompact`): old tool output is shortened first, then older messages are summarized. Use `/compact` to do it yourself, for example before starting a new part of the work.
 - After compaction the messages stay on screen for you, but Nova continues from the summary.
 
@@ -62,17 +62,44 @@ Pick the model in the input box (or with `/model`). Earlier replies keep the mod
 
 ### Tools and approvals
 
-Nova reads, lists, finds and searches files, checks problems, edits and creates files, runs commands and fetches web pages. MCP tools registered in VS Code are available too (`nova.agent.includeMcpTools`).
+Nova reads, lists, finds and searches files, checks problems, edits and creates files, runs commands, searches the web and fetches web pages. MCP tools registered in VS Code are available too (`nova.agent.includeMcpTools`).
 
-The approvals menu in the input box sets when Nova asks first (`nova.agent.approvalMode`):
+Two menus under the input box set how Nova works.
+
+**Agent mode** (press **Shift+Tab** to cycle):
+
+| Mode | What it does |
+| --- | --- |
+| Interactive | Normal work (default) |
+| Plan | Researches the code and writes a plan. Read-only: it cannot edit files or run commands. |
+| Ask | Answers questions about your code. Read-only. |
+| Autopilot | Works on its own until the task is done and answers its own questions, still within your permissions. |
+
+Create your own modes with **Nova AI: Manage Agents** (markdown files in `~/.nova-ai/agents` or `.nova-ai/agents`).
+
+**Permissions** (`nova.agent.approvalMode`) set when Nova asks first:
 
 | Mode | Asks before |
 | --- | --- |
-| Ask every time | every tool call |
-| Auto-run read-only (default) | edits, commands and other tools that change something |
-| Auto-run all | nothing |
+| Manual permissions | every tool call that edits or runs something |
+| Assisted permissions (default) | edits, commands and other tools that change something, unless a rule allows it |
+| Allow all | nothing |
+
+Both menus show only their icon when the input box is too narrow for the labels.
 
 On an approval card: **Allow** runs it once, **Always allow** saves a rule to `.nova-ai/settings.local.json`, **Allow all** allows every tool call in this chat, **Reject** tells Nova to try something else. Edit cards can open the proposed diff first.
+
+### Research sub-agents
+
+For broad questions Nova can start research sub-agents that explore the project in parallel. A strip above the input shows each agent (state, tool calls, tokens, time). Click an agent to watch what it does, or stop it with its stop button. Turn them off or limit them with `nova.agent.subagents.*`.
+
+### Web search and browser
+
+Nova can search the web without an API key (`nova.webSearch.*`; add your own SearXNG server if you like) and cites what it finds. With the Nova AI Browser integration (**Nova AI: Set Up Browser Integration**, on by default through `nova.browser.autoSetup`) it can also open pages and take screenshots in Chrome, Edge or Brave.
+
+### Reading answers
+
+Thinking and tool calls fold into short steps you can expand. Replies render Markdown, code and LaTeX math, each with a copy button. **Regenerate** an answer to keep both versions and switch between them.
 
 ### Changes: keep or undo
 
@@ -143,7 +170,8 @@ Everything lives in `~/.nova-ai` (change it with `nova.home` or `NOVA_AI_HOME`):
 | Nova AI: Open Chat in Editor | Move the chat into an editor tab |
 | Nova AI: Chats / Search Chats | Find, open, rename or delete chats |
 | Add to Nova Chat | Attach the editor selection |
-| Nova AI: Manage Skills | Create and manage skills |
+| Nova AI: Manage Skills / Manage Agents | Create and manage skills and agent modes |
+| Nova AI: Set Up Browser Integration | Let Nova use your browser |
 | Nova AI: Open Global Memory / Open Project Memory | Edit Nova's memory |
 | Nova AI: Reveal Nova Folder | Open `~/.nova-ai` |
 | Nova AI: Clean Up Projects | Remove data of workspaces that are gone |
@@ -163,6 +191,9 @@ Everything lives in `~/.nova-ai` (change it with `nova.home` or `NOVA_AI_HOME`):
 | `nova.agent.maxToolRounds` | 25 | Tool rounds per request before Nova pauses |
 | `nova.agent.commandTimeoutSeconds` | 120 | Time limit for commands the Nova chat runs |
 | `nova.agent.includeMcpTools` | on | Offer MCP tools to the Nova chat |
+| `nova.agent.subagents.*` | on | Research sub-agents: on/off, model and limits |
+| `nova.webSearch.*` | on | Web search providers |
+| `nova.browser.autoSetup` | on | Set up the browser integration on startup |
 | `nova.context.autoCompact` | on | Compact long conversations automatically |
 | `nova.context.compactThreshold` | 0.8 | Share of the context window at which to compact |
 | `nova.context.defaultContextWindow` | 32768 | Context window for models that do not advertise one |
