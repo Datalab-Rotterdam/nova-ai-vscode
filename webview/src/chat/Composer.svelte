@@ -946,10 +946,7 @@
     padding: 10px 12px;
     border: 1px solid var(--nova-border);
     border-radius: var(--nova-radius-large);
-    background: var(
-      --vscode-inputValidation-errorBackground,
-      var(--nova-surface)
-    );
+    background: var(--nova-surface);
     box-shadow: 0 4px 18px rgb(0 0 0 / 25%);
     z-index: 40;
 
