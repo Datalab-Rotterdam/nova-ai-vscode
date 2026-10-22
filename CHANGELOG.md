@@ -1,3 +1,24 @@
+# [1.0.0-alpha.20](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.19...v1.0.0-alpha.20) (2026-10-22)
+
+
+### Bug Fixes
+
+* **agent:** tell the model the absolute scratch folder path ([8aff072](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/8aff0725209aae6a6116b36b228890ce2188d230))
+* **composer:** tighter mode chips, icon-only when narrow, keep sidebar alive ([df1786c](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/df1786c29f8549dd9db2619a9e4f630e127e244f))
+* context popover used the error-red background instead of the neutral surface ([1a0fdb4](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/1a0fdb47caf8c3d9eaf78a3d19161a9a1a93cfb6))
+
+
+### Features
+
+* @-mention files in the composer, / quick commands, behind setting ([924bf87](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/924bf876a432a79aaf430ccc21b22e250a1caa05))
+* agent modes, permission menu and prompt, Agents page ([47f78df](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/47f78dfbd8189d61d72d7e014f8568dbe62e6906))
+* **agent:** parallel research sub-agents with live strip and overlay ([77d4648](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/77d4648bdf1bec7a3fdd1e179f2c6b113316f704))
+* **chat:** render LaTeX math with a copy button ([da553e6](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/da553e6d658bcdf31fd1ce7b0146dc83cf9959d4))
+* **composer:** one attach button, workspace-aware, with file icons ([291e97b](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/291e97b00b3107001ff535fa0c99f81579f0397e))
+* **composer:** paste and drop files and images, click images to enlarge ([c9b5696](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/c9b56967ccbb4f4dd31bd0d74f67fa4d46230a4e))
+* context window popover with force-compact button ([df96082](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/df96082b2b9b9e07dc6e3651bec90491f0231419))
+* port desktop features — step groups, web search, image attachments, answer versions ([65ad6e4](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/65ad6e4bb5e5ff137e26686bd799f10eadde3744))
+
 # [1.0.0-alpha.19](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.18...v1.0.0-alpha.19) (2026-10-14)
 
 
