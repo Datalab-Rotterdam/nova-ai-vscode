@@ -13,7 +13,7 @@ import { type PermissionService, suggestRule } from '../permissions/PermissionSe
 import { getSystemRole } from '../core/apiSupport';
 import { COMMAND_MANAGE_AGENTS, COMMAND_SHOW_HELP } from '../core/constants';
 import { buildTranscript, estimateMessagesTokens, summaryBlock, tokenCalibration } from '../agent/ContextManager';
-import { getCompactThreshold, getMaxToolRounds, getSubagentSettings, isAttachButtonEnabled, isAutoCompactEnabled } from '../core/config';
+import { getCompactThreshold, getMaxToolRounds, getSubagentSettings, isAutoCompactEnabled } from '../core/config';
 import { Diagnostics } from '../core/diagnostics';
 import { createPanelPrompt, createSubagentPrompt } from '../core/prompts';
 import type { LanguageModelInfo } from '../core/types';
@@ -180,11 +180,6 @@ export class ChatController implements vscode.Disposable, ChatHistory {
     ) {
         this.rememberLast = options.rememberLast ?? true;
         this.disposables.push(this.modelProvider.onDidChangeLanguageModelChatInformation(() => void this.refreshModels().then(() => this.postState())));
-        this.disposables.push(vscode.workspace.onDidChangeConfiguration((event) => {
-            if (event.affectsConfiguration('nova.chat.attachButton')) {
-                this.postState();
-            }
-        }));
         if (options.hub) {
             this.disposables.push(options.hub.onDidChange(() => this.postSessions()));
         }
@@ -365,7 +360,7 @@ export class ChatController implements vscode.Disposable, ChatHistory {
     }
 
     /** Adds an image the user pasted or dropped into the composer, sent to Nova as vision input. */
-    private addImage(name: string, dataUrl: string): void {
+    private addImage(name: string, dataUrl: string, workspacePath?: string): void {
         const match = /^data:([a-z0-9.+/-]+);base64,([\s\S]*)$/.exec(dataUrl);
         const mimeType = (name && IMAGE_MIME.get(name.split('.').pop()?.toLowerCase() ?? '')) || match?.[1];
         const source = match ? match[2] : dataUrl;
@@ -377,7 +372,13 @@ export class ChatController implements vscode.Disposable, ChatHistory {
             this.notice('warning', `${name} is too large to attach (at most ${Math.round(MAX_IMAGE_BYTES / 1024 / 10) / 10} MB).`);
             return;
         }
-        this.addAttachment({ id: randomUUID(), label: name || 'image', image: { mimeType, data: source } });
+        // An image from the workspace keeps its path, so the model can find the file again with its tools.
+        this.addAttachment({
+            id: randomUUID(),
+            label: workspacePath ?? (name || 'image'),
+            ...(workspacePath ? { path: workspacePath } : {}),
+            image: { mimeType, data: source }
+        });
     }
 
     /** Adds a text file from outside the workspace as inline content, clipped like attached files. */
@@ -417,7 +418,11 @@ export class ChatController implements vscode.Disposable, ChatHistory {
                 }
                 if (kind === 'image') {
                     const bytes = await vscode.workspace.fs.readFile(uri);
-                    this.addImage(name, `data:application/octet-stream;base64,${Buffer.from(bytes).toString('base64')}`);
+                    this.addImage(
+                        name,
+                        `data:application/octet-stream;base64,${Buffer.from(bytes).toString('base64')}`,
+                        vscode.workspace.getWorkspaceFolder(uri) ? displayPath(uri) : undefined
+                    );
                 } else if (vscode.workspace.getWorkspaceFolder(uri)) {
                     const path = displayPath(uri);
                     this.addAttachment({ id: randomUUID(), path, label: path });
@@ -488,8 +493,7 @@ export class ChatController implements vscode.Disposable, ChatHistory {
             todos: this.session.todos ?? [],
             changes: this.changesView(),
             subagents: this.session.subagents ?? [],
-            fileOptions: this.fileOptions(),
-            attachButtonEnabled: isAttachButtonEnabled()
+            fileOptions: this.fileOptions()
         };
     }
 
@@ -1739,15 +1743,18 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         }
     }
 
-    /** Picks files from the workspace and attaches them. */
+    /** Picks files or images with the system dialog (opened in the workspace) and attaches them like dropped ones. */
     private async addFile(): Promise<void> {
-        await this.fileOptionsScan;
-        const picked = await vscode.window.showQuickPick(
-            this.fileOptions().map((label) => ({ label })),
-            { placeHolder: 'Add a file to the Nova chat (or type @ in the message)', canPickMany: true, matchOnDescription: true }
-        );
-        for (const { label } of picked ?? []) {
-            this.addAttachment({ id: randomUUID(), path: label, label });
+        const picked = await vscode.window.showOpenDialog({
+            canSelectMany: true,
+            canSelectFiles: true,
+            canSelectFolders: false,
+            defaultUri: workspaceFolders()[0]?.uri,
+            title: 'Attach files or images to the Nova chat',
+            openLabel: 'Attach'
+        });
+        if (picked?.length) {
+            await this.attachUris(picked.map((uri) => uri.toString()));
         }
     }
 
@@ -2029,6 +2036,9 @@ async function buildPrompt(prompt: string, attachments: readonly Attachment[]): 
         if (attachment.image) {
             const data = Uint8Array.from(atob(attachment.image.data), (character) => character.charCodeAt(0));
             parts.push(new vscode.LanguageModelDataPart(data, attachment.image.mimeType));
+            if (attachment.path) {
+                blocks.push(`<attachment path="${attachment.label}" type="image" />`);
+            }
             continue;
         }
         if (attachment.content !== undefined) {

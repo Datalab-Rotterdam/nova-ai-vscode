@@ -519,13 +519,7 @@
         "id": "nova.chat",
         "title": "Chat",
         "order": 2,
-        "properties": {
-          "nova.chat.attachButton": {
-            "type": "boolean",
-            "default": false,
-            "markdownDescription": "Show the paperclip “Add a file” button in the Nova chat composer. Off by default: attach a file by typing `@` in the message instead. Enable it to restore the old multi-select file picker button."
-          }
-        }
+        "properties": {}
       },
       {
         "id": "nova.chat.agent",

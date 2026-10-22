@@ -9,6 +9,7 @@
   import ImageViewer from "./ImageViewer.svelte";
   import { openImage } from "./viewer.svelte";
   import QuestionCard from "./QuestionCard.svelte";
+  import { fileIcon } from "./fileIcon";
   import TodoStrip from "./TodoStrip.svelte";
   import SubagentStrip from "./SubagentStrip.svelte";
   import Markdown from "./Markdown.svelte";
@@ -477,7 +478,7 @@
                           {:else}
                             <span
                               ><span
-                                class="codicon codicon-file"
+                                class={`codicon codicon-${fileIcon(file.label).icon} file-icon ${fileIcon(file.label).tone}`}
                                 aria-hidden="true"
                               ></span>{file.label}</span
                             >

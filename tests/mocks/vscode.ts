@@ -163,6 +163,7 @@ export const window = {
   showWarningMessage: async () => undefined,
   showInputBox: async () => undefined,
   showQuickPick: async (_items: unknown, _options?: unknown) => undefined as unknown[],
+  showOpenDialog: async (_options?: unknown) => undefined as unknown[] | undefined,
   showTextDocument: async () => undefined,
   registerWebviewViewProvider: () => new Disposable()
 };
@@ -171,6 +172,8 @@ export const commands = {
   executeCommand: async () => undefined,
   registerCommand: () => new Disposable()
 };
+
+export enum FileType { Unknown = 0, File = 1, Directory = 2, SymbolicLink = 64 }
 
 export class Uri {
   private constructor(public readonly scheme: string, public readonly fsPath: string, public readonly query = '') { }
@@ -185,7 +188,8 @@ export class Uri {
 
   public static parse(value: string): Uri {
     const url = new URL(value);
-    return new Uri(url.protocol.slice(0, -1), value.slice(url.protocol.length));
+    // `file:///a/b` is the path `/a/b`.
+    return new Uri(url.protocol.slice(0, -1), value.slice(url.protocol.length).replace(/^\/\//, ''));
   }
 
   public static joinPath(base: Uri, ...segments: string[]): Uri {
@@ -208,6 +212,7 @@ export const workspace = {
       readDirectory: async () => []
     };
   },
+  getWorkspaceFolder: (uri: Uri) => workspace.workspaceFolders?.find((folder) => uri.fsPath === folder.uri.fsPath || uri.fsPath.startsWith(`${folder.uri.fsPath}/`)),
   /** Filled by tests (or the default empty answer) before a `findFiles` call. */
   findFiles: async (): Promise<Uri[]> => [],
   onDidChangeConfiguration: (_listener: (event: { affectsConfiguration(key: string): boolean }) => unknown) => new Disposable(),

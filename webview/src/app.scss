@@ -217,3 +217,28 @@ p {
     background-position: -100% 0;
   }
 }
+
+/* Tint of file icons by kind (see chat/fileIcon.ts); colors come from the editor theme. */
+.file-icon {
+  flex: none;
+
+  &.code {
+    color: var(--vscode-charts-blue, var(--nova-brand-info));
+  }
+
+  &.data {
+    color: var(--vscode-charts-yellow, var(--nova-warning));
+  }
+
+  &.doc {
+    color: var(--vscode-charts-red, var(--nova-brand-red));
+  }
+
+  &.media {
+    color: var(--vscode-charts-purple, var(--nova-link));
+  }
+
+  &.config {
+    color: var(--vscode-charts-orange, var(--nova-muted));
+  }
+}

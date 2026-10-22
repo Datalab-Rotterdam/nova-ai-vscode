@@ -697,6 +697,41 @@ describe('ChatController', () => {
       expect(sentItem).toMatchObject({ text: 'explain', attachments: ['src/one.ts'] });
     });
 
+    it('the attach button opens one picker for files and images', async () => {
+      const { controller } = setup([]);
+      const open = vi.spyOn(vscode.window, 'showOpenDialog').mockResolvedValue([vscode.Uri.file('/tmp/shot.png')]);
+      vi.spyOn(vscode.workspace, 'fs', 'get').mockReturnValue({
+        stat: async () => ({ type: vscode.FileType.File }),
+        readFile: async () => new Uint8Array([1, 2, 3])
+      } as never);
+
+      await controller.handle({ command: 'chat/addFile' });
+
+      expect(open).toHaveBeenCalledWith(expect.objectContaining({ canSelectMany: true, canSelectFolders: false }));
+      expect(controller.getState().attachments).toEqual([
+        { id: expect.any(String), label: 'shot.png', image: { mimeType: 'image/png', data: 'AQID' } }
+      ]);
+    });
+
+    it('references files from inside the workspace by path, whether picked or dropped', async () => {
+      const { controller } = setup([]);
+      const root = process.cwd();
+      vi.spyOn(vscode.window, 'showOpenDialog').mockResolvedValue([vscode.Uri.file(`${root}/src/one.ts`), vscode.Uri.file(`${root}/docs/shot.png`)]);
+      vi.spyOn(vscode.workspace, 'fs', 'get').mockReturnValue({
+        stat: async () => ({ type: vscode.FileType.File }),
+        readFile: async () => new Uint8Array([1, 2, 3])
+      } as never);
+
+      await controller.handle({ command: 'chat/addFile' });
+      await controller.handle({ command: 'chat/attachUris', uris: [`file://${root}/src/one.ts`] });
+
+      // The text file is attached by its workspace path (once); the image keeps its path next to its data.
+      expect(controller.getState().attachments).toEqual([
+        { id: expect.any(String), label: 'src/one.ts', path: 'src/one.ts' },
+        { id: expect.any(String), label: 'docs/shot.png', path: 'docs/shot.png', image: { mimeType: 'image/png', data: 'AQID' } }
+      ]);
+    });
+
     it('attaches a text file dropped from outside the workspace as inline content', async () => {
       const { controller, model } = setup([[new vscode.LanguageModelTextPart('ok')]]);
 

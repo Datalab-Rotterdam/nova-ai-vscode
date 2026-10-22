@@ -2,6 +2,7 @@
   import type { ChatState } from "../../../src/panel/protocol";
   import { nextAgentId } from "../../../src/panel/agentModes";
   import ModeMenu from "./ModeMenu.svelte";
+  import { fileIcon } from "./fileIcon";
   import PermissionPrompt from "./PermissionPrompt.svelte";
   import {
     parseSlashCommand,
@@ -24,7 +25,6 @@
 
   let text = $state("");
   let textarea: HTMLTextAreaElement | undefined = $state();
-  let imageInput: HTMLInputElement | undefined = $state();
   let draggingImage = $state(false);
   let contextOpen = $state(false);
   let contextWrap: HTMLElement | undefined = $state();
@@ -334,12 +334,6 @@
     }
   }
 
-  function onPickedImages(event: Event) {
-    const input = event.currentTarget as HTMLInputElement;
-    addImageFiles([...(input.files ?? [])]);
-    input.value = "";
-  }
-
   $effect(() => {
     textarea?.focus();
   });
@@ -455,7 +449,7 @@
             }}
             onmousemove={() => (highlighted = index)}
           >
-            <span class="codicon codicon-file" aria-hidden="true"></span>
+            <span class={`codicon codicon-${fileIcon(path).icon} file-icon ${fileIcon(path).tone}`} aria-hidden="true"></span>
             <span class="compose-name">{path}</span>
           </li>
         {/each}
@@ -477,7 +471,7 @@
                 <img class="chip-image" {src} alt="" />
               </button>
             {:else}
-              <span class="codicon codicon-file" aria-hidden="true"></span>
+              <span class={`codicon codicon-${fileIcon(attachment.label).icon} file-icon ${fileIcon(attachment.label).tone}`} aria-hidden="true"></span>
             {/if}
             <button
               class="chip-label"
@@ -531,33 +525,13 @@
           ? `nova-file-${highlighted}`
           : undefined}></textarea>
 
-    <input
-      bind:this={imageInput}
-      class="image-input"
-      type="file"
-      accept="image/png,image/jpeg,image/webp"
-      multiple
-      aria-hidden="true"
-      tabindex="-1"
-      onchange={onPickedImages}
-    />
-
     <div class="toolbar">
-      {#if chat.attachButtonEnabled}
-        <button
-          class="icon codicon codicon-attach"
-          type="button"
-          title="Add a file (or type @ in the message)"
-          aria-label="Add a file (or type @ in the message)"
-          onclick={() => post({ command: "chat/addFile" })}
-        ></button>
-      {/if}
       <button
-        class="icon codicon codicon-file-media"
+        class="icon codicon codicon-attach"
         type="button"
-        title="Add images (or paste, or drop them here)"
-        aria-label="Add images"
-        onclick={() => imageInput?.click()}
+        title="Attach files or images (or type @, paste, or drop them here)"
+        aria-label="Attach files or images"
+        onclick={() => post({ command: "chat/addFile" })}
       ></button>
       <button
         class="icon codicon codicon-selection"
@@ -989,15 +963,6 @@
     height: 22px;
     object-fit: cover;
     border-radius: 3px;
-  }
-
-  /* The image picker is invisible; the camera button opens it. */
-  .image-input {
-    position: absolute;
-    width: 0;
-    height: 0;
-    opacity: 0;
-    pointer-events: none;
   }
 
   .chip-label,

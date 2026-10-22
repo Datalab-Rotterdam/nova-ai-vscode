@@ -184,11 +184,6 @@ export interface ChatState {
     subagents: SubagentState[];
     /** Workspace files offered by `@` in the composer, newest-touched first. */
     fileOptions: string[];
-    /**
-     * The paperclip "Add a file" button is on. Off by default: files can be attached
-     * inline with `@`, with the selection button, by paste or by drag-and-drop.
-     */
-    attachButtonEnabled: boolean;
 }
 
 export type ApprovalMode = 'ask' | 'autoReadOnly' | 'autoAll';
