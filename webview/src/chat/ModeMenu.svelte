@@ -14,6 +14,8 @@
   /** Which dropdown is open: the agent one or the permissions one. */
   let open = $state<"agent" | "permission" | undefined>();
   let wrap: HTMLElement | undefined = $state();
+  /** Chips show only their icon, but only once the labels no longer fit on one line. */
+  let compact = $state(false);
 
   const agent = $derived(
     chat.agents.find((candidate) => candidate.id === chat.agent) ??
@@ -67,6 +69,34 @@
     items[(index + move + items.length) % items.length]?.focus();
   }
 
+  // Measure with the labels showing; a changed label re-measures, so drop out of compact first.
+  let fullWidth: number | undefined;
+  $effect(() => {
+    void [agent?.name, permission.label];
+    fullWidth = undefined;
+    compact = false;
+  });
+  $effect(() => {
+    if (!wrap) {
+      return;
+    }
+    const node = wrap;
+    const update = () => {
+      const style = getComputedStyle(node);
+      const available = node.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+      if (!compact) {
+        const chips = [...node.children] as HTMLElement[];
+        const gap = parseFloat(style.columnGap) || 0;
+        fullWidth = chips.reduce((sum, chip) => sum + chip.offsetWidth, 0) + gap * Math.max(0, chips.length - 1);
+      }
+      compact = fullWidth !== undefined && available < fullWidth;
+    };
+    const observer = new ResizeObserver(update);
+    observer.observe(node);
+    update();
+    return () => observer.disconnect();
+  });
+
   // Close on outside click or Escape, like the context popover.
   $effect(() => {
     if (!open) {
@@ -117,7 +147,7 @@
   </button>
 {/snippet}
 
-<div class="status" bind:this={wrap}>
+<div class="status" class:compact bind:this={wrap}>
   <div class="drop">
     <button
       class="chip"
@@ -220,14 +250,10 @@
     align-items: center;
     gap: 2px 6px;
     padding: 2px 4px 0;
-    /* Lets the chips drop their text when the panel is narrow (container query below). */
-    container-type: inline-size;
   }
 
-  @container (max-width: 300px) {
-    .label {
-      display: none;
-    }
+  .compact .label {
+    display: none;
   }
 
   .chip {
