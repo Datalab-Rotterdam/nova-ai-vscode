@@ -554,6 +554,50 @@
             "maximum": 200,
             "markdownDescription": "Maximum number of model ↔ tool rounds `@nova` runs for one request."
           },
+          "nova.agent.subagents.enabled": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Let Nova start research sub-agents (the `spawn_agents` tool) that explore the project in parallel."
+          },
+          "nova.agent.subagents.model": {
+            "type": "string",
+            "default": "inherit",
+            "markdownDescription": "Model sub-agents use. `inherit` uses the model selected in the chat; otherwise a model id (see the Agents page)."
+          },
+          "nova.agent.subagents.allowedModels": {
+            "type": "array",
+            "items": { "type": "string" },
+            "default": [],
+            "markdownDescription": "Model ids Nova may pick for a single sub-agent (for example a cheaper model for simple lookups). Empty: every sub-agent uses the model above."
+          },
+          "nova.agent.subagents.maxPerCall": {
+            "type": "integer",
+            "default": 4,
+            "minimum": 1,
+            "maximum": 8,
+            "markdownDescription": "Maximum number of sub-agents in one `spawn_agents` call."
+          },
+          "nova.agent.subagents.maxParallel": {
+            "type": "integer",
+            "default": 3,
+            "minimum": 1,
+            "maximum": 8,
+            "markdownDescription": "Maximum number of sub-agents running at the same time; the rest wait."
+          },
+          "nova.agent.subagents.maxTotalPerRun": {
+            "type": "integer",
+            "default": 8,
+            "minimum": 1,
+            "maximum": 32,
+            "markdownDescription": "Maximum number of sub-agents Nova may start while answering one message."
+          },
+          "nova.agent.subagents.maxRounds": {
+            "type": "integer",
+            "default": 12,
+            "minimum": 1,
+            "maximum": 50,
+            "markdownDescription": "Maximum number of model ↔ tool rounds one sub-agent runs."
+          },
           "nova.agent.commandTimeoutSeconds": {
             "type": "integer",
             "default": 120,

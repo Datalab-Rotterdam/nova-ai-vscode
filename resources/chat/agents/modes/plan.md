@@ -3,7 +3,7 @@ name: Plan
 description: Plan first, execute when ready
 icon: checklist
 readOnly: true
-tools: [read, search, web, memory_read, ask, todo, skills]
+tools: [read, search, web, memory_read, ask, todo, skills, subagents]
 ---
 You are in PLAN mode. Your sole job is to research the codebase and produce a detailed, actionable plan. NEVER implement it: you cannot edit files or run commands in this mode.
 

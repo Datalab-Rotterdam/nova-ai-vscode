@@ -52,3 +52,35 @@ export function getMaxToolRounds(): number {
   const value = configuration().get<number>('agent.maxToolRounds', 25);
   return Number.isFinite(value) ? Math.min(200, Math.max(1, Math.floor(value))) : 25;
 }
+
+export interface SubagentSettings {
+  enabled: boolean;
+  maxPerCall: number;
+  maxParallel: number;
+  maxTotalPerRun: number;
+  maxRounds: number;
+  /** "inherit" (the chat's model) or a model id. */
+  model: string;
+  /** Model ids the main agent may choose per task. */
+  allowedModels: string[];
+}
+
+function clampInt(value: unknown, fallback: number, min: number, max: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? Math.min(max, Math.max(min, Math.floor(value))) : fallback;
+}
+
+/** Limits and model choice of the spawn_agents tool; every number is clamped, whatever the settings say. */
+export function getSubagentSettings(): SubagentSettings {
+  const config = configuration();
+  const models = config.get<unknown>('agent.subagents.allowedModels', []);
+  const model = config.get<string>('agent.subagents.model', 'inherit');
+  return {
+    enabled: config.get<boolean>('agent.subagents.enabled', true),
+    maxPerCall: clampInt(config.get('agent.subagents.maxPerCall'), 4, 1, 8),
+    maxParallel: clampInt(config.get('agent.subagents.maxParallel'), 3, 1, 8),
+    maxTotalPerRun: clampInt(config.get('agent.subagents.maxTotalPerRun'), 8, 1, 32),
+    maxRounds: clampInt(config.get('agent.subagents.maxRounds'), 12, 1, 50),
+    model: typeof model === 'string' && model.trim() ? model.trim() : 'inherit',
+    allowedModels: Array.isArray(models) ? models.filter((item): item is string => typeof item === 'string') : []
+  };
+}

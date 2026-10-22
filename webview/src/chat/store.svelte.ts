@@ -55,6 +55,9 @@ export function createChatStore() {
             case 'chat/changes':
                 state.changes = event.changes;
                 break;
+            case 'chat/subagents':
+                state.subagents = event.subagents;
+                break;
         }
     }
 

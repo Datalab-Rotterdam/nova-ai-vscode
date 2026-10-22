@@ -2,7 +2,7 @@ import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { ensureDir, writePrivateFile } from '../storage/NovaHome';
-import type { ChatItem, SessionSummary, TodoItem } from './protocol';
+import type { ChatItem, SessionSummary, SubagentState, TodoItem } from './protocol';
 
 /** Model conversation in a JSON-safe form. */
 export type StoredPart =
@@ -29,6 +29,8 @@ export interface StoredSession {
     messages: StoredMessage[];
     /** Nova's task list, if any. */
     todos?: TodoItem[];
+    /** Sub-agents started in the chat. */
+    subagents?: SubagentState[];
 }
 
 const INDEX_FILE = 'index.json';

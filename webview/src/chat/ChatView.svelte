@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick } from "svelte";
+  import { setContext, tick } from "svelte";
   import type { ChatState } from "../../../src/panel/protocol";
   import type { ProfileView } from "../../../src/core/types";
   import Avatar from "./Avatar.svelte";
@@ -10,6 +10,7 @@
   import { openImage } from "./viewer.svelte";
   import QuestionCard from "./QuestionCard.svelte";
   import TodoStrip from "./TodoStrip.svelte";
+  import SubagentStrip from "./SubagentStrip.svelte";
   import Markdown from "./Markdown.svelte";
   import StepGroup from "./StepGroup.svelte";
   import ToolCard from "./ToolCard.svelte";
@@ -185,7 +186,16 @@
   }
 
   /** The conversation as it reads now: only the current answer version, steps folded. */
-  const scoped = $derived(visibleChatItems(chat.items));
+  const scoped = $derived(
+    // A sub-agent's own tool calls show inside the agent (see SubagentList), not in the chat.
+    visibleChatItems(chat.items).filter((item) => !(item.kind === "tool" && item.agentId)),
+  );
+  /** The agents of the latest answer; earlier ones stay on the spawn_agents card. */
+  const latestAgents = $derived.by(() => {
+    const lastUser = chat.items.findLast((item) => item.kind === "user");
+    return (chat.subagents ?? []).filter((agent) => agent.runId === lastUser?.id);
+  });
+  setContext("nova.subagents", () => chat.subagents ?? []);
   const entries = $derived(groupItems(scoped));
   const lastUserIndex = $derived(
     scoped.findLastIndex((item) => item.kind === "user"),
@@ -546,6 +556,9 @@
 
       {#if chat.changes?.length}
         <ChangesStrip changes={chat.changes} {post} />
+      {/if}
+      {#if latestAgents.length}
+        <SubagentStrip agents={latestAgents} items={chat.items} {post} />
       {/if}
       {#if chat.todos?.length}
         <TodoStrip todos={chat.todos} running={chat.running} {post} />

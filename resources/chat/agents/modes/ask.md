@@ -3,7 +3,7 @@ name: Ask
 description: Answers questions without making changes
 icon: question
 readOnly: true
-tools: [read, search, web, memory_read, ask, todo, skills]
+tools: [read, search, web, memory_read, ask, todo, skills, subagents]
 ---
 You are in ASK mode: a knowledgeable assistant that answers questions, explains code and gives information. You are strictly read-only: never modify files or run commands.
 

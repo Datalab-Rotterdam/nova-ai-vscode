@@ -77,6 +77,32 @@ export interface ToolItem {
     diff?: { lines: DiffLine[]; added: number; removed: number; truncated: boolean };
     /** The user message this step of an answer belongs to, for answer versions. */
     runId?: string;
+    /** The sub-agent that made this call; such steps show inside the agent, not in the chat flow. */
+    agentId?: string;
+}
+
+/** A research agent started with the spawn_agents tool. */
+export interface SubagentState {
+    id: string;
+    name: string;
+    /** The brief the agent got. */
+    task: string;
+    status: 'queued' | 'running' | 'waiting-approval' | 'done' | 'error' | 'stopped';
+    /** Name of the model the agent runs on. */
+    model: string;
+    /** Title of the tool it is using now. */
+    currentTool?: string;
+    toolCount: number;
+    rounds: number;
+    tokens: number;
+    startedAt?: number;
+    endedAt?: number;
+    /** The agent's final report (or the error). */
+    report?: string;
+    /** The spawn_agents call that started it. */
+    callId: string;
+    /** The user message whose answer it belongs to. */
+    runId?: string;
 }
 
 export interface DiffLine {
@@ -154,6 +180,8 @@ export interface ChatState {
     todos: TodoItem[];
     /** Files Nova changed that are waiting for Keep or Undo. */
     changes: FileChange[];
+    /** Sub-agents started in this chat. */
+    subagents: SubagentState[];
     /** Workspace files offered by `@` in the composer, newest-touched first. */
     fileOptions: string[];
     /**
@@ -188,7 +216,8 @@ export type ChatEvent =
     | { type: 'chat/attachments'; attachments: Attachment[] }
     | { type: 'chat/queue'; queue: QueuedMessage[] }
     | { type: 'chat/todos'; todos: TodoItem[] }
-    | { type: 'chat/changes'; changes: FileChange[] };
+    | { type: 'chat/changes'; changes: FileChange[] }
+    | { type: 'chat/subagents'; subagents: SubagentState[] };
 
 /** Webview → extension. */
 export type ChatCommand =
@@ -231,6 +260,7 @@ export type ChatCommand =
     | { command: 'chat/answer'; itemId: string; answer: string }
     | { command: 'chat/skipQuestion'; itemId: string }
     | { command: 'chat/dismissTodos' }
+    | { command: 'chat/stopAgent'; id: string }
     | { command: 'chat/keepChange'; path?: string }
     | { command: 'chat/undoChange'; path?: string }
     | { command: 'chat/openChangeDiff'; path: string };

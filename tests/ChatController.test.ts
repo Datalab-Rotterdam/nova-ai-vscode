@@ -91,6 +91,70 @@ describe('ChatController', () => {
     expect(store.save).toHaveBeenCalled();
   });
 
+  it('runs research agents in parallel and returns their reports to the main agent', async () => {
+    const { controller, events, model } = setup([
+      [new vscode.LanguageModelToolCallPart('s1', 'spawn_agents', { agents: [{ name: 'Auth', prompt: 'How does auth work?' }, { name: 'Config', prompt: 'Where is config read?' }] })],
+      [new vscode.LanguageModelTextPart('report one')],
+      [new vscode.LanguageModelTextPart('report two')],
+      [new vscode.LanguageModelTextPart('Summary.')]
+    ]);
+
+    await controller.handle({ command: 'chat/send', text: 'research it' });
+
+    const agents = controller.getState().subagents;
+    expect(agents.map((agent) => agent.status)).toEqual(['done', 'done']);
+    expect(agents.map((agent) => agent.report).sort()).toEqual(['report one', 'report two']);
+    expect(agents.every((agent) => agent.callId === 's1' && agent.runId)).toBe(true);
+    expect(events.some((event) => event.type === 'chat/subagents')).toBe(true);
+    const result = toolResultIn(model.sendRequest.mock.calls[3][0]);
+    const text = (result.content[0] as vscode.LanguageModelTextPart).value;
+    expect(text).toContain('## Auth');
+    expect(text).toContain('report two');
+    // Children never get the spawn tool, so they cannot start more agents; and never edit tools.
+    const childTools = (model.sendRequest.mock.calls[1][1].tools as Array<{ name: string }>).map((tool) => tool.name);
+    expect(childTools).not.toContain('spawn_agents');
+    expect(childTools).not.toContain('edit_file');
+    expect(childTools).toContain('run_command');
+  });
+
+  it('routes a sub-agent command through the normal approval and keeps its steps out of the main flow', async () => {
+    const { controller, events } = setup([
+      [new vscode.LanguageModelToolCallPart('s1', 'spawn_agents', { agents: [{ name: 'Runner', prompt: 'run echo' }] })],
+      [new vscode.LanguageModelToolCallPart('c1', 'run_command', { command: 'echo from-agent' })],
+      [new vscode.LanguageModelTextPart('agent report')],
+      [new vscode.LanguageModelTextPart('Done.')]
+    ]);
+
+    const sending = controller.handle({ command: 'chat/send', text: 'go' });
+    await until(() => toolItems(events).some((item) => item.status === 'awaiting-approval'));
+    const pending = toolItems(events).find((item) => item.status === 'awaiting-approval')!;
+    const agent = controller.getState().subagents[0]!;
+    expect(pending.agentId).toBe(agent.id);
+    expect(agent.status).toBe('waiting-approval');
+
+    await controller.handle({ command: 'chat/approval', itemId: pending.id, decision: 'approve' });
+    await sending;
+
+    expect(controller.getState().subagents[0]).toMatchObject({ status: 'done', toolCount: 1, report: 'agent report' });
+  });
+
+  it('stops all agents with the main stop button', async () => {
+    const { controller, events } = setup([
+      [new vscode.LanguageModelToolCallPart('s1', 'spawn_agents', { agents: [{ name: 'Runner', prompt: 'run echo' }] })],
+      [new vscode.LanguageModelToolCallPart('c1', 'run_command', { command: 'echo from-agent' })]
+    ], 'ask');
+
+    const sending = controller.handle({ command: 'chat/send', text: 'go' });
+    // In "ask" mode even starting the agents is asked; then the agent's own command is.
+    await until(() => toolItems(events).some((item) => item.status === 'awaiting-approval'));
+    await controller.handle({ command: 'chat/approval', itemId: toolItems(events).find((item) => item.status === 'awaiting-approval')!.id, decision: 'approve' });
+    await until(() => toolItems(events).some((item) => item.agentId && item.status === 'awaiting-approval'));
+    await controller.handle({ command: 'chat/stop' });
+    await sending;
+
+    expect(controller.getState().subagents[0]!.status).toBe('stopped');
+  });
+
   it('tells the model when the user rejects a tool call', async () => {
     const { controller, events, model } = setup([
       [new vscode.LanguageModelToolCallPart('c1', 'run_command', { command: 'echo nope' })],

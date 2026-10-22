@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import * as vscode from 'vscode';
 import { runAgentLoop, summarize } from '../agent/AgentLoop';
-import { BUILT_IN_TOOLS, outputParts, type NovaTool, type ProposedEdit, type ToolPreparation } from '../agent/tools';
+import { BUILT_IN_TOOLS, outputParts, ToolInputError, type NovaTool, type ProposedEdit, type ToolPreparation } from '../agent/tools';
 import { diffLines } from './diff';
 import { createInteractionTools, type InteractionHost } from '../agent/tools/interactionTools';
 import { createMemoryTools } from '../agent/tools/memoryTools';
+import { createSubagentTool, SPAWN_AGENTS_TOOL, type SubagentHost, type SubagentOutcome, type SubagentTask } from '../agent/tools/subagentTool';
 import { displayPath, getScratchRoot, readText, resolveWorkspacePath, workspaceFolders } from '../agent/tools/workspacePaths';
 import { agentAllowsTool, findAgent, listAgents, type AgentDefinition, type AgentPaths } from '../agents/AgentService';
 import type { MemoryService } from '../memory/MemoryService';
@@ -12,9 +13,9 @@ import { type PermissionService, suggestRule } from '../permissions/PermissionSe
 import { getSystemRole } from '../core/apiSupport';
 import { COMMAND_MANAGE_AGENTS, COMMAND_SHOW_HELP } from '../core/constants';
 import { buildTranscript, estimateMessagesTokens, summaryBlock, tokenCalibration } from '../agent/ContextManager';
-import { getCompactThreshold, getMaxToolRounds, isAttachButtonEnabled, isAutoCompactEnabled } from '../core/config';
+import { getCompactThreshold, getMaxToolRounds, getSubagentSettings, isAttachButtonEnabled, isAutoCompactEnabled } from '../core/config';
 import { Diagnostics } from '../core/diagnostics';
-import { createPanelPrompt } from '../core/prompts';
+import { createPanelPrompt, createSubagentPrompt } from '../core/prompts';
 import type { LanguageModelInfo } from '../core/types';
 import { toolResultText } from '../model/messages';
 import type { ModelProvider } from '../model/modelProvider';
@@ -34,6 +35,7 @@ import type {
     QuestionItem,
     QueuedMessage,
     SessionSummary,
+    SubagentState,
     ToolItem
 } from './protocol';
 import { enabledSkills, type Skill, type SkillPaths } from '../skills/SkillService';
@@ -86,6 +88,15 @@ interface TrackedChange {
 }
 /** Tools rendered by their own UI instead of a tool card. */
 const INTERACTION_TOOLS = new Set(['todo_write', 'ask_user']);
+/** What a research sub-agent may use: reading, searching, the web and commands; never edits. */
+const SUBAGENT_TOOLS = new Set(['read_file', 'list_dir', 'find_files', 'search_text', 'get_diagnostics', 'fetch_url', 'web_search', 'run_command']);
+
+/** A sub-agent's view of a tool call: whose it is, and how the call moves the agent's status. */
+interface ToolScope {
+    agentId: string;
+    onTitle(title: string): void;
+    onWaiting(waiting: boolean): void;
+}
 
 interface PendingApproval {
     resolve(decision: ApprovalDecision): void;
@@ -131,6 +142,12 @@ export class ChatController implements vscode.Disposable, ChatHistory {
     /** The ask_user question waiting for an answer. */
     private pendingQuestion?: { itemId: string; resolve(answer: string | undefined): void };
     private readonly approvals = new Map<string, PendingApproval>();
+    /** Running sub-agents, to stop one by itself. */
+    private readonly subagentRuns = new Map<string, vscode.CancellationTokenSource>();
+    /** Sub-agents started while answering the current message, against the per-answer limit. */
+    private subagentsStarted = 0;
+    /** The spawn_agents call being run, so the agents it starts can be tied to its card. */
+    private spawnCallId = '';
     private readonly edits = new Map<string, PendingEdit>();
     private readonly disposables: vscode.Disposable[] = [];
     private initialized?: Promise<void>;
@@ -292,6 +309,9 @@ export class ChatController implements vscode.Disposable, ChatHistory {
                 break;
             case 'chat/openChangeDiff':
                 await this.openChangeDiff(command.path);
+                break;
+            case 'chat/stopAgent':
+                this.stopSubagent(command.id);
                 break;
             case 'chat/dismissTodos':
                 this.session.todos = [];
@@ -467,6 +487,7 @@ export class ChatController implements vscode.Disposable, ChatHistory {
             queue: this.queueView(),
             todos: this.session.todos ?? [],
             changes: this.changesView(),
+            subagents: this.session.subagents ?? [],
             fileOptions: this.fileOptions(),
             attachButtonEnabled: isAttachButtonEnabled()
         };
@@ -778,6 +799,7 @@ export class ChatController implements vscode.Disposable, ChatHistory {
             }
         }
         this.currentRunUser = runUser;
+        this.subagentsStarted = 0;
 
         this.messages.push(vscode.LanguageModelChatMessage.User(await buildPrompt(prompt, this.fitImages(attachments))));
 
@@ -788,9 +810,13 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         // Only the skills that are on, and their list ranked by this message (see skillTools).
         const skills = this.services.skillPaths ? enabledSkills(this.services.skillPaths()) : [];
         const agent = this.currentAgent();
-        const conversation = [await createSystemMessage(this.services.memory, buildSkillsPrompt(skills, prompt), agent.prompt), ...this.messages];
+        const subagentSettings = getSubagentSettings();
+        const subagentsOn = subagentSettings.enabled && agentAllowsTool(agent, SPAWN_AGENTS_TOOL);
+        const conversation = [await createSystemMessage(this.services.memory, buildSkillsPrompt(skills, prompt), agent.prompt, subagentsOn
+            ? { maxPerCall: subagentSettings.maxPerCall, maxParallel: subagentSettings.maxParallel, maxTotal: subagentSettings.maxTotalPerRun }
+            : undefined), ...this.messages];
         this.conversation = conversation;
-        const tools = availableTools(this.services.memory, this.interactionHost(), skills)
+        const tools = availableTools(this.services.memory, this.interactionHost(), skills, subagentsOn ? this.subagentHost(agent) : undefined)
             .filter((tool) => agentAllowsTool(agent, tool.info.name, !tool.nova) && (!agent.readOnly || tool.readOnly));
         let assistantItem: Extract<ChatItem, { kind: 'assistant' }> | undefined;
         let thinkingItem: Extract<ChatItem, { kind: 'thinking' }> | undefined;
@@ -867,6 +893,7 @@ export class ChatController implements vscode.Disposable, ChatHistory {
                 this.sealAssistant(assistant);
             }
             this.activeAssistants = [];
+            this.settleSubagents();
             if (running.token.isCancellationRequested) {
                 this.addItem({ kind: 'notice', id: randomUUID(), tone: 'info', text: 'Stopped.' });
             }
@@ -1201,6 +1228,186 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         await vscode.commands.executeCommand('vscode.diff', baseline, change.uri, `${change.path} (changes by Nova)`, { preview: true });
     }
 
+    // --- Sub-agents (spawn_agents) ---
+
+    private postSubagents(): void {
+        this.post({ type: 'chat/subagents', subagents: [...(this.session.subagents ?? [])] });
+    }
+
+    /** The model a sub-agent uses: the one Nova chose (if allowed), else the setting, else the chat's own model. */
+    private resolveSubagentModel(requested?: string): LanguageModelInfo | undefined {
+        const settings = getSubagentSettings();
+        const find = (id: string | undefined) => this.models.find((model) => model.id === id);
+        return (requested && settings.allowedModels.includes(requested) ? find(requested) : undefined)
+            ?? (settings.model !== 'inherit' ? find(settings.model) : undefined)
+            ?? find(this.selectedModelId());
+    }
+
+    private subagentHost(agent: AgentDefinition): SubagentHost {
+        const settings = getSubagentSettings();
+        return {
+            limits: () => ({ maxPerCall: settings.maxPerCall, maxParallel: settings.maxParallel }),
+            models: () => this.models
+                .filter((model) => settings.allowedModels.includes(model.id))
+                .map((model) => ({ id: model.id, name: model.name })),
+            reserve: (count) => {
+                if (this.subagentsStarted + count > settings.maxTotalPerRun) {
+                    throw new ToolInputError(`Agent limit for this answer reached (${settings.maxTotalPerRun}; ${this.subagentsStarted} started). Continue with what you have, or do the rest yourself.`);
+                }
+                this.subagentsStarted += count;
+            },
+            register: (tasks) => {
+                const states = tasks.map((task): SubagentState => ({
+                    id: randomUUID(),
+                    name: task.name,
+                    task: task.prompt,
+                    status: 'queued',
+                    model: this.resolveSubagentModel(task.model)?.name ?? '',
+                    toolCount: 0,
+                    rounds: 0,
+                    tokens: 0,
+                    callId: this.spawnCallId,
+                    runId: this.currentRunUser?.id
+                }));
+                this.session.subagents = [...(this.session.subagents ?? []), ...states];
+                this.postSubagents();
+                return states.map((state) => state.id);
+            },
+            run: (id, task, token) => this.runSubagent(id, task, token, agent)
+        };
+    }
+
+    private async runSubagent(id: string, task: SubagentTask, parent: vscode.CancellationToken, agent: AgentDefinition): Promise<SubagentOutcome> {
+        const state = this.session.subagents?.find((candidate) => candidate.id === id);
+        if (!state) {
+            throw new Error('Unknown agent.');
+        }
+        if (state.status === 'stopped') {
+            return { status: 'stopped', report: 'Stopped by the user before it started.', rounds: 0, tokens: 0, model: state.model };
+        }
+        const info = this.resolveSubagentModel(task.model);
+        if (!info) {
+            throw new Error('No model is available for the agent.');
+        }
+        const model = createDirectModel(this.modelProvider, info);
+        const settings = getSubagentSettings();
+        // Same limits as the main agent's mode: a read-only mode gives read-only agents, and no mode lends an agent more than it has itself.
+        const tools = availableTools()
+            .filter((tool) => SUBAGENT_TOOLS.has(tool.info.name) && agentAllowsTool(agent, tool.info.name, false) && (!agent.readOnly || tool.readOnly));
+        const own = new vscode.CancellationTokenSource();
+        this.subagentRuns.set(id, own);
+        const link = parent.onCancellationRequested(() => own.cancel());
+        const touch = () => this.postSubagents();
+
+        state.status = 'running';
+        state.startedAt = Date.now();
+        state.model = info.name;
+        touch();
+
+        const system = createSubagentPrompt({
+            folders: workspaceFolders().map((folder) => folder.name),
+            platform: process.platform,
+            shell: vscode.env.shell || undefined,
+            canRun: tools.some((tool) => tool.info.name === 'run_command')
+        });
+        const systemRole = getSystemRole();
+        const messages = [
+            systemRole !== undefined ? new vscode.LanguageModelChatMessage(systemRole, system) : vscode.LanguageModelChatMessage.User(system),
+            vscode.LanguageModelChatMessage.User(task.prompt)
+        ];
+        const scope: ToolScope = {
+            agentId: id,
+            onTitle: (title) => {
+                state.currentTool = title;
+                touch();
+            },
+            onWaiting: (waiting) => {
+                state.status = waiting ? 'waiting-approval' : 'running';
+                touch();
+            }
+        };
+
+        try {
+            const result = await runAgentLoop({
+                model,
+                messages,
+                pinned: 1,
+                tools: tools.map((tool) => tool.info),
+                invokeTool: (call, token) => this.invokeTool(tools, call, token, scope),
+                maxRounds: settings.maxRounds,
+                autoCompact: isAutoCompactEnabled(),
+                compactThreshold: getCompactThreshold()
+            }, {
+                text: () => undefined,
+                toolCall: () => {
+                    state.toolCount++;
+                    touch();
+                },
+                toolResult: () => {
+                    state.currentTool = undefined;
+                    touch();
+                },
+                usage: (promptTokens) => {
+                    state.rounds++;
+                    state.tokens += promptTokens;
+                    touch();
+                }
+            }, own.token);
+            state.tokens = result.promptTokens + result.completionTokens || state.tokens;
+            const stopped = own.token.isCancellationRequested;
+            state.status = stopped ? 'stopped' : 'done';
+            state.report = (result.finalText.trim() || (stopped ? 'Stopped before a report was written.' : '(no report)'))
+                + (result.hitRoundLimit && !stopped ? `\n\n(The agent hit its limit of ${settings.maxRounds} rounds; this report may be incomplete.)` : '');
+        } catch (error) {
+            const stopped = own.token.isCancellationRequested;
+            state.status = stopped ? 'stopped' : 'error';
+            state.report = stopped ? 'Stopped.' : error instanceof Error ? error.message : String(error);
+        } finally {
+            link.dispose();
+            own.dispose();
+            this.subagentRuns.delete(id);
+            state.currentTool = undefined;
+            state.endedAt = Date.now();
+            touch();
+        }
+        return { status: state.status === 'done' ? 'done' : state.status === 'stopped' ? 'stopped' : 'error', report: state.report ?? '', rounds: state.rounds, tokens: state.tokens, model: state.model };
+    }
+
+    private stopSubagent(id: string): void {
+        const run = this.subagentRuns.get(id);
+        if (run) {
+            run.cancel();
+            // Its approval card (if it waits for one) is answered too.
+            for (const item of this.session.items) {
+                if (item.kind === 'tool' && item.agentId === id && item.status === 'awaiting-approval') {
+                    this.approvals.get(item.id)?.resolve('reject');
+                }
+            }
+            return;
+        }
+        const state = this.session.subagents?.find((candidate) => candidate.id === id);
+        if (state?.status === 'queued') {
+            state.status = 'stopped';
+            state.report = 'Stopped by the user before it started.';
+            this.postSubagents();
+        }
+    }
+
+    /** Agents still marked as waiting or running when the answer ends were cut off with it. */
+    private settleSubagents(): void {
+        let changed = false;
+        for (const state of this.session.subagents ?? []) {
+            if (state.status === 'queued' || state.status === 'running' || state.status === 'waiting-approval') {
+                state.status = 'stopped';
+                state.endedAt = Date.now();
+                changed = true;
+            }
+        }
+        if (changed) {
+            this.postSubagents();
+        }
+    }
+
     private interactionHost(): InteractionHost {
         return {
             setTodos: (todos) => {
@@ -1325,7 +1532,8 @@ export class ChatController implements vscode.Disposable, ChatHistory {
     private async invokeTool(
         tools: readonly AvailableTool[],
         call: vscode.LanguageModelToolCallPart,
-        token: vscode.CancellationToken
+        token: vscode.CancellationToken,
+        scope?: ToolScope
     ): Promise<vscode.LanguageModelToolResult> {
         const tool = tools.find((candidate) => candidate.info.name === call.name);
         const item: ToolItem = {
@@ -1336,8 +1544,12 @@ export class ChatController implements vscode.Disposable, ChatHistory {
             title: call.name,
             input: JSON.stringify(call.input, null, 2),
             status: 'running',
-            runId: this.currentRunUser?.id
+            runId: this.currentRunUser?.id,
+            ...(scope ? { agentId: scope.agentId } : {})
         };
+        if (call.name === SPAWN_AGENTS_TOOL) {
+            this.spawnCallId = call.callId;
+        }
         // The task list and questions have their own UI; no tool card for them.
         const silent = INTERACTION_TOOLS.has(call.name);
         const addItem = silent ? () => undefined : (value: ChatItem) => this.addItem(value);
@@ -1355,6 +1567,7 @@ export class ChatController implements vscode.Disposable, ChatHistory {
                 : { title: call.name };
             item.title = preparation.title;
             item.detail = preparation.detail;
+            scope?.onTitle(preparation.title);
             if (preparation.edit) {
                 item.editPath = preparation.edit.path;
                 this.registerDiff(item.id, preparation);
@@ -1375,7 +1588,9 @@ export class ChatController implements vscode.Disposable, ChatHistory {
                     item.allowRule = suggestRule(call.name, input, workspaceFolders()[0]?.uri.fsPath);
                 }
                 updateItem(item);
+                scope?.onWaiting(true);
                 const decision = await this.waitForApproval(item.id, token);
+                scope?.onWaiting(false);
                 if (decision === 'reject') {
                     item.status = 'rejected';
                     updateItem(item);
@@ -1697,7 +1912,8 @@ export class ChatController implements vscode.Disposable, ChatHistory {
             // Approvals and runs do not survive a reload.
             items: session.items.map((item) => item.kind === 'tool' && (item.status === 'awaiting-approval' || item.status === 'running')
                 ? { ...item, status: 'rejected' }
-                : item.kind === 'question' && item.status === 'pending' ? { ...item, status: 'skipped' } : item)
+                : item.kind === 'question' && item.status === 'pending' ? { ...item, status: 'skipped' } : item),
+            subagents: session.subagents?.map((agent) => agent.status === 'done' || agent.status === 'error' || agent.status === 'stopped' ? agent : { ...agent, status: 'stopped' })
         };
         this.messages = fromStoredMessages(session.messages);
         this.attachments = [];
@@ -1757,13 +1973,14 @@ interface AvailableTool {
 }
 
 /** Nova's built-in tools plus MCP tools registered in VS Code, which can run without a chat request. */
-function availableTools(memory?: MemoryService, interaction?: InteractionHost, skills: readonly Skill[] = []): AvailableTool[] {
+function availableTools(memory?: MemoryService, interaction?: InteractionHost, skills: readonly Skill[] = [], subagents?: SubagentHost): AvailableTool[] {
     const webSearchEnabled = vscode.workspace.getConfiguration('nova.webSearch').get<boolean>('enabled', true);
     const novaTools = [
         ...BUILT_IN_TOOLS.filter((tool) => tool.name !== 'web_search' || webSearchEnabled),
         ...(skills.length ? [createLoadSkillTool(skills) as NovaTool<never>] : []),
         ...(interaction ? createInteractionTools(interaction) : []),
-        ...(memory?.isEnabled() ? createMemoryTools(memory) : [])
+        ...(memory?.isEnabled() ? createMemoryTools(memory) : []),
+        ...(subagents ? [createSubagentTool(subagents)] : [])
     ];
     const builtIn = novaTools.map((tool) => ({
         info: { name: tool.name, description: tool.description, inputSchema: tool.inputSchema, tags: [] } as vscode.LanguageModelToolInformation,
@@ -1788,7 +2005,7 @@ function getApprovalMode(): ApprovalMode {
 }
 
 /** The call's subject for permission rules: the command, URL or path it acts on. */
-async function createSystemMessage(memory?: MemoryService, skills?: string, agent?: string): Promise<vscode.LanguageModelChatMessage> {
+async function createSystemMessage(memory?: MemoryService, skills?: string, agent?: string, subagents?: { maxPerCall: number; maxParallel: number; maxTotal: number }): Promise<vscode.LanguageModelChatMessage> {
     const prompt = createPanelPrompt({
         folders: workspaceFolders().map((folder) => folder.name),
         platform: process.platform,
@@ -1796,7 +2013,8 @@ async function createSystemMessage(memory?: MemoryService, skills?: string, agen
         scratch: Boolean(getScratchRoot()),
         memory: memory?.isEnabled() ? await memory.promptSection().catch(() => '') : undefined,
         skills,
-        agent: agent || undefined
+        agent: agent || undefined,
+        subagents
     });
     const systemRole = getSystemRole();
     return systemRole !== undefined

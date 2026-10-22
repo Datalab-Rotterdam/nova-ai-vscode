@@ -1,10 +1,18 @@
 <script lang="ts">
-    import type {ToolItem} from '../../../src/panel/protocol';
+    import {getContext} from 'svelte';
+    import type {SubagentState, ToolItem} from '../../../src/panel/protocol';
     import DiffView from './DiffView.svelte';
 
     let {item, post}: { item: ToolItem; post: (message: Record<string, unknown>) => void } = $props();
 
     let expanded = $state(false);
+
+    // The agents a spawn_agents call started, from the chat; they stay on the card after the strip is gone.
+    const allAgents = getContext<(() => SubagentState[]) | undefined>('nova.subagents');
+    const agents = $derived(item.name === 'spawn_agents' ? (allAgents?.() ?? []).filter((agent) => agent.callId === item.callId) : []);
+    const agentIcon = (status: SubagentState['status']) => ({
+        queued: 'clock', running: 'loading codicon-modifier-spin', 'waiting-approval': 'shield', done: 'check', error: 'error', stopped: 'debug-stop'
+    }[status]);
 
     const icon = $derived({
         'awaiting-approval': 'shield',
@@ -25,6 +33,16 @@
         {/if}
         <span class={`codicon codicon-chevron-${expanded ? 'up' : 'down'} chevron`} aria-hidden="true"></span>
     </button>
+
+    {#if agents.length}
+        <div class="chips">
+            {#each agents as agent (agent.id)}
+                <span class={`chip ${agent.status}`} title={agent.task}>
+                    <span class={`codicon codicon-${agentIcon(agent.status)}`} aria-hidden="true"></span>{agent.name}
+                </span>
+            {/each}
+        </div>
+    {/if}
 
     {#if item.status === 'awaiting-approval'}
         <div class="waiting">Waiting for your answer under the message box.</div>
@@ -136,6 +154,41 @@
 
   .awaiting-approval .status-icon {
     color: var(--nova-focus);
+  }
+
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 0 8px 6px;
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    max-width: 100%;
+    padding: 1px 8px;
+    border: 1px solid var(--nova-subtle-border);
+    border-radius: 10px;
+    font-size: 0.9em;
+
+    .codicon {
+      font-size: 12px;
+      color: var(--nova-muted);
+    }
+
+    &.done .codicon {
+      color: var(--nova-success);
+    }
+
+    &.error .codicon {
+      color: var(--nova-error);
+    }
+
+    &.running .codicon {
+      color: var(--nova-brand-primary);
+    }
   }
 
   .waiting {

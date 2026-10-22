@@ -59,7 +59,8 @@ export const TOOL_GROUPS: Readonly<Record<string, readonly string[]>> = {
     memory: ['memory_read', 'memory_write'],
     ask: ['ask_user'],
     todo: ['todo_write'],
-    skills: ['load_skill']
+    skills: ['load_skill'],
+    subagents: ['spawn_agents']
 };
 
 /** Always on the list of an agent that restricts its tools; they only show UI. */

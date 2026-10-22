@@ -18,6 +18,7 @@
     ),
   );
   const current = $derived(pending[0]);
+  const agent = $derived(chat.subagents?.find((candidate) => candidate.id === current?.agentId));
   const preview = $derived(current?.detail ?? current?.input ?? "");
 
   function decide(decision: ApprovalDecision) {
@@ -68,7 +69,7 @@
         <span class="count">1 of {pending.length}</span>
       {/if}
     </div>
-    <div class="ask">Nova wants to do this. Allow it?</div>
+    <div class="ask">{agent ? `Agent "${agent.name}" wants to do this. Allow it?` : "Nova wants to do this. Allow it?"}</div>
     {#if preview}
       <code class="preview">{preview}</code>
     {/if}
