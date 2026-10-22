@@ -19,7 +19,7 @@ export const COMPACTION_PROMPT =
     '<transcript>\n{transcript}\n</transcript>';
 
 /** System prompt of the Nova chat panel, which runs Nova's own tools. */
-export function createPanelPrompt(environment: { folders: string[]; platform: string; shell?: string; scratch?: boolean; memory?: string; skills?: string }): string {
+export function createPanelPrompt(environment: { folders: string[]; platform: string; shell?: string; scratch?: boolean; memory?: string; skills?: string; agent?: string }): string {
     return [
         NOVA_IDENTITY_PREAMBLE,
         '',
@@ -39,6 +39,7 @@ export function createPanelPrompt(environment: { folders: string[]; platform: st
         `Workspace folders: ${environment.folders.join(', ') || '(none)'}`,
         `Platform: ${environment.platform}${environment.shell ? `, shell: ${environment.shell}` : ''}`,
         ...(environment.memory ? ['', environment.memory] : []),
-        ...(environment.skills ? ['', environment.skills] : [])
+        ...(environment.skills ? ['', environment.skills] : []),
+        ...(environment.agent ? ['', environment.agent] : [])
     ].join('\n');
 }

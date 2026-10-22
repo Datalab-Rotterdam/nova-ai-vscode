@@ -6,10 +6,11 @@ import { diffLines } from './diff';
 import { createInteractionTools, type InteractionHost } from '../agent/tools/interactionTools';
 import { createMemoryTools } from '../agent/tools/memoryTools';
 import { displayPath, getScratchRoot, readText, resolveWorkspacePath, workspaceFolders } from '../agent/tools/workspacePaths';
+import { agentAllowsTool, findAgent, listAgents, type AgentDefinition, type AgentPaths } from '../agents/AgentService';
 import type { MemoryService } from '../memory/MemoryService';
 import { type PermissionService, suggestRule } from '../permissions/PermissionService';
 import { getSystemRole } from '../core/apiSupport';
-import { COMMAND_SHOW_HELP } from '../core/constants';
+import { COMMAND_MANAGE_AGENTS, COMMAND_SHOW_HELP } from '../core/constants';
 import { buildTranscript, estimateMessagesTokens, summaryBlock, tokenCalibration } from '../agent/ContextManager';
 import { getCompactThreshold, getMaxToolRounds, isAttachButtonEnabled, isAutoCompactEnabled } from '../core/config';
 import { Diagnostics } from '../core/diagnostics';
@@ -21,6 +22,7 @@ import { createDirectModel } from './directModel';
 import type { ProposedContentProvider } from './ProposedContentProvider';
 import type {
     ApprovalDecision,
+    AgentOption,
     ApprovalMode,
     Attachment,
     ChatCommand,
@@ -71,6 +73,9 @@ export interface ChatControllerOptions {
     onTitle?: (title: string) => void;
 }
 const MAX_CARD_DIFF_LINES = 400;
+/** Autopilot works until it is done; this only stops a model that loops forever. */
+const AUTOPILOT_MAX_ROUNDS = 1_000;
+const AUTOPILOT_ANSWER = 'Autopilot is on and no user is available to answer. Choose the most reasonable option yourself, mention the choice in your summary and continue.';
 
 interface TrackedChange {
     uri: vscode.Uri;
@@ -153,7 +158,7 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         private readonly proposedContent: ProposedContentProvider,
         private readonly diagnostics: Diagnostics,
         private post: (event: ChatEvent) => void,
-        private readonly services: { memory?: MemoryService; permissions?: PermissionService; skillPaths?: () => SkillPaths } = {},
+        private readonly services: { memory?: MemoryService; permissions?: PermissionService; skillPaths?: () => SkillPaths; agents?: () => AgentPaths } = {},
         private readonly options: ChatControllerOptions = {}
     ) {
         this.rememberLast = options.rememberLast ?? true;
@@ -309,6 +314,12 @@ export class ChatController implements vscode.Disposable, ChatHistory {
             case 'chat/queueSendNow':
                 await this.sendQueuedNow(command.id);
                 break;
+            case 'chat/setAgent':
+                this.setAgent(command.id);
+                break;
+            case 'chat/manageAgents':
+                await vscode.commands.executeCommand(COMMAND_MANAGE_AGENTS);
+                break;
             case 'chat/setApprovalMode':
                 await vscode.workspace.getConfiguration('nova').update('agent.approvalMode', command.mode, vscode.ConfigurationTarget.Global);
                 this.postState();
@@ -426,7 +437,8 @@ export class ChatController implements vscode.Disposable, ChatHistory {
 
     public async newChat(): Promise<void> {
         await this.stopAndWait();
-        this.session = newSession();
+        const agentId = this.session.agentId;
+        this.session = { ...newSession(), ...(agentId ? { agentId } : {}) };
         this.messages = [];
         this.attachments = [];
         this.usage = undefined;
@@ -450,6 +462,8 @@ export class ChatController implements vscode.Disposable, ChatHistory {
             sessions: this.store.list(),
             openElsewhere: this.openElsewhere(),
             approvalMode: getApprovalMode(),
+            agent: this.currentAgent().id,
+            agents: this.agentOptions(),
             queue: this.queueView(),
             todos: this.session.todos ?? [],
             changes: this.changesView(),
@@ -773,9 +787,11 @@ export class ChatController implements vscode.Disposable, ChatHistory {
 
         // Only the skills that are on, and their list ranked by this message (see skillTools).
         const skills = this.services.skillPaths ? enabledSkills(this.services.skillPaths()) : [];
-        const conversation = [await createSystemMessage(this.services.memory, buildSkillsPrompt(skills, prompt)), ...this.messages];
+        const agent = this.currentAgent();
+        const conversation = [await createSystemMessage(this.services.memory, buildSkillsPrompt(skills, prompt), agent.prompt), ...this.messages];
         this.conversation = conversation;
-        const tools = availableTools(this.services.memory, this.interactionHost(), skills);
+        const tools = availableTools(this.services.memory, this.interactionHost(), skills)
+            .filter((tool) => agentAllowsTool(agent, tool.info.name, !tool.nova) && (!agent.readOnly || tool.readOnly));
         let assistantItem: Extract<ChatItem, { kind: 'assistant' }> | undefined;
         let thinkingItem: Extract<ChatItem, { kind: 'thinking' }> | undefined;
         this.activeThinking = undefined;
@@ -788,7 +804,7 @@ export class ChatController implements vscode.Disposable, ChatHistory {
                 pinned: 1,
                 tools: tools.map((tool) => tool.info),
                 invokeTool: (call, token) => this.invokeTool(tools, call, token),
-                maxRounds: getMaxToolRounds(),
+                maxRounds: agent.autopilot ? AUTOPILOT_MAX_ROUNDS : getMaxToolRounds(),
                 autoCompact: isAutoCompactEnabled(),
                 compactThreshold: getCompactThreshold(),
                 takeSteering: () => this.takeSteering()
@@ -831,7 +847,7 @@ export class ChatController implements vscode.Disposable, ChatHistory {
                 }
             }, running.token);
 
-            if (result.hitRoundLimit) {
+            if (result.hitRoundLimit && !agent.autopilot) {
                 this.addItem({
                     kind: 'notice',
                     id: randomUUID(),
@@ -1191,7 +1207,7 @@ export class ChatController implements vscode.Disposable, ChatHistory {
                 this.session.todos = todos;
                 this.post({ type: 'chat/todos', todos });
             },
-            ask: (question, token) => new Promise((resolve) => {
+            ask: (question, token) => this.currentAgent().autopilot ? Promise.resolve(AUTOPILOT_ANSWER) : new Promise((resolve) => {
                 const item: QuestionItem = { kind: 'question', id: randomUUID(), status: 'pending', ...question };
                 this.addItem(item);
                 const subscription = token.onCancellationRequested(() => this.answerQuestion(item.id, undefined));
@@ -1458,6 +1474,40 @@ export class ChatController implements vscode.Disposable, ChatHistory {
             await this.openFile(link.path, link.line);
         } else {
             void vscode.window.showWarningMessage(link.reason);
+        }
+    }
+
+    private agentCache?: { at: number; agents: AgentDefinition[] };
+
+    /** Agents on disk, re-read when older than a couple of seconds so edits show up. */
+    private agents(): AgentDefinition[] {
+        const paths = this.services.agents?.();
+        if (!paths) {
+            return listAgents({ builtinDir: '', novaHome: '' });
+        }
+        if (!this.agentCache || Date.now() - this.agentCache.at > 2_000) {
+            this.agentCache = { at: Date.now(), agents: listAgents(paths) };
+        }
+        return this.agentCache.agents;
+    }
+
+    private currentAgent(): AgentDefinition {
+        return findAgent(this.agents(), this.session.agentId);
+    }
+
+    private agentOptions(): AgentOption[] {
+        return this.agents()
+            .filter((agent) => agent.selectable)
+            .map(({ id, name, description, icon, source }) => ({ id, name, description, icon, source }));
+    }
+
+    private setAgent(id: string): void {
+        const agent = findAgent(this.agents(), id);
+        this.session.agentId = agent.id === 'interactive' ? undefined : agent.id;
+        if (this.session.items.length) {
+            void this.persist();
+        } else {
+            this.postState();
         }
     }
 
@@ -1738,14 +1788,15 @@ function getApprovalMode(): ApprovalMode {
 }
 
 /** The call's subject for permission rules: the command, URL or path it acts on. */
-async function createSystemMessage(memory?: MemoryService, skills?: string): Promise<vscode.LanguageModelChatMessage> {
+async function createSystemMessage(memory?: MemoryService, skills?: string, agent?: string): Promise<vscode.LanguageModelChatMessage> {
     const prompt = createPanelPrompt({
         folders: workspaceFolders().map((folder) => folder.name),
         platform: process.platform,
         shell: vscode.env.shell || undefined,
         scratch: Boolean(getScratchRoot()),
         memory: memory?.isEnabled() ? await memory.promptSection().catch(() => '') : undefined,
-        skills
+        skills,
+        agent: agent || undefined
     });
     const systemRole = getSystemRole();
     return systemRole !== undefined

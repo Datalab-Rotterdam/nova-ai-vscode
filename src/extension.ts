@@ -10,6 +10,7 @@ import {
     COMMAND_CHAT_DELETE,
     COMMAND_CHAT_OPEN_IN_EDITOR,
     COMMAND_CHAT_RENAME,
+    COMMAND_MANAGE_AGENTS,
     COMMAND_MANAGE_SKILLS,
     COMMAND_SHOW_HELP,
     COMMAND_DEV_TEST_LINKS,
@@ -36,8 +37,9 @@ import {SessionService} from './services/SessionService';
 import {toUserMessage} from './core/errors';
 import type {LanguageModelInfo} from './core/types';
 import {StatusBar} from './status/StatusBar';
-import {CHAT_PANEL_VIEW_TYPE, SKILLS_VIEW_TYPE, ViewProvider, type SignInResult} from './views';
+import {AGENTS_VIEW_TYPE, CHAT_PANEL_VIEW_TYPE, SKILLS_VIEW_TYPE, ViewProvider, type SignInResult} from './views';
 import type {SkillPaths} from './skills/SkillService';
+import type {AgentPaths} from './agents/AgentService';
 import * as os from 'node:os';
 import {registerAgentParticipant} from './chat/AgentParticipant';
 import {registerVsCodeTools} from './agent/tools/vscodeTools';
@@ -81,6 +83,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         workspaceRoots: (vscode.workspace.workspaceFolders ?? []).filter((folder) => folder.uri.scheme === 'file').map((folder) => folder.uri.fsPath)
     });
     sidebarProvider.useSkills(skillPaths);
+    // Agent files: built in with the extension, then ~/.nova-ai/agents and the project's agents.
+    const agentPaths = (): AgentPaths => ({
+        builtinDir: path.join(context.extensionPath, 'resources', 'chat', 'agents', 'modes'),
+        novaHome: nova.home.root,
+        projectDir: nova.project.dir
+    });
+    sidebarProvider.useAgents(agentPaths);
     const chatHub = new ChatHub();
     // One controller per chat surface (the sidebar, each editor tab), all sharing the store.
     sidebarProvider.useChats((post, options) => {
@@ -91,7 +100,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             proposedContent,
             diagnostics,
             post,
-            { memory, permissions, skillPaths },
+            {
+                memory,
+                permissions,
+                skillPaths,
+                agents: agentPaths
+            },
             { ...options, hub: chatHub }
         );
         chatHub.add(controller);
@@ -135,6 +149,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         }),
         vscode.window.registerWebviewPanelSerializer(CHAT_PANEL_VIEW_TYPE, sidebarProvider),
         vscode.window.registerWebviewPanelSerializer(SKILLS_VIEW_TYPE, sidebarProvider.skillsSerializer),
+        vscode.window.registerWebviewPanelSerializer(AGENTS_VIEW_TYPE, sidebarProvider.agentsSerializer),
+        vscode.commands.registerCommand(COMMAND_MANAGE_AGENTS, async () => {
+            await sidebarProvider.openAgents();
+        }),
         vscode.commands.registerCommand(COMMAND_MANAGE_SKILLS, async () => {
             await sidebarProvider.openSkills();
         }),

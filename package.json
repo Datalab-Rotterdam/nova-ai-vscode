@@ -47,6 +47,7 @@
     "onCommand:nova.openChatInEditor",
     "onWebviewPanel:nova.chatPanel",
     "onWebviewPanel:nova.skills",
+    "onWebviewPanel:nova.agents",
     "onCommand:nova.showHistory",
     "onCommand:nova.showAccount",
     "onCommand:nova.showHelp"
@@ -331,6 +332,12 @@
         "icon": "$(book)"
       },
       {
+        "command": "nova.manageAgents",
+        "title": "Nova AI: Manage Agents",
+        "category": "Nova AI",
+        "icon": "$(robot)"
+      },
+      {
         "command": "nova.showHelp",
         "title": "Nova AI: Help",
         "category": "Nova AI",
@@ -404,6 +411,11 @@
           "command": "nova.manageSkills",
           "when": "view == nova.sidebar",
           "group": "2_memory@4"
+        },
+        {
+          "command": "nova.manageAgents",
+          "when": "view == nova.sidebar",
+          "group": "2_memory@5"
         },
         {
           "command": "nova.showHelp",
@@ -491,9 +503,22 @@
     },
     "configuration": [
       {
-        "id": "nova.chat",
-        "title": "Nova AI: Chat",
+        "id": "nova",
+        "title": "General",
         "order": 1,
+        "properties": {
+          "nova.home": {
+            "type": "string",
+            "default": "",
+            "scope": "machine",
+            "markdownDescription": "Folder for Nova's memory, chats and scratch files. Empty uses `~/.nova-ai` (or the `NOVA_AI_HOME` environment variable)."
+          }
+        }
+      },
+      {
+        "id": "nova.chat",
+        "title": "Chat",
+        "order": 2,
         "properties": {
           "nova.chat.attachButton": {
             "type": "boolean",
@@ -503,9 +528,9 @@
         }
       },
       {
-        "id": "nova.agent",
-        "title": "Nova AI: Agent",
-        "order": 2,
+        "id": "nova.chat.agent",
+        "title": "Chat › Agent",
+        "order": 3,
         "properties": {
           "nova.agent.approvalMode": {
             "type": "string",
@@ -516,11 +541,11 @@
             ],
             "default": "autoReadOnly",
             "enumDescriptions": [
-              "Ask before every tool call.",
-              "Run read-only tools (read, search, problems) automatically; ask before edits and commands.",
-              "Run all tools without asking."
+              "Manual: ask before every tool call.",
+              "Assisted (experimental): run read-only tools and calls matching an allow rule automatically; ask before edits and commands.",
+              "Allow all: run all tools without asking."
             ],
-            "markdownDescription": "When the Nova chat asks for approval before running a tool."
+            "markdownDescription": "When the Nova chat asks for approval before running a tool. Switch it from the permissions menu under the message box."
           },
           "nova.agent.maxToolRounds": {
             "type": "integer",
@@ -535,18 +560,13 @@
             "minimum": 5,
             "maximum": 3600,
             "markdownDescription": "Time limit for commands the Nova chat runs."
-          },
-          "nova.agent.includeMcpTools": {
-            "type": "boolean",
-            "default": true,
-            "markdownDescription": "Offer MCP server tools registered in VS Code to the Nova chat."
           }
         }
       },
       {
-        "id": "nova.context",
-        "title": "Nova AI: Context",
-        "order": 3,
+        "id": "nova.chat.context",
+        "title": "Chat › Context",
+        "order": 4,
         "properties": {
           "nova.context.autoCompact": {
             "type": "boolean",
@@ -569,9 +589,33 @@
         }
       },
       {
-        "id": "nova.websearch",
-        "title": "Nova AI: Web Search",
-        "order": 4,
+        "id": "nova.chat.memory",
+        "title": "Chat › Memory",
+        "order": 5,
+        "properties": {
+          "nova.memory.enabled": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Include Nova's memory (`~/.nova-ai/MEMORY.md`, the project's `MEMORY.md`, and the repository's `NOVA.md` / `AGENTS.md`) in Nova chats, and let Nova save new memories (with your approval)."
+          }
+        }
+      },
+      {
+        "id": "nova.tools",
+        "title": "Tools & Integrations",
+        "order": 6,
+        "properties": {
+          "nova.agent.includeMcpTools": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Offer MCP server tools registered in VS Code to the Nova chat."
+          }
+        }
+      },
+      {
+        "id": "nova.tools.webSearch",
+        "title": "Tools & Integrations › Web Search",
+        "order": 7,
         "properties": {
           "nova.webSearch.enabled": {
             "type": "boolean",
@@ -596,27 +640,9 @@
         }
       },
       {
-        "id": "nova.memory",
-        "title": "Nova AI: Memory & Storage",
-        "order": 5,
-        "properties": {
-          "nova.memory.enabled": {
-            "type": "boolean",
-            "default": true,
-            "markdownDescription": "Include Nova's memory (`~/.nova-ai/MEMORY.md`, the project's `MEMORY.md`, and the repository's `NOVA.md` / `AGENTS.md`) in Nova chats, and let Nova save new memories (with your approval)."
-          },
-          "nova.home": {
-            "type": "string",
-            "default": "",
-            "scope": "machine",
-            "markdownDescription": "Folder for Nova's memory, chats and scratch files. Empty uses `~/.nova-ai` (or the `NOVA_AI_HOME` environment variable)."
-          }
-        }
-      },
-      {
-        "id": "nova.browser",
-        "title": "Nova AI: Browser",
-        "order": 6,
+        "id": "nova.tools.browser",
+        "title": "Tools & Integrations › Browser",
+        "order": 8,
         "properties": {
           "nova.browser.autoSetup": {
             "type": "boolean",
@@ -627,8 +653,8 @@
       },
       {
         "id": "nova.developer",
-        "title": "Nova AI: Developer",
-        "order": 7,
+        "title": "Developer Settings",
+        "order": 9,
         "properties": {
           "nova.chat.rewriteAssistantIdentity": {
             "type": "boolean",

@@ -16,6 +16,7 @@ there), otherwise `~/.nova-ai`. Directories are created `0700`, files `0600`.
   MEMORY.md                     global memory index (always in the prompt)
   memory/<name>.md              global memory notes
   skills/<name>/SKILL.md        global skills (see "Skills")
+  agents/<name>.agent.md        global agents (see "Agents")
   settings.json                 user settings: permission rules, default mode
   credentials.json              CLI only: API key + default model
   model-capabilities.json       CLI only: learned native tool-call support
@@ -280,3 +281,26 @@ nova-ai-cli carry. Its folder holds `.nova-bundled.json`:
   the version or the content hash no longer matches (an update, or a local edit).
   The `disabled` setting is kept, so a switched-off skill stays off after updates.
 - An installer never touches a skill folder without its own marker.
+
+## Agents
+
+An agent is a markdown file whose body is added to Nova's system prompt. The chat's
+mode menu (and Shift+Tab) switches between the built-in agents (Interactive, Plan,
+Autopilot, Ask) and your own. Put your own in `~/.nova-ai/agents/<name>.agent.md`
+(all projects) or `~/.nova-ai/projects/<key>/agents/<name>.agent.md` (one project);
+a project agent replaces a global one with the same file name. The built-in agents are bundled with the extension and cannot be replaced, edited or deleted (a file with a built-in name is ignored). **Nova AI: Manage Agents** lists, edits and deletes them.
+
+```markdown
+---
+name: Reviewer
+description: Reviews changes without editing
+icon: eye            # a codicon name
+tools: [read, search, web, ask]   # optional; omit for all tools
+readOnly: true       # optional; only tools that change nothing
+autopilot: false     # optional; no tool round limit, ask_user answers itself
+---
+Instructions for the agent.
+```
+
+Tool groups: `read`, `search`, `edit`, `run`, `web`, `memory`, `ask`, `todo`, `skills`,
+and `mcp` for MCP tools; or list tool names such as `read_file`.

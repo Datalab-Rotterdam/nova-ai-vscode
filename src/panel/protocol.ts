@@ -146,6 +146,9 @@ export interface ChatState {
     /** Chats open in another place (the sidebar or another editor tab). */
     openElsewhere: string[];
     approvalMode: ApprovalMode;
+    /** The agent (mode) of this chat and the ones to choose from. */
+    agent: string;
+    agents: AgentOption[];
     queue: QueuedMessage[];
     /** Nova's task list for the current work; empty when there is none or it was closed. */
     todos: TodoItem[];
@@ -161,6 +164,15 @@ export interface ChatState {
 }
 
 export type ApprovalMode = 'ask' | 'autoReadOnly' | 'autoAll';
+
+export interface AgentOption {
+    id: string;
+    name: string;
+    description: string;
+    /** Codicon name. */
+    icon: string;
+    source: 'builtin' | 'global' | 'project';
+}
 
 export type ApprovalDecision = 'approve' | 'approveSession' | 'approveAlways' | 'reject';
 
@@ -203,6 +215,9 @@ export type ChatCommand =
     | { command: 'chat/openFile'; path: string }
     | { command: 'chat/openLink'; href: string; text: string }
     | { command: 'chat/setApprovalMode'; mode: ApprovalMode }
+    | { command: 'chat/setAgent'; id: string }
+    /** Opens the Agents page. */
+    | { command: 'chat/manageAgents' }
     | { command: 'chat/queueMode'; id: string; mode: QueuedMessage['mode'] }
     | { command: 'chat/queueRemove'; id: string }
     | { command: 'chat/queueSendNow'; id: string }

@@ -1,6 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { commands, Disposable, ThemeIcon, Uri, ViewColumn, Webview, WebviewPanel, WebviewPanelSerializer, WebviewView, WebviewViewProvider, window } from 'vscode';
+import type { AgentsCommand } from '../agents/protocol';
+import type { AgentPaths } from '../agents/AgentService';
+import { AgentsController } from '../agents/AgentsController';
 import type { SkillsCommand } from '../skills/protocol';
 import type { SkillPaths } from '../skills/SkillService';
 import { SkillsController } from '../skills/SkillsController';
@@ -31,10 +34,11 @@ const WEBVIEW_ENTRY = 'webview/index.html' as const;
 const HEAD_MARKER = '<!--nova:svelte-head-->';
 const BODY_MARKER = '<!--nova:svelte-body-->';
 
-export type Surface = 'sidebar' | 'editor' | 'skills';
+export type Surface = 'sidebar' | 'editor' | 'skills' | 'agents';
 
 export const CHAT_PANEL_VIEW_TYPE = 'nova.chatPanel';
 export const SKILLS_VIEW_TYPE = 'nova.skills';
+export const AGENTS_VIEW_TYPE = 'nova.agents';
 
 export type ChatFactory = (post: (event: ChatEvent) => void, options: ChatControllerOptions) => ChatController;
 
@@ -53,6 +57,8 @@ export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer
   private readonly profiles = new ProfileService();
   private skillPaths?: () => SkillPaths;
   private skills?: { panel: WebviewPanel; controller: SkillsController };
+  private agentPaths?: () => AgentPaths;
+  private agents?: { panel: WebviewPanel; controller: AgentsController };
 
   public constructor(
     private readonly extensionUri: Uri,
@@ -73,6 +79,50 @@ export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer
   /** Where skills live, for the Skills page. */
   public useSkills(paths: () => SkillPaths): void {
     this.skillPaths = paths;
+  }
+
+  /** Where agents live, for the Agents page. */
+  public useAgents(paths: () => AgentPaths): void {
+    this.agentPaths = paths;
+  }
+
+  /** The Agents page (one editor tab). */
+  public async openAgents(): Promise<void> {
+    if (this.agents) {
+      this.agents.panel.reveal();
+      return;
+    }
+    await this.adoptAgentsPanel(window.createWebviewPanel(AGENTS_VIEW_TYPE, 'Nova Agents', ViewColumn.Active, {
+      enableScripts: true,
+      localResourceRoots: this.resourceRoots()
+    }));
+  }
+
+  /** Restores the Agents tab after a window reload. */
+  public readonly agentsSerializer: WebviewPanelSerializer = {
+    deserializeWebviewPanel: (panel) => this.adoptAgentsPanel(panel)
+  };
+
+  private async adoptAgentsPanel(panel: WebviewPanel): Promise<void> {
+    if (!this.agentPaths) {
+      panel.dispose();
+      return;
+    }
+    panel.iconPath = new ThemeIcon('robot');
+    const controller = new AgentsController(this.agentPaths, (message) => postSafely(panel.webview, message));
+    this.agents = { panel, controller };
+    panel.onDidChangeViewState(() => {
+      if (panel.visible) {
+        controller.refresh();
+      }
+    });
+    panel.onDidDispose(() => {
+      controller.dispose();
+      if (this.agents?.panel === panel) {
+        this.agents = undefined;
+      }
+    });
+    await this.attach(panel.webview, 'agents');
   }
 
   /** The Skills page (one editor tab): skills of every project, or of this one. */
@@ -138,6 +188,7 @@ export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer
     this.panels.clear();
     this.sidebarChat?.dispose();
     this.skills?.controller.dispose();
+    this.agents?.controller.dispose();
   }
 
   public async resolveWebviewView(view: WebviewView): Promise<void> {
@@ -283,7 +334,8 @@ export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer
     return [
       ...(this.view ? [{ webview: this.view.webview, surface: 'sidebar' as const }] : []),
       ...[...this.panels.keys()].map((panel) => ({ webview: panel.webview, surface: 'editor' as const })),
-      ...(this.skills ? [{ webview: this.skills.panel.webview, surface: 'skills' as const }] : [])
+      ...(this.skills ? [{ webview: this.skills.panel.webview, surface: 'skills' as const }] : []),
+      ...(this.agents ? [{ webview: this.agents.panel.webview, surface: 'agents' as const }] : [])
     ];
   }
 
@@ -324,6 +376,18 @@ export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer
           this.diagnostics.error('Nova skills action failed.', error);
           void window.showErrorMessage(toUserMessage(error));
           this.skills?.controller.refresh();
+        }
+      }
+      return;
+    }
+    if (message.command.startsWith('agents/')) {
+      if (this.agents?.panel.webview === source) {
+        try {
+          await this.agents.controller.handle(message as unknown as AgentsCommand);
+        } catch (error) {
+          this.diagnostics.error('Nova agents action failed.', error);
+          void window.showErrorMessage(toUserMessage(error));
+          this.agents?.controller.refresh();
         }
       }
       return;

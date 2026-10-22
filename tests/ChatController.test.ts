@@ -1,3 +1,4 @@
+import * as path from 'node:path';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -683,6 +684,41 @@ describe('ChatController', () => {
       // A repeat within the stale window reuses the scan.
       expect(controller.getState().fileOptions).toEqual(['brand-new.ts', 'recent.ts', 'old.ts']);
       expect(scan).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('agents', () => {
+    const agents = () => ({
+      agents: () => ({ builtinDir: path.join(process.cwd(), 'resources', 'chat', 'agents', 'modes'), novaHome: '/nonexistent' })
+    });
+
+    it('offers the agents in the state and keeps the chosen one', async () => {
+      const { controller } = setup([], 'autoReadOnly', agents());
+      await controller.handle({ command: 'chat/setAgent', id: 'plan' });
+      const state = controller.getState();
+      expect(state.agent).toBe('plan');
+      expect(state.agents.map((agent) => agent.id)).toEqual(['interactive', 'plan', 'autopilot', 'ask']);
+    });
+
+    it('plan mode does not offer edit or command tools', async () => {
+      const { controller, model } = setup([[new vscode.LanguageModelTextPart('A plan.')]], 'autoAll', agents());
+      await controller.handle({ command: 'chat/setAgent', id: 'plan' });
+      await controller.handle({ command: 'chat/send', text: 'plan it' });
+      const names = (model.sendRequest as unknown as { mock: { calls: Array<[unknown, { tools?: Array<{ name: string }> }]> } }).mock.calls[0][1].tools?.map((tool) => tool.name) ?? [];
+      expect(names).toContain('read_file');
+      expect(names).not.toContain('edit_file');
+      expect(names).not.toContain('run_command');
+    });
+
+    it('autopilot answers ask_user itself', async () => {
+      const { controller, model } = setup([
+        [new vscode.LanguageModelToolCallPart('q1', 'ask_user', { question: 'Which one?' })],
+        [new vscode.LanguageModelTextPart('Chose.')]
+      ], 'autoReadOnly', agents());
+      await controller.handle({ command: 'chat/setAgent', id: 'autopilot' });
+      await controller.handle({ command: 'chat/send', text: 'go' });
+      const result = toolResultIn((model.sendRequest as unknown as { mock: { calls: Array<[vscode.LanguageModelChatMessage[]]> } }).mock.calls[1][0]);
+      expect(JSON.stringify(result.content)).toContain('Autopilot is on');
     });
   });
 });

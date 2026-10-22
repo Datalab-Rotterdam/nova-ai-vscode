@@ -21,6 +21,8 @@ export interface StoredSession {
     createdAt: number;
     updatedAt: number;
     modelId?: string;
+    /** The agent (mode) of the chat, e.g. "plan"; interactive when unset. */
+    agentId?: string;
     /** What the panel shows. */
     items: ChatItem[];
     /** What the model sees (after compaction), without the system prompt. */

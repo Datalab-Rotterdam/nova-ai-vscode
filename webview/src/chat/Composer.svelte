@@ -1,5 +1,8 @@
 <script lang="ts">
-  import type { ApprovalMode, ChatState } from "../../../src/panel/protocol";
+  import type { ChatState } from "../../../src/panel/protocol";
+  import { nextAgentId } from "../../../src/panel/agentModes";
+  import ModeMenu from "./ModeMenu.svelte";
+  import PermissionPrompt from "./PermissionPrompt.svelte";
   import {
     parseSlashCommand,
     suggestSlashCommands,
@@ -112,12 +115,6 @@
     return mentionStart >= 0;
   }
 
-  const approvalLabels: Record<ApprovalMode, string> = {
-    ask: "Ask every time",
-    autoReadOnly: "Auto-run read-only",
-    autoAll: "Auto-run all",
-  };
-
   function send() {
     if (!canSend) {
       return;
@@ -207,6 +204,20 @@
         menuDismissed = true;
         return;
       }
+    }
+    if (
+      event.key === "Tab" &&
+      event.shiftKey &&
+      !event.isComposing &&
+      chat.agents.length > 1
+    ) {
+      // Shift+Tab switches the agent mode (Interactive, Plan, Autopilot, your own).
+      event.preventDefault();
+      const id = nextAgentId(chat.agents, chat.agent);
+      if (id) {
+        post({ command: "chat/setAgent", id });
+      }
+      return;
     }
     if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
       event.preventDefault();
@@ -571,22 +582,6 @@
         {/each}
       </select>
 
-      <select
-        class="select approvals"
-        aria-label="Tool approvals"
-        title="When to ask before running tools"
-        value={chat.approvalMode}
-        onchange={(event) =>
-          post({
-            command: "chat/setApprovalMode",
-            mode: event.currentTarget.value,
-          })}
-      >
-        {#each Object.entries(approvalLabels) as [mode, label] (mode)}
-          <option value={mode}>{label}</option>
-        {/each}
-      </select>
-
       <span class="spacer"></span>
 
       {#if chat.usage}
@@ -677,6 +672,8 @@
       {/if}
     </div>
   </form>
+  <PermissionPrompt {chat} {post} />
+  <ModeMenu {chat} {post} />
 </div>
 
 <style lang="scss">

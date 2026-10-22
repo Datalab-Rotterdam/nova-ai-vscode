@@ -1,5 +1,5 @@
 <script lang="ts">
-    import type {ApprovalDecision, ToolItem} from '../../../src/panel/protocol';
+    import type {ToolItem} from '../../../src/panel/protocol';
     import DiffView from './DiffView.svelte';
 
     let {item, post}: { item: ToolItem; post: (message: Record<string, unknown>) => void } = $props();
@@ -14,9 +14,6 @@
         rejected: 'circle-slash'
     }[item.status]);
 
-    function decide(decision: ApprovalDecision) {
-        post({command: 'chat/approval', itemId: item.id, decision});
-    }
 </script>
 
 <div class={`tool ${item.status}`}>
@@ -30,32 +27,7 @@
     </button>
 
     {#if item.status === 'awaiting-approval'}
-        <div class="approval">
-            {#if item.detail}
-                <code class="command">{item.detail}</code>
-            {/if}
-            <div class="buttons">
-                <button class="nova-button" onclick={() => decide('approve')}>Allow</button>
-                {#if item.allowRule}
-                    <button class="nova-button secondary" onclick={() => decide('approveAlways')} title={`Always allow ${item.allowRule} in this workspace (saved to .nova-ai/settings.local.json)`}>Always allow</button>
-                {:else}
-                    <button class="nova-button secondary" onclick={() => decide('approveSession')} title="Allow all tool calls in this chat">Allow all</button>
-                {/if}
-                <button class="nova-button secondary" onclick={() => decide('reject')}>Reject</button>
-            </div>
-            <div class="approval-links">
-                {#if item.editPath}
-                    <button class="link" onclick={() => post({command: 'chat/openDiff', itemId: item.id})}>
-                        <span class="codicon codicon-diff" aria-hidden="true"></span>Review changes
-                    </button>
-                {/if}
-                {#if item.allowRule}
-                    <button class="link" onclick={() => decide('approveSession')} title="Allow all tool calls in this chat">
-                        <span class="codicon codicon-check-all" aria-hidden="true"></span>Allow all in this chat
-                    </button>
-                {/if}
-            </div>
-        </div>
+        <div class="waiting">Waiting for your answer under the message box.</div>
     {:else if item.editPath && item.status === 'done'}
         {#if item.diff?.lines.length}
             <div class="inline-diff">
@@ -166,38 +138,10 @@
     color: var(--nova-focus);
   }
 
-  .approval {
-    display: grid;
-    gap: 8px;
-    padding: 2px 8px 8px;
-  }
-
-  .command {
-    display: block;
-    padding: 4px 6px;
-    border-radius: var(--nova-radius);
-    background: var(--nova-input-bg);
-    font-family: var(--nova-mono);
-    font-size: 0.92em;
-    overflow-wrap: anywhere;
-    white-space: pre-wrap;
-  }
-
-  .buttons {
-    display: flex;
-    gap: 6px;
-
-    .nova-button {
-      width: auto;
-      flex: 1 1 auto;
-      padding: 2px 8px;
-    }
-  }
-
-  .approval-links {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 12px;
+  .waiting {
+    padding: 0 8px 8px;
+    color: var(--nova-muted);
+    font-size: 0.9em;
   }
 
   .links {
