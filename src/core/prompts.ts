@@ -19,7 +19,7 @@ export const COMPACTION_PROMPT =
     '<transcript>\n{transcript}\n</transcript>';
 
 /** System prompt of the Nova chat panel, which runs Nova's own tools. */
-export function createPanelPrompt(environment: { folders: string[]; platform: string; shell?: string; scratch?: boolean; memory?: string; skills?: string; agent?: string; subagents?: { maxPerCall: number; maxParallel: number; maxTotal: number } }): string {
+export function createPanelPrompt(environment: { folders: string[]; platform: string; shell?: string; scratch?: string; memory?: string; skills?: string; agent?: string; subagents?: { maxPerCall: number; maxParallel: number; maxTotal: number } }): string {
     return [
         NOVA_IDENTITY_PREAMBLE,
         '',
@@ -36,7 +36,7 @@ export function createPanelPrompt(environment: { folders: string[]; platform: st
         ...(environment.subagents
             ? [`- spawn_agents starts research agents that work in parallel and return reports. Use it rarely: only for broad research that splits into independent parts. Do the small things yourself (reading a file, one search, one edit), never spawn agents for edits or for steps that depend on each other. At most ${environment.subagents.maxPerCall} per call and ${environment.subagents.maxTotal} for one answer; ${environment.subagents.maxParallel} run at once. Each agent needs a self-contained brief, cannot see this chat and cannot start agents. Do not repeat the work an agent already reported.`]
             : []),
-        ...(environment.scratch ? ['- For throwaway files and experiments use paths under scratch/ (a private folder outside the repository); run_command accepts cwd "scratch".'] : []),
+        ...(environment.scratch ? [`- Scratch folder (absolute path): ${environment.scratch}. Use it for throwaway files, generated output and experiments, never the repository. It is outside the repository, so refer to it by this exact absolute path (or scratch/<file>); run_command accepts it as cwd. Files there are deleted after 7 days.`] : []),
         ...(environment.memory !== undefined ? ['- Memory: use memory_write to remember stable preferences (scope global) and project facts (scope project) when the user asks or they clearly matter later. Keep memory small and current: "replace" a fact that changed instead of adding a new one, "forget" entries the user asks to remove or that are outdated, and "rewrite" to consolidate. Never store secrets.'] : []),
         '',
         `Workspace folders: ${environment.folders.join(', ') || '(none)'}`,

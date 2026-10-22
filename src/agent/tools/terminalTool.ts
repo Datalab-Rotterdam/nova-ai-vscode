@@ -17,7 +17,7 @@ export const runCommandTool: NovaTool<RunCommandInput> = {
         type: 'object',
         properties: {
             command: { type: 'string', description: 'Shell command line to run.' },
-            cwd: { type: 'string', description: 'Workspace-relative working directory, or "scratch" for the scratch folder; defaults to the workspace root.' }
+            cwd: { type: 'string', description: 'Workspace-relative working directory, or "scratch" (or its absolute path) for the scratch folder; defaults to the workspace root.' }
         },
         required: ['command']
     },

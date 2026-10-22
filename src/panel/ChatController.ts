@@ -2017,7 +2017,7 @@ async function createSystemMessage(memory?: MemoryService, skills?: string, agen
         folders: workspaceFolders().map((folder) => folder.name),
         platform: process.platform,
         shell: vscode.env.shell || undefined,
-        scratch: Boolean(getScratchRoot()),
+        scratch: getScratchRoot(),
         memory: memory?.isEnabled() ? await memory.promptSection().catch(() => '') : undefined,
         skills,
         agent: agent || undefined,
