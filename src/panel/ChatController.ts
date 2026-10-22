@@ -196,6 +196,9 @@ export class ChatController implements vscode.Disposable, ChatHistory {
             case 'chat/send':
                 await this.send(command.text);
                 break;
+            case 'chat/compact':
+                await this.compact(command.focus ?? '');
+                break;
             case 'chat/stop':
                 this.stop();
                 break;

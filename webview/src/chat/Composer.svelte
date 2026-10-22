@@ -16,6 +16,35 @@
   let textarea: HTMLTextAreaElement | undefined = $state();
   let imageInput: HTMLInputElement | undefined = $state();
   let draggingImage = $state(false);
+  let contextOpen = $state(false);
+  let contextWrap: HTMLElement | undefined = $state();
+
+  function toggleContext(open: boolean) {
+    contextOpen = open;
+  }
+
+  // Close the context popover on outside click, or Escape.
+  $effect(() => {
+    if (!contextOpen) {
+      return;
+    }
+    function onDown(event: Event) {
+      if (contextWrap && !contextWrap.contains(event.target as Node)) {
+        contextOpen = false;
+      }
+    }
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        contextOpen = false;
+      }
+    }
+    window.addEventListener("pointerdown", onDown);
+    window.addEventListener("keydown", onKey, true);
+    return () => {
+      window.removeEventListener("pointerdown", onDown);
+      window.removeEventListener("keydown", onKey, true);
+    };
+  });
 
   const usagePercent = $derived(
     chat.usage
@@ -401,21 +430,58 @@
       <span class="spacer"></span>
 
       {#if chat.usage}
-        <span
-          class="meter"
-          title={`Context: ${chat.usage.used.toLocaleString()} / ${chat.usage.total.toLocaleString()} tokens (${usagePercent}%)`}
-        >
-          <svg viewBox="0 0 20 20" aria-hidden="true">
-            <circle cx="10" cy="10" r="8" class="track"></circle>
-            <circle
-              cx="10"
-              cy="10"
-              r="8"
-              class={`fill ${usagePercent >= 90 ? "high" : usagePercent >= 70 ? "mid" : ""}`}
-              stroke-dasharray={`${(usagePercent / 100) * 50.27} 50.27`}
-            ></circle>
-          </svg>
-        </span>
+        <div class="meter-wrap" bind:this={contextWrap}>
+          <button
+            class="meter"
+            type="button"
+            aria-label={`Context window, ${usagePercent}% used. Click for details and to compact.`}
+            aria-expanded={contextOpen}
+            onclick={() => toggleContext(!contextOpen)}
+          >
+            <svg viewBox="0 0 20 20" aria-hidden="true">
+              <circle cx="10" cy="10" r="8" class="track"></circle>
+              <circle
+                cx="10"
+                cy="10"
+                r="8"
+                class={`fill ${usagePercent >= 90 ? "high" : usagePercent >= 70 ? "mid" : ""}`}
+                stroke-dasharray={`${(usagePercent / 100) * 50.27} 50.27`}
+              ></circle>
+            </svg>
+          </button>
+          {#if contextOpen}
+            <div class="context-pop" role="dialog" aria-label="Context window">
+              <div class="cp-head">
+                <span>Context window</span>
+                <span class="cp-pct">{usagePercent}%</span>
+              </div>
+              <div class="cp-bar" aria-hidden="true">
+                <div
+                  class="cp-fill"
+                  class:high={usagePercent >= 90}
+                  class:mid={usagePercent >= 70 && usagePercent < 90}
+                  style="width: {Math.min(100, usagePercent)}%"
+                ></div>
+              </div>
+              <p class="cp-text">
+                {chat.usage.used.toLocaleString()} / {chat.usage.total.toLocaleString()}
+                tokens
+              </p>
+              <button
+                class="cp-compact"
+                type="button"
+                disabled={chat.running}
+                onclick={() => {
+                  contextOpen = false;
+                  post({ command: "chat/compact" });
+                }}
+              >
+                <span class="codicon codicon-merge" aria-hidden="true"></span>
+                {chat.running ? "Nova is working…" : "Compact now"}
+              </button>
+            </div>
+          {/if}
+        </div>
       {/if}
 
       {#if chat.running}
@@ -815,6 +881,34 @@
     }
   }
 
+  /* Context window: a ring that opens a popover on click (not a hover tooltip). */
+  .context-wrap,
+  .meter-wrap {
+    position: relative;
+  }
+
+  .meter {
+    display: grid;
+    place-items: center;
+    padding: 3px;
+    border: 0;
+    border-radius: var(--nova-radius);
+    background: none;
+    cursor: pointer;
+
+    &:hover {
+      background: var(--vscode-toolbar-hoverBackground, var(--nova-hover));
+    }
+
+    &:focus-visible {
+      outline: 1px solid var(--nova-focus);
+    }
+
+    &[aria-expanded="true"] {
+      background: var(--nova-hover);
+    }
+  }
+
   .meter svg {
     display: block;
     width: 16px;
@@ -840,6 +934,88 @@
 
       &.high {
         stroke: var(--nova-error);
+      }
+    }
+  }
+
+  .context-pop {
+    position: absolute;
+    bottom: calc(100% + 8px);
+    right: -4px;
+    width: 232px;
+    padding: 10px 12px;
+    border: 1px solid var(--nova-border);
+    border-radius: var(--nova-radius-large);
+    background: var(
+      --vscode-inputValidation-errorBackground,
+      var(--nova-surface)
+    );
+    box-shadow: 0 4px 18px rgb(0 0 0 / 25%);
+    z-index: 40;
+
+    .cp-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 0.9em;
+      font-weight: 600;
+    }
+
+    .cp-pct {
+      color: var(--nova-muted);
+      font-weight: 400;
+    }
+
+    .cp-bar {
+      height: 5px;
+      margin-top: 8px;
+      border-radius: 999px;
+      background: var(--nova-subtle-border);
+      overflow: hidden;
+    }
+
+    .cp-fill {
+      height: 100%;
+      border-radius: 999px;
+      background: var(--nova-muted);
+
+      &.mid {
+        background: var(--nova-warning);
+      }
+
+      &.high {
+        background: var(--nova-error);
+      }
+    }
+
+    .cp-text {
+      margin: 6px 0 10px;
+      font-size: 0.85em;
+      color: var(--nova-muted);
+    }
+
+    .cp-compact {
+      width: 100%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 5px 8px;
+      border: 1px solid var(--nova-button-border, var(--nova-border));
+      border-radius: var(--nova-radius);
+      background: var(--vscode-button-background, var(--nova-surface));
+      color: var(--vscode-button-foreground, var(--nova-fg));
+      font: inherit;
+      font-size: 0.85em;
+      cursor: pointer;
+
+      &:hover:not(:disabled) {
+        opacity: 0.9;
+      }
+
+      &:disabled {
+        opacity: 0.5;
+        cursor: default;
       }
     }
   }

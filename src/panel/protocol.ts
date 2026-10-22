@@ -194,6 +194,8 @@ export type ChatCommand =
     | { command: 'chat/editMessage'; itemId: string; text: string }
     /** Regenerates the answer: the run after `itemId` becomes a kept branch next to it. */
     | { command: 'chat/regenerate'; itemId: string }
+    /** Force-compacts the conversation the model sees into a summary. */
+    | { command: 'chat/compact'; focus?: string }
     /** Switches, accepts (keeps) or discards (falls back to) an answer version. */
     | { command: 'chat/branch'; itemId: string; mode: 'switch' | 'accept' | 'discard' }
     | { command: 'chat/answer'; itemId: string; answer: string }
