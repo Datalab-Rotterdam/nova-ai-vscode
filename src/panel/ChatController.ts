@@ -38,11 +38,22 @@ import { enabledSkills, type Skill, type SkillPaths } from '../skills/SkillServi
 import { buildSkillsPrompt, createLoadSkillTool } from '../skills/skillTools';
 import type { ChatHub } from './ChatHub';
 import { parseSlashCommand, type ParsedSlashCommand } from './slashCommands';
+import { runIdOf, setRunId, visibleChatItems } from './steps';
 import { classifyLink, confirmAndOpenExternal } from './links';
 import { confirmAndDeleteChats, type ChatHistory } from './chatSearch';
 import { fromStoredMessages, type SessionStore, type StoredSession, toStoredMessages } from './SessionStore';
 
 const MAX_ATTACHMENT_CHARS = 60_000;
+/** Images the model may see in one run: the newest plus what is already in the conversation. */
+const MAX_IMAGES_PER_RUN = 4;
+/** Composer images up to this many bytes; larger than about 2.5 MB of base64 over the message port. */
+const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
+const IMAGE_MIME = new Map([
+    ['png', 'image/png'],
+    ['jpg', 'image/jpeg'],
+    ['jpeg', 'image/jpeg'],
+    ['webp', 'image/webp']
+]);
 const MAX_CARD_OUTPUT_CHARS = 4_000;
 const LAST_SESSION_KEY = 'nova.chat.lastSession';
 
@@ -114,6 +125,17 @@ export class ChatController implements vscode.Disposable, ChatHistory {
     private runModelName?: string;
     /** The session the hub last heard about, so it is only told about changes. */
     private announcedSessionId?: string;
+    /** Thinking being streamed now, so its duration can be sealed when it ends. */
+    private activeThinking?: Extract<ChatItem, { kind: 'thinking' }>;
+    private activeAssistants: Array<Extract<ChatItem, { kind: 'assistant' }>> = [];
+    /** The user item the running reply answers, so its steps join that answer's run. */
+    private currentRunUser?: Extract<ChatItem, { kind: 'user' }>;
+    /**
+     * The model conversation (messages) after each answer version finished, so a switched
+     * version restores exactly what the model saw. In-memory only: on reload, versions
+     * rebuild from the visible chat instead.
+     */
+    private readonly snapshots = new Map<string, vscode.LanguageModelChatMessage[]>();
 
     public constructor(
         private readonly modelProvider: ModelProvider,
@@ -205,6 +227,9 @@ export class ChatController implements vscode.Disposable, ChatHistory {
                 this.attachments = this.attachments.filter((attachment) => attachment.id !== command.id);
                 this.post({ type: 'chat/attachments', attachments: this.attachments });
                 break;
+            case 'chat/addImage':
+                this.addImage(command.name, command.dataUrl);
+                break;
             case 'chat/openDiff':
                 await this.openDiff(command.itemId);
                 break;
@@ -242,7 +267,18 @@ export class ChatController implements vscode.Disposable, ChatHistory {
                 this.post({ type: 'chat/todos', todos: [] });
                 break;
             case 'chat/editMessage':
-                await this.editMessage(command.itemId, command.text);
+                if (this.findUser(command.itemId)?.branch) {
+                    // Editing an answer version re-runs only that version of the answer.
+                    await this.rerunBranch(command.itemId, command.text);
+                } else {
+                    await this.editMessage(command.itemId, command.text);
+                }
+                break;
+            case 'chat/regenerate':
+                await this.regenerate(command.itemId);
+                break;
+            case 'chat/branch':
+                await this.branch(command.itemId, command.mode);
                 break;
             case 'chat/queueSendNow':
                 await this.sendQueuedNow(command.id);
@@ -269,6 +305,47 @@ export class ChatController implements vscode.Disposable, ChatHistory {
             ? undefined
             : [selection.start.line + 1, selection.end.character === 0 && selection.end.line > selection.start.line ? selection.end.line : selection.end.line + 1];
         this.addAttachment({ id: randomUUID(), path, lines, label: lines ? `${path}:${lines[0]}-${lines[1]}` : path });
+    }
+
+    /** Adds an image the user pasted or dropped into the composer, sent to Nova as vision input. */
+    private addImage(name: string, dataUrl: string): void {
+        const match = /^data:([a-z.+-]+);base64,([\s\S]*)$/.exec(dataUrl);
+        const mimeType = (name && IMAGE_MIME.get(name.split('.').pop()?.toLowerCase() ?? '')) || match?.[1];
+        const source = match ? match[2] : dataUrl;
+        if (!mimeType || !mimeType.startsWith('image/') || !source) {
+            this.notice('warning', 'Only PNG, JPEG and WebP images can be attached.');
+            return;
+        }
+        if (source.length > (MAX_IMAGE_BYTES * 4) / 3 + 4) {
+            this.notice('warning', `${name} is too large to attach (at most ${Math.round(MAX_IMAGE_BYTES / 1024 / 10) / 10} MB).`);
+            return;
+        }
+        this.addAttachment({ id: randomUUID(), label: name || 'image', image: { mimeType, data: source } });
+    }
+
+    /**
+     * Which attached images the model actually sees. Vision models see all of them, up to
+     * {@link MAX_IMAGES_PER_RUN} counting the ones already in the conversation (newest win).
+     * Models without vision see the newest image at most: their failures on image payloads
+     * are worse than seeing one image. Dropped images stay in the transcript as labels.
+     */
+    private fitImages(attachments: readonly Attachment[]): Attachment[] {
+        const model = this.models.find((candidate) => candidate.id === this.selectedModelId());
+        const inConversation = this.messages.reduce((count, message) =>
+            count + message.content.filter((part) => part instanceof vscode.LanguageModelDataPart && part.mimeType.startsWith('image/')).length, 0);
+        const imageIndexes = attachments.map((attachment, index) => (attachment.image ? index : -1)).filter((index) => index >= 0);
+        let keep: Set<number>;
+        if (model?.capabilities?.imageInput !== true) {
+            // Without vision, keep the newest image at most.
+            const last = imageIndexes.at(-1);
+            keep = new Set(last !== undefined && inConversation < MAX_IMAGES_PER_RUN ? [last] : []);
+        } else {
+            // Keep the newest images that fit next to the ones already in the conversation.
+            const budget = Math.max(0, MAX_IMAGES_PER_RUN - inConversation);
+            keep = new Set(imageIndexes.slice(imageIndexes.length - budget));
+        }
+        return attachments.map((attachment, index) =>
+            attachment.image && !keep.has(index) ? { ...attachment, image: undefined } : attachment);
     }
 
     public async newChat(): Promise<void> {
@@ -445,8 +522,8 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         await this.run(prompt, attachments);
     }
 
-    private run(prompt: string, attachments: Attachment[], steered = false): Promise<void> {
-        return this.track(this.runInner(prompt, attachments, steered));
+    private run(prompt: string, attachments: Attachment[], steered = false, owner?: Extract<ChatItem, { kind: 'user' }>): Promise<void> {
+        return this.track(this.runInner(prompt, attachments, steered, owner));
     }
 
     /** Remembers work that {@link stopAndWait} has to wait for. */
@@ -571,7 +648,7 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         this.addItem({ kind: 'notice', id: randomUUID(), tone, text });
     }
 
-    private async runInner(prompt: string, attachments: Attachment[], steered: boolean): Promise<void> {
+    private async runInner(prompt: string, attachments: Attachment[], steered: boolean, owner?: Extract<ChatItem, { kind: 'user' }>): Promise<void> {
         this.stoppedByUser = false;
 
         if (!this.models.length) {
@@ -586,22 +663,31 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         this.session.modelId = model.id;
         this.runModelName = info?.name ?? model.name;
 
-        this.addItem({
-            kind: 'user',
-            id: randomUUID(),
-            text: prompt,
-            attachments: attachments.map((attachment) => attachment.label),
-            files: attachments,
-            messageIndex: this.messages.length,
-            model: this.runModelName,
-            ...(steered ? { steered } : {})
-        });
-        if (this.session.items.filter((item) => item.kind === 'user').length === 1) {
-            this.session.title = summarizeTitle(prompt || attachments[0]?.label || 'New chat');
-            this.options.onTitle?.(this.session.title);
+        // The answer of this run: a new user item (or the branch item that owns the run,
+        // which stays where it is so its version keeps its place in the chat).
+        let runUser: Extract<ChatItem, { kind: 'user' }>;
+        if (owner) {
+            runUser = owner;
+        } else {
+            runUser = {
+                kind: 'user',
+                id: randomUUID(),
+                text: prompt,
+                attachments: attachments.map((attachment) => attachment.label),
+                files: attachments,
+                messageIndex: this.messages.length,
+                model: this.runModelName,
+                ...(steered ? { steered } : {})
+            };
+            this.addItem(runUser);
+            if (this.session.items.filter((item) => item.kind === 'user').length === 1) {
+                this.session.title = summarizeTitle(prompt || attachments[0]?.label || 'New chat');
+                this.options.onTitle?.(this.session.title);
+            }
         }
+        this.currentRunUser = runUser;
 
-        this.messages.push(vscode.LanguageModelChatMessage.User(await buildPrompt(prompt, attachments)));
+        this.messages.push(vscode.LanguageModelChatMessage.User(await buildPrompt(prompt, this.fitImages(attachments))));
 
         const running = new vscode.CancellationTokenSource();
         this.running = running;
@@ -614,6 +700,8 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         const tools = availableTools(this.services.memory, this.interactionHost(), skills);
         let assistantItem: Extract<ChatItem, { kind: 'assistant' }> | undefined;
         let thinkingItem: Extract<ChatItem, { kind: 'thinking' }> | undefined;
+        this.activeThinking = undefined;
+        this.activeAssistants = [];
 
         try {
             const result = await runAgentLoop({
@@ -629,7 +717,11 @@ export class ChatController implements vscode.Disposable, ChatHistory {
             }, {
                 text: (delta) => {
                     if (!assistantItem || this.session.items[this.session.items.length - 1] !== assistantItem) {
-                        assistantItem = { kind: 'assistant', id: randomUUID(), text: '' };
+                        if (assistantItem) {
+                            this.sealAssistant(assistantItem);
+                        }
+                        assistantItem = { kind: 'assistant', id: randomUUID(), text: '', startedAt: Date.now(), runId: runUser.id };
+                        this.activeAssistants.push(assistantItem);
                         this.addItem(assistantItem);
                     }
                     assistantItem.text += delta;
@@ -637,7 +729,11 @@ export class ChatController implements vscode.Disposable, ChatHistory {
                 },
                 thinking: (delta) => {
                     if (!thinkingItem || this.session.items[this.session.items.length - 1] !== thinkingItem) {
-                        thinkingItem = { kind: 'thinking', id: randomUUID(), text: '' };
+                        if (thinkingItem) {
+                            this.sealThinking(thinkingItem);
+                        }
+                        thinkingItem = { kind: 'thinking', id: randomUUID(), text: '', startedAt: Date.now(), runId: runUser.id };
+                        this.activeThinking = thinkingItem;
                         this.addItem(thinkingItem);
                     }
                     thinkingItem.text += delta;
@@ -671,12 +767,20 @@ export class ChatController implements vscode.Disposable, ChatHistory {
                 this.addItem({ kind: 'notice', id: randomUUID(), tone: 'error', text: error instanceof Error ? error.message : String(error) });
             }
         } finally {
+            this.sealThinking(this.activeThinking);
+            this.activeThinking = undefined;
+            for (const assistant of this.activeAssistants) {
+                this.sealAssistant(assistant);
+            }
+            this.activeAssistants = [];
             if (running.token.isCancellationRequested) {
                 this.addItem({ kind: 'notice', id: randomUUID(), tone: 'info', text: 'Stopped.' });
             }
             // The loop works on its own copy; keep what it sent (including compaction) minus the system prompt.
             this.messages = closeDanglingToolCalls(conversation.slice(1));
+            this.snapshots.set(runUser.id, this.messages);
             this.conversation = undefined;
+            this.currentRunUser = undefined;
             this.running = undefined;
             running.dispose();
             this.post({ type: 'chat/running', running: false });
@@ -706,11 +810,212 @@ export class ChatController implements vscode.Disposable, ChatHistory {
 
         const kept = this.session.items.slice(0, index);
         this.messages = truncateConversation(this.messages, item, kept);
+        for (const entry of kept) {
+            if (entry.kind === 'user') {
+                this.snapshots.delete(entry.id);
+            }
+        }
         this.session.items = kept;
         this.usage = undefined;
         this.postState();
 
         await this.run(text.trim(), item.files ?? []);
+    }
+
+    /** The user item with an ID, or undefined. */
+    private findUser(itemId: string): Extract<ChatItem, { kind: 'user' }> | undefined {
+        const item = this.session.items.find((candidate) => candidate.id === itemId);
+        return item?.kind === 'user' ? item : undefined;
+    }
+
+    /** Stops a running reply and waits for its cleanup. */
+    private async settleIfRunning(): Promise<void> {
+        if (this.running) {
+            this.stop();
+            await this.currentRun;
+        }
+        this.queue = [];
+        this.postQueue();
+    }
+
+    /** Gives the steps of old runs their run's user ID, so versions can hide them (idempotent). */
+    private stampRunIds(): void {
+        let owner: string | undefined;
+        for (const item of this.session.items) {
+            if (item.kind === 'user') {
+                owner = item.id;
+                continue;
+            }
+            if (owner && !runIdOf(item)) {
+                setRunId(item, owner);
+            }
+        }
+    }
+
+    /**
+     * The model conversation before the first version of the group with `host` was asked,
+     * rebuilt from the visible chat (text and attachments; tool calls are not replayed).
+     */
+    private async conversationBeforeGroup(host: string): Promise<vscode.LanguageModelChatMessage[]> {
+        const items = this.session.items;
+        const start = items.findIndex((item) => (item.kind === 'user' ? item.id === host || item.branch?.hostId === host : false));
+        const visible = visibleChatItems(items);
+        const kept = visible.filter((item) => items.indexOf(item) < start);
+        const messages: vscode.LanguageModelChatMessage[] = [];
+        for (const item of kept) {
+            if (item.kind === 'user' && (item.text || item.files?.length)) {
+                messages.push(vscode.LanguageModelChatMessage.User(await buildPrompt(item.text, item.files ?? [])));
+            } else if (item.kind === 'assistant' && item.text) {
+                messages.push(vscode.LanguageModelChatMessage.Assistant(item.text));
+            }
+        }
+        return messages;
+    }
+
+    private hostIdOf(target: Extract<ChatItem, { kind: 'user' }>): string {
+        return target.branch?.hostId ?? target.id;
+    }
+
+    private versionsOf(host: string): Array<Extract<ChatItem, { kind: 'user' }>> {
+        return this.session.items.filter((item) =>
+            item.kind === 'user' ? item.id === host || item.branch?.hostId === host : false) as Array<Extract<ChatItem, { kind: 'user' }>>;
+    }
+
+    /**
+     * Marks a version of an answer group the current one; unless `keepAnswer` is off, also
+     * restores the model conversation that version left behind (regeneration starts fresh
+     * from before the group instead).
+     */
+    private async activate(target: Extract<ChatItem, { kind: 'user' }>, restoreConversation = true): Promise<void> {
+        const host = this.hostIdOf(target);
+        if (this.versionsOf(host).some((version) => version.branch)) {
+            for (const version of this.versionsOf(host)) {
+                version.branch ??= { hostId: host, current: false };
+                version.branch.current = version.id === target.id;
+            }
+        }
+        if (restoreConversation) {
+            const saved = this.snapshots.get(target.id);
+            if (saved) {
+                this.messages = [...saved];
+            } else {
+                // Rebuild: everything before the group, the version's question, its answer text.
+                const base = await this.conversationBeforeGroup(host);
+                this.messages = [...base, vscode.LanguageModelChatMessage.User(await buildPrompt(target.text, target.files ?? []))];
+                for (const item of this.session.items) {
+                    if (item.kind === 'assistant' && runIdOf(item) === target.id && item.text) {
+                        this.messages.push(vscode.LanguageModelChatMessage.Assistant(item.text));
+                    }
+                }
+            }
+            // The model that answered this version.
+            if (target.model) {
+                const model = this.models.find((candidate) => candidate.id === target.model || candidate.name === target.model);
+                if (model && this.session.modelId !== model.id) {
+                    this.selectModel(model.id);
+                }
+            }
+        }
+        this.usage = undefined;
+    }
+
+    private deleteVersion(target: Extract<ChatItem, { kind: 'user' }>): void {
+        this.session.items = this.session.items.filter((item) => item.id !== target.id && runIdOf(item) !== target.id);
+        this.snapshots.delete(target.id);
+    }
+
+    /** Regenerates the answer of a version: a new branch is added next to it and becomes current. */
+    private async regenerate(itemId: string): Promise<void> {
+        const target = this.findUser(itemId);
+        if (!target) {
+            return;
+        }
+        await this.settleIfRunning();
+        this.stampRunIds();
+        const host = this.hostIdOf(target);
+
+        const branchItem: Extract<ChatItem, { kind: 'user' }> = {
+            kind: 'user',
+            id: randomUUID(),
+            text: target.text,
+            attachments: target.attachments,
+            files: target.files,
+            model: this.runModelName,
+            branch: { hostId: host, modelId: this.selectedModelId(), current: true }
+        };
+        this.session.items.push(branchItem);
+        // The previous answer is no longer the context a fresh run should keep.
+        await this.activate(branchItem, false);
+        this.messages = await this.conversationBeforeGroup(host);
+        await this.run(branchItem.text, branchItem.files ?? [], false, branchItem);
+    }
+
+    /** Switches, accepts (keeps) or discards (falls back to) an answer version. */
+    private async branch(itemId: string, mode: 'switch' | 'accept' | 'discard'): Promise<void> {
+        const target = this.findUser(itemId);
+        if (!target) {
+            return;
+        }
+        await this.settleIfRunning();
+        this.stampRunIds();
+        const host = this.hostIdOf(target);
+
+        if (mode === 'discard') {
+            if (!target.branch) {
+                return;
+            }
+            const wasCurrent = target.branch.current;
+            this.deleteVersion(target);
+            if (wasCurrent) {
+                // Another version takes over; the oldest remaining one wins.
+                const fallback = this.versionsOf(host);
+                if (fallback.length) {
+                    await this.activate(fallback[0]!);
+                } else {
+                    this.messages = await this.conversationBeforeGroup(host);
+                }
+            }
+        } else {
+            await this.activate(target);
+            if (mode === 'accept') {
+                // The accepted version becomes canonical; the other versions go away.
+                for (const version of this.versionsOf(host)) {
+                    if (version.id !== target.id) {
+                        this.deleteVersion(version);
+                    }
+                }
+                if (host !== target.id) {
+                    // The original question and answer are rolled up into the accepted run.
+                    this.session.items = this.session.items.filter((item) => item.id !== host && runIdOf(item) !== host);
+                }
+                // One version left: the group is a plain question again.
+                const kept = this.findUser(target.id);
+                if (kept?.branch) {
+                    delete kept.branch;
+                }
+            }
+        }
+        this.postState();
+        await this.persist();
+    }
+
+    /** Edits an answer version's message and reruns only that version of the answer. */
+    private async rerunBranch(itemId: string, text: string): Promise<void> {
+        const target = this.findUser(itemId);
+        if (!target || (!text.trim() && !target.files?.length)) {
+            return;
+        }
+        await this.settleIfRunning();
+        this.stampRunIds();
+
+        // The version's old steps and answer go: the rerun replaces them in place.
+        const host = this.hostIdOf(target);
+        this.session.items = this.session.items.filter((item) => item.id === target.id || runIdOf(item) !== target.id);
+
+        target.text = text.trim();
+        this.messages = await this.conversationBeforeGroup(host);
+        this.snapshots.delete(target.id);
+        await this.run(target.text, target.files ?? [], false, target);
     }
 
     private recordChange(edit: ProposedEdit): void {
@@ -870,7 +1175,7 @@ export class ChatController implements vscode.Disposable, ChatHistory {
                 model: this.runModelName,
                 steered: true
             });
-            messages.push(vscode.LanguageModelChatMessage.User(await buildPrompt(item.text, item.files)));
+            messages.push(vscode.LanguageModelChatMessage.User(await buildPrompt(item.text, this.fitImages(item.files))));
         }
         return messages;
     }
@@ -936,7 +1241,8 @@ export class ChatController implements vscode.Disposable, ChatHistory {
             name: call.name,
             title: call.name,
             input: JSON.stringify(call.input, null, 2),
-            status: 'running'
+            status: 'running',
+            runId: this.currentRunUser?.id
         };
         // The task list and questions have their own UI; no tool card for them.
         const silent = INTERACTION_TOOLS.has(call.name);
@@ -1210,6 +1516,7 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         this.sessionApproved = false;
         this.edits.clear();
         this.changes.clear();
+        this.snapshots.clear();
     }
 
     private async persist(): Promise<void> {
@@ -1237,6 +1544,20 @@ export class ChatController implements vscode.Disposable, ChatHistory {
     private updateItem(item: ChatItem): void {
         this.post({ type: 'chat/itemUpdated', item: { ...item } });
     }
+
+    /** Records how long a thinking step took, when it ends (or the run stops). */
+    private sealThinking(item: Extract<ChatItem, { kind: 'thinking' }> | undefined): void {
+        if (item && item.startedAt !== undefined && item.durationMs === undefined) {
+            this.updateItem({ ...item, durationMs: Date.now() - item.startedAt });
+        }
+    }
+
+    /** Records how long an answer took, so its edge case (a bare answer) can say so. */
+    private sealAssistant(item: Extract<ChatItem, { kind: 'assistant' }>): void {
+        if (item.durationMs === undefined) {
+            this.updateItem({ ...item, durationMs: Date.now() - (item.startedAt ?? Date.now()) });
+        }
+    }
 }
 
 interface AvailableTool {
@@ -1248,8 +1569,9 @@ interface AvailableTool {
 
 /** Nova's built-in tools plus MCP tools registered in VS Code, which can run without a chat request. */
 function availableTools(memory?: MemoryService, interaction?: InteractionHost, skills: readonly Skill[] = []): AvailableTool[] {
+    const webSearchEnabled = vscode.workspace.getConfiguration('nova.webSearch').get<boolean>('enabled', true);
     const novaTools = [
-        ...BUILT_IN_TOOLS,
+        ...BUILT_IN_TOOLS.filter((tool) => tool.name !== 'web_search' || webSearchEnabled),
         ...(skills.length ? [createLoadSkillTool(skills) as NovaTool<never>] : []),
         ...(interaction ? createInteractionTools(interaction) : []),
         ...(memory?.isEnabled() ? createMemoryTools(memory) : [])
@@ -1292,9 +1614,18 @@ async function createSystemMessage(memory?: MemoryService, skills?: string): Pro
         : vscode.LanguageModelChatMessage.User(prompt);
 }
 
-async function buildPrompt(prompt: string, attachments: readonly Attachment[]): Promise<string> {
+async function buildPrompt(prompt: string, attachments: readonly Attachment[]): Promise<Array<vscode.LanguageModelTextPart | vscode.LanguageModelDataPart>> {
+    const parts: Array<vscode.LanguageModelTextPart | vscode.LanguageModelDataPart> = [];
     const blocks: string[] = [];
     for (const attachment of attachments) {
+        if (attachment.image) {
+            const data = Uint8Array.from(atob(attachment.image.data), (character) => character.charCodeAt(0));
+            parts.push(new vscode.LanguageModelDataPart(data, attachment.image.mimeType));
+            continue;
+        }
+        if (!attachment.path) {
+            continue;
+        }
         try {
             const text = await readText(resolveWorkspacePath(attachment.path));
             const content = attachment.lines
@@ -1306,7 +1637,11 @@ async function buildPrompt(prompt: string, attachments: readonly Attachment[]): 
             blocks.push(`<attachment path="${attachment.label}" error="could not be read" />`);
         }
     }
-    return blocks.length ? `<attachments>\n${blocks.join('\n\n')}\n</attachments>\n\n${prompt}` : prompt;
+    if (blocks.length) {
+        parts.push(new vscode.LanguageModelTextPart(`<attachments>\n${blocks.join('\n\n')}\n</attachments>\n\n`));
+    }
+    parts.push(new vscode.LanguageModelTextPart(prompt));
+    return parts;
 }
 
 /**

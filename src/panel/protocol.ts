@@ -16,9 +16,15 @@ export type ChatItem =
         messageIndex?: number;
         /** Name of the model that answered this message (older chats do not have it). */
         model?: string;
+        /**
+         * A regenerated answer, as its own branch next to the user message it replaces.
+         * `current` marks the branch the conversation is following; more branches can be
+         * added and the answers switch until one is accepted or discarded.
+         */
+        branch?: { hostId: string; modelId?: string; current: boolean };
     }
-    | { kind: 'assistant'; id: string; text: string }
-    | { kind: 'thinking'; id: string; text: string }
+    | { kind: 'assistant'; id: string; text: string; startedAt?: number; durationMs?: number; runId?: string }
+    | { kind: 'thinking'; id: string; text: string; startedAt?: number; durationMs?: number; runId?: string }
     | ToolItem
     | QuestionItem
     | { kind: 'notice'; id: string; text: string; tone: 'info' | 'warning' | 'error' };
@@ -69,6 +75,8 @@ export interface ToolItem {
     allowRule?: string;
     /** Changed lines of an applied edit, shown in the card. */
     diff?: { lines: DiffLine[]; added: number; removed: number; truncated: boolean };
+    /** The user message this step of an answer belongs to, for answer versions. */
+    runId?: string;
 }
 
 export interface DiffLine {
@@ -96,10 +104,12 @@ export interface ChatModelOption {
 export interface Attachment {
     id: string;
     label: string;
-    /** Workspace-relative path. */
-    path: string;
+    /** Workspace-relative path, for file and selection attachments. */
+    path?: string;
     /** 1-based inclusive line range for selections. */
     lines?: [number, number];
+    /** An image attached from the composer: base64 while it is in the message. */
+    image?: { mimeType: string; data: string };
 }
 
 /**
@@ -172,6 +182,7 @@ export type ChatCommand =
     | { command: 'chat/selectModel'; modelId: string }
     | { command: 'chat/addFile' }
     | { command: 'chat/addSelection' }
+    | { command: 'chat/addImage'; name: string; dataUrl: string }
     | { command: 'chat/removeAttachment'; id: string }
     | { command: 'chat/openDiff'; itemId: string }
     | { command: 'chat/openFile'; path: string }
@@ -181,6 +192,10 @@ export type ChatCommand =
     | { command: 'chat/queueRemove'; id: string }
     | { command: 'chat/queueSendNow'; id: string }
     | { command: 'chat/editMessage'; itemId: string; text: string }
+    /** Regenerates the answer: the run after `itemId` becomes a kept branch next to it. */
+    | { command: 'chat/regenerate'; itemId: string }
+    /** Switches, accepts (keeps) or discards (falls back to) an answer version. */
+    | { command: 'chat/branch'; itemId: string; mode: 'switch' | 'accept' | 'discard' }
     | { command: 'chat/answer'; itemId: string; answer: string }
     | { command: 'chat/skipQuestion'; itemId: string }
     | { command: 'chat/dismissTodos' }

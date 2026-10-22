@@ -584,6 +584,26 @@
             "default": true,
             "markdownDescription": "Offer MCP server tools registered in VS Code to the Nova chat."
           },
+          "nova.webSearch.enabled": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Let the Nova chat search the web (`web_search`) for current or external information, with keyless providers, and open the top result pages to cite passages."
+          },
+          "nova.webSearch.duckduckgo": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Use DuckDuckGo's keyless HTML search as a web search provider. Tries are cancelled when another provider already returned results."
+          },
+          "nova.webSearch.you": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Use You.com's keyless free-tier search API as a web search provider."
+          },
+          "nova.webSearch.searxng": {
+            "type": "string",
+            "default": "",
+            "markdownDescription": "Address of a SearXNG server to use for web search first, e.g. `https://search.example.org`. The server must allow the JSON format (`search.formats` in `settings.yml`). Empty uses only the keyless providers."
+          },
           "nova.home": {
             "type": "string",
             "default": "",

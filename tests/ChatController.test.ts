@@ -45,7 +45,8 @@ function setup(responses: Part[][], approvalMode = 'autoReadOnly', services: Rec
 
 const toolItems = (events: ChatEvent[]) => events
   .filter((event): event is Extract<ChatEvent, { type: 'chat/itemUpdated' }> => event.type === 'chat/itemUpdated')
-  .map((event) => event.item as ToolItem);
+  .map((event) => event.item)
+  .filter((item): item is ToolItem => item.kind === 'tool');
 
 /** The request array is mutated after the call, so search it instead of taking the last message. */
 function toolResultIn(messages: vscode.LanguageModelChatMessage[]): vscode.LanguageModelToolResultPart {
@@ -425,11 +426,13 @@ describe('ChatController', () => {
 
   it('keeps a task list from todo_write without adding tool cards', async () => {
     const { controller, events } = setup([
-      [new vscode.LanguageModelToolCallPart('c1', 'todo_write', { todos: [
-        { content: 'Read the code', status: 'completed' },
-        { content: 'Write the fix', status: 'in_progress' },
-        { content: 'Run tests', status: 'pending' }
-      ] })],
+      [new vscode.LanguageModelToolCallPart('c1', 'todo_write', {
+        todos: [
+          { content: 'Read the code', status: 'completed' },
+          { content: 'Write the fix', status: 'in_progress' },
+          { content: 'Run tests', status: 'pending' }
+        ]
+      })],
       [new vscode.LanguageModelTextPart('Working on it.')]
     ]);
 

@@ -1,318 +1,554 @@
 <script lang="ts">
-    import {tick} from 'svelte';
-    import type {ChatState} from '../../../src/panel/protocol';
-    import type {ProfileView} from '../../../src/core/types';
-    import Avatar from './Avatar.svelte';
-    import ChangesStrip from './ChangesStrip.svelte';
-    import ChatsPage from './ChatsPage.svelte';
-    import Composer from './Composer.svelte';
-    import QuestionCard from './QuestionCard.svelte';
-    import TodoStrip from './TodoStrip.svelte';
-    import Markdown from './Markdown.svelte';
-    import ToolCard from './ToolCard.svelte';
+  import { tick } from "svelte";
+  import type { ChatState } from "../../../src/panel/protocol";
+  import type { ProfileView } from "../../../src/core/types";
+  import Avatar from "./Avatar.svelte";
+  import ChangesStrip from "./ChangesStrip.svelte";
+  import ChatsPage from "./ChatsPage.svelte";
+  import Composer from "./Composer.svelte";
+  import QuestionCard from "./QuestionCard.svelte";
+  import TodoStrip from "./TodoStrip.svelte";
+  import Markdown from "./Markdown.svelte";
+  import StepGroup from "./StepGroup.svelte";
+  import ToolCard from "./ToolCard.svelte";
+  import {
+    groupItems,
+    thoughtFor,
+    visibleChatItems,
+  } from "../../../src/panel/steps";
 
-    let {chat, post, onAccount, logoUri, surface = 'sidebar', profile, chatsOpen = false, onChats}: {
-        chat: ChatState;
-        profile?: ProfileView;
-        logoUri?: string;
-        surface?: 'sidebar' | 'editor';
-        post: (message: Record<string, unknown>) => void;
-        onAccount: () => void;
-        /** The Chats page is shown over the conversation. */
-        chatsOpen?: boolean;
-        onChats: (open: boolean) => void;
-    } = $props();
+  let {
+    chat,
+    post,
+    onAccount,
+    logoUri,
+    surface = "sidebar",
+    profile,
+    chatsOpen = false,
+    onChats,
+  }: {
+    chat: ChatState;
+    profile?: ProfileView;
+    logoUri?: string;
+    surface?: "sidebar" | "editor";
+    post: (message: Record<string, unknown>) => void;
+    onAccount: () => void;
+    /** The Chats page is shown over the conversation. */
+    chatsOpen?: boolean;
+    onChats: (open: boolean) => void;
+  } = $props();
 
-    let list: HTMLElement | undefined = $state();
-    let content: HTMLElement | undefined = $state();
+  let list: HTMLElement | undefined = $state();
+  let content: HTMLElement | undefined = $state();
 
-    /*
-     * Scroll lock: while locked the view follows new output. Any upward scroll by the user
-     * releases it immediately; scrolling back to the bottom locks it again. Sending a message
-     * or opening another chat always jumps to the bottom and locks.
-     */
-    let locked = $state(true);
-    const BOTTOM_THRESHOLD = 24;
+  /*
+   * Scroll lock: while locked the view follows new output. Any upward scroll by the user
+   * releases it immediately; scrolling back to the bottom locks it again. Sending a message
+   * or opening another chat always jumps to the bottom and locks.
+   */
+  let locked = $state(true);
+  const BOTTOM_THRESHOLD = 24;
 
-    function isAtBottom(): boolean {
-        return !list || list.scrollHeight - list.scrollTop - list.clientHeight <= BOTTOM_THRESHOLD;
+  function isAtBottom(): boolean {
+    return (
+      !list ||
+      list.scrollHeight - list.scrollTop - list.clientHeight <= BOTTOM_THRESHOLD
+    );
+  }
+
+  function scrollToBottom(behavior: ScrollBehavior = "auto") {
+    list?.scrollTo({ top: list.scrollHeight, behavior });
+  }
+
+  function jumpToLatest() {
+    locked = true;
+    scrollToBottom("smooth");
+  }
+
+  /*
+   * Only real user input releases the lock. Scroll events cannot tell our own scrolls
+   * from the user's (and arrive a frame late, after more text streamed in), so they are
+   * only used to re-lock once the user is back at the bottom.
+   */
+  let draggingScrollbar = false;
+
+  function onScroll() {
+    if (isAtBottom()) {
+      locked = true;
+    } else if (draggingScrollbar) {
+      locked = false;
     }
+  }
 
-    function scrollToBottom(behavior: ScrollBehavior = 'auto') {
-        list?.scrollTo({top: list.scrollHeight, behavior});
+  function onWheel(event: WheelEvent) {
+    if (event.deltaY < 0) {
+      locked = false;
     }
+  }
 
-    function jumpToLatest() {
-        locked = true;
-        scrollToBottom('smooth');
+  let touchY = 0;
+  function onTouchStart(event: TouchEvent) {
+    touchY = event.touches[0]?.clientY ?? 0;
+  }
+
+  function onTouchMove(event: TouchEvent) {
+    // Finger moving down scrolls the content up.
+    if ((event.touches[0]?.clientY ?? 0) > touchY) {
+      locked = false;
     }
+  }
 
-    /*
-     * Only real user input releases the lock. Scroll events cannot tell our own scrolls
-     * from the user's (and arrive a frame late, after more text streamed in), so they are
-     * only used to re-lock once the user is back at the bottom.
-     */
-    let draggingScrollbar = false;
-
-    function onScroll() {
-        if (isAtBottom()) {
-            locked = true;
-        } else if (draggingScrollbar) {
-            locked = false;
-        }
+  function onKeydown(event: KeyboardEvent) {
+    if (["ArrowUp", "PageUp", "Home"].includes(event.key)) {
+      locked = false;
     }
+  }
 
-    function onWheel(event: WheelEvent) {
-        if (event.deltaY < 0) {
-            locked = false;
-        }
+  function onPointerDown(event: PointerEvent) {
+    // A press on the scrollbar (right of the content box) starts a drag.
+    draggingScrollbar = Boolean(list && event.offsetX > list.clientWidth);
+  }
+
+  function onPointerUp() {
+    draggingScrollbar = false;
+  }
+
+  // Listen for user scroll intent on the message list.
+  $effect(() => {
+    const element = list;
+    if (!element) {
+      return;
     }
-
-    let touchY = 0;
-    function onTouchStart(event: TouchEvent) {
-        touchY = event.touches[0]?.clientY ?? 0;
+    const listeners: Array<[string, EventListener]> = [
+      ["scroll", onScroll as EventListener],
+      ["wheel", onWheel as EventListener],
+      ["touchstart", onTouchStart as EventListener],
+      ["touchmove", onTouchMove as EventListener],
+      ["keydown", onKeydown as EventListener],
+      ["pointerdown", onPointerDown as EventListener],
+    ];
+    for (const [type, listener] of listeners) {
+      element.addEventListener(type, listener, { passive: true });
     }
+    window.addEventListener("pointerup", onPointerUp);
+    return () => {
+      for (const [type, listener] of listeners) {
+        element.removeEventListener(type, listener);
+      }
+      window.removeEventListener("pointerup", onPointerUp);
+    };
+  });
 
-    function onTouchMove(event: TouchEvent) {
-        // Finger moving down scrolls the content up.
-        if ((event.touches[0]?.clientY ?? 0) > touchY) {
-            locked = false;
-        }
+  // Follow content growth (streamed text, tool cards, expanding markdown) while locked.
+  $effect(() => {
+    if (!content) {
+      return;
     }
-
-    function onKeydown(event: KeyboardEvent) {
-        if (['ArrowUp', 'PageUp', 'Home'].includes(event.key)) {
-            locked = false;
-        }
-    }
-
-    function onPointerDown(event: PointerEvent) {
-        // A press on the scrollbar (right of the content box) starts a drag.
-        draggingScrollbar = Boolean(list && event.offsetX > list.clientWidth);
-    }
-
-    function onPointerUp() {
-        draggingScrollbar = false;
-    }
-
-    // Listen for user scroll intent on the message list.
-    $effect(() => {
-        const element = list;
-        if (!element) {
-            return;
-        }
-        const listeners: Array<[string, EventListener]> = [
-            ['scroll', onScroll as EventListener],
-            ['wheel', onWheel as EventListener],
-            ['touchstart', onTouchStart as EventListener],
-            ['touchmove', onTouchMove as EventListener],
-            ['keydown', onKeydown as EventListener],
-            ['pointerdown', onPointerDown as EventListener]
-        ];
-        for (const [type, listener] of listeners) {
-            element.addEventListener(type, listener, {passive: true});
-        }
-        window.addEventListener('pointerup', onPointerUp);
-        return () => {
-            for (const [type, listener] of listeners) {
-                element.removeEventListener(type, listener);
-            }
-            window.removeEventListener('pointerup', onPointerUp);
-        };
+    const observer = new ResizeObserver(() => {
+      if (locked) {
+        scrollToBottom();
+      }
     });
+    observer.observe(content);
+    return () => observer.disconnect();
+  });
 
-    // Follow content growth (streamed text, tool cards, expanding markdown) while locked.
-    $effect(() => {
-        if (!content) {
-            return;
-        }
-        const observer = new ResizeObserver(() => {
-            if (locked) {
-                scrollToBottom();
-            }
-        });
-        observer.observe(content);
-        return () => observer.disconnect();
-    });
-
-    // A new user message or another chat: jump to the bottom and lock.
-    let lastUserCount = 0;
-    let lastSessionId = '';
-    $effect(() => {
-        const userCount = chat.items.filter((item) => item.kind === 'user').length;
-        if (userCount > lastUserCount || chat.sessionId !== lastSessionId) {
-            locked = true;
-            void tick().then(() => scrollToBottom());
-        }
-        lastUserCount = userCount;
-        lastSessionId = chat.sessionId;
-    });
-
-    let editingId = $state<string | undefined>();
-    let editText = $state('');
-
-    function startEdit(itemId: string, text: string) {
-        editingId = itemId;
-        editText = text;
+  // A new user message or another chat: jump to the bottom and lock.
+  let lastUserCount = 0;
+  let lastSessionId = "";
+  $effect(() => {
+    const userCount = chat.items.filter((item) => item.kind === "user").length;
+    if (userCount > lastUserCount || chat.sessionId !== lastSessionId) {
+      locked = true;
+      void tick().then(() => scrollToBottom());
     }
+    lastUserCount = userCount;
+    lastSessionId = chat.sessionId;
+  });
 
-    function submitEdit(itemId: string) {
-        if (!editText.trim()) {
-            return;
-        }
-        post({command: 'chat/editMessage', itemId, text: editText});
-        editingId = undefined;
-    }
+  let editingId = $state<string | undefined>();
+  let editText = $state("");
 
-    /** The model that answered the prompt before `index` (recorded per message; older chats: "Nova"). */
-    function replyModel(index: number): string {
-        for (let at = Math.min(index, chat.items.length - 1); at >= 0; at--) {
-            const item = chat.items[at];
-            if (item.kind === 'user') {
-                return item.model ?? 'Nova';
-            }
-        }
-        return 'Nova';
-    }
-    const lastUserIndex = $derived(chat.items.findLastIndex((item) => item.kind === 'user'));
+  function startEdit(itemId: string, text: string) {
+    editingId = itemId;
+    editText = text;
+  }
 
-    /** A reply header goes above the first non-user item after each user message. */
-    function startsReply(index: number): boolean {
-        const item = chat.items[index];
-        return item.kind !== 'user' && (index === 0 || chat.items[index - 1].kind === 'user');
+  function submitEdit(itemId: string) {
+    if (!editText.trim()) {
+      return;
     }
+    post({ command: "chat/editMessage", itemId, text: editText });
+    editingId = undefined;
+  }
+
+  /** The conversation as it reads now: only the current answer version, steps folded. */
+  const scoped = $derived(visibleChatItems(chat.items));
+  const entries = $derived(groupItems(scoped));
+  const lastUserIndex = $derived(
+    scoped.findLastIndex((item) => item.kind === "user"),
+  );
+
+  /** The versions of the answer of `item`: it, its host and its branches, in order. */
+  function versionsOf(user: {
+    kind: "user";
+    id: string;
+    branch?: { hostId: string; current: boolean };
+    model?: string;
+  }): Array<{ id: string; model?: string; current: boolean }> {
+    if (!user.branch) {
+      return [];
+    }
+    const host = user.branch.hostId;
+    return chat.items
+      .filter(
+        (item) =>
+          item.kind === "user" &&
+          (item.id === host || item.branch?.hostId === host),
+      )
+      .map((item) => ({
+        id: (item as { id: string }).id,
+        model: (item as { model?: string }).model,
+        current: (item as { branch?: { current: boolean } }).branch
+          ? (item as { branch: { current: boolean } }).branch.current
+          : false,
+      }));
+  }
+
+  /** The model that answered the prompt before `index` (of the visible items; older chats: "Nova"). */
+  function replyModel(index: number): string {
+    for (let at = Math.min(index, scoped.length - 1); at >= 0; at--) {
+      const item = scoped[at];
+      if (item.kind === "user") {
+        return item.model ?? "Nova";
+      }
+    }
+    return "Nova";
+  }
+
+  /** A reply header goes above the first non-user item after each user message. */
+  function startsReply(index: number): boolean {
+    const item = scoped[index];
+    return (
+      item.kind !== "user" && (index === 0 || scoped[index - 1].kind === "user")
+    );
+  }
 </script>
 
-<section class="chat" class:editor={surface === 'editor'}>
-    <header>
-        {#if chatsOpen}
-            <span class="title">Chats</span>
-        {:else}
-            <span class="title" title={chat.title}>{chat.title}</span>
-        {/if}
-        <!-- The sidebar has these actions in VS Code's own title bar; the editor tab has none. -->
-        {#if surface === 'editor'}
-            <button class="icon codicon codicon-history" title="Chats" aria-label="Chats" aria-pressed={chatsOpen} onclick={() => onChats(!chatsOpen)}></button>
-            <button class="icon codicon codicon-add" title="New chat in a new tab" aria-label="New chat in a new tab" onclick={() => post({command: 'newChatTab'})}></button>
-        {:else if chatsOpen}
-            <button class="icon codicon codicon-close" title="Back to the chat (Esc)" aria-label="Back to the chat" onclick={() => onChats(false)}></button>
-        {/if}
-        <button class="avatar-button" title="Account and models" aria-label="Account and models" onclick={onAccount}>
-            <Avatar {profile}/>
-        </button>
-    </header>
+<section class="chat" class:editor={surface === "editor"}>
+  <header>
+    {#if chatsOpen}
+      <span class="title">Chats</span>
+    {:else}
+      <span class="title" title={chat.title}>{chat.title}</span>
+    {/if}
+    <!-- The sidebar has these actions in VS Code's own title bar; the editor tab has none. -->
+    {#if surface === "editor"}
+      <button
+        class="icon codicon codicon-history"
+        title="Chats"
+        aria-label="Chats"
+        aria-pressed={chatsOpen}
+        onclick={() => onChats(!chatsOpen)}
+      ></button>
+      <button
+        class="icon codicon codicon-add"
+        title="New chat in a new tab"
+        aria-label="New chat in a new tab"
+        onclick={() => post({ command: "newChatTab" })}
+      ></button>
+    {:else if chatsOpen}
+      <button
+        class="icon codicon codicon-close"
+        title="Back to the chat (Esc)"
+        aria-label="Back to the chat"
+        onclick={() => onChats(false)}
+      ></button>
+    {/if}
+    <button
+      class="avatar-button"
+      title="Account and models"
+      aria-label="Account and models"
+      onclick={onAccount}
+    >
+      <Avatar {profile} />
+    </button>
+  </header>
 
-    <div class="body">
+  <div class="body">
     <div class="conversation" inert={chatsOpen}>
-    <div class="items-wrap">
-    <div class="items" bind:this={list} role="log" aria-live="polite">
-    <div class="content" bind:this={content}>
-        {#if !chat.items.length}
-            <div class="empty">
+      <div class="items-wrap">
+        <div class="items" bind:this={list} role="log" aria-live="polite">
+          <div class="content" bind:this={content}>
+            {#if !scoped.length}
+              <div class="empty">
                 <span class="codicon codicon-sparkle" aria-hidden="true"></span>
-                <p>Ask Nova about your code, or let it make changes. Nova reads files and searches on its own; it asks before editing files or running commands.</p>
-            </div>
-        {/if}
-
-        {#each chat.items as item, index (item.id)}
-            {#if startsReply(index)}
-                <div class="reply-header">
-                    {#if logoUri}
-                        <span class="nova-mark reply-mark" style:--mark-url={`url("${logoUri}")`} aria-hidden="true"></span>
-                    {:else}
-                        <span class="codicon codicon-sparkle" aria-hidden="true"></span>
-                    {/if}
-                    <span class="reply-model">{replyModel(index)}</span>
-                    {#if chat.running && index > lastUserIndex}
-                        <span class="live-dot" aria-label="Generating"></span>
-                    {/if}
-                </div>
+                <p>
+                  Ask Nova about your code, or let it make changes. Nova reads
+                  files and searches on its own; it asks before editing files or
+                  running commands.
+                </p>
+              </div>
             {/if}
-            {#if item.kind === 'user'}
+
+            {#each entries as entry (entry.kind === "group" ? entry.id : entry.item.id)}
+              {@const at = entry.kind === "group" ? entry.first : entry.index}
+              {@const item =
+                entry.kind === "group"
+                  ? entry.steps[entry.steps.length - 1]
+                  : entry.item}
+              {#if entry.kind === "group" ? startsReply(entry.first) : startsReply(entry.index)}
+                <div class="reply-header">
+                  {#if logoUri}
+                    <span
+                      class="nova-mark reply-mark"
+                      style:--mark-url={`url("${logoUri}")`}
+                      aria-hidden="true"
+                    ></span>
+                  {:else}
+                    <span class="codicon codicon-sparkle" aria-hidden="true"
+                    ></span>
+                  {/if}
+                  <span class="reply-model">{replyModel(at)}</span>
+                  {#if chat.running && at > lastUserIndex}
+                    <span class="live-dot" aria-label="Generating"></span>
+                  {/if}
+                </div>
+              {/if}
+              {#if entry.kind === "group"}
+                <StepGroup group={entry} running={chat.running} {post} />
+              {:else if item.kind === "user"}
                 {#if editingId === item.id}
-                    <form class="user editing" onsubmit={(event) => { event.preventDefault(); submitEdit(item.id); }}>
-                        <!-- svelte-ignore a11y_autofocus -->
-                        <textarea
-                                bind:value={editText}
-                                autofocus
-                                rows="3"
-                                aria-label="Edit message"
-                                onkeydown={(event) => {
-                                    if (event.key === 'Escape') { editingId = undefined; }
-                                    else if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); submitEdit(item.id); }
-                                }}
-                        ></textarea>
-                        <div class="edit-actions">
-                            <span class="edit-hint">Later messages will be replaced{chat.running ? ' and the current reply stopped' : ''}.</span>
-                            <button class="nova-button secondary" type="button" onclick={() => editingId = undefined}>Cancel</button>
-                            <button class="nova-button" type="submit" disabled={!editText.trim()}>Send</button>
-                        </div>
-                    </form>
+                  <form
+                    class="user editing"
+                    onsubmit={(event) => {
+                      event.preventDefault();
+                      submitEdit(item.id);
+                    }}
+                  >
+                    <!-- svelte-ignore a11y_autofocus -->
+                    <textarea
+                      bind:value={editText}
+                      autofocus
+                      rows="3"
+                      aria-label="Edit message"
+                      onkeydown={(event) => {
+                        if (event.key === "Escape") {
+                          editingId = undefined;
+                        } else if (
+                          event.key === "Enter" &&
+                          !event.shiftKey &&
+                          !event.isComposing
+                        ) {
+                          event.preventDefault();
+                          submitEdit(item.id);
+                        }
+                      }}></textarea>
+                    <div class="edit-actions">
+                      <span class="edit-hint"
+                        >Later messages will be replaced{chat.running
+                          ? " and the current reply stopped"
+                          : ""}.</span
+                      >
+                      <button
+                        class="nova-button secondary"
+                        type="button"
+                        onclick={() => (editingId = undefined)}>Cancel</button
+                      >
+                      <button
+                        class="nova-button"
+                        type="submit"
+                        disabled={!editText.trim()}>Send</button
+                      >
+                    </div>
+                  </form>
                 {:else}
-                <div class="user" class:steered={item.steered}>
-                    <button class="edit-button codicon codicon-edit" title="Edit and resend" aria-label="Edit and resend" onclick={() => startEdit(item.id, item.text)}></button>
-                    {#if item.steered}<span class="steered-label"><span class="codicon codicon-arrow-small-right" aria-hidden="true"></span>Steered</span>{/if}
+                  {@const versions = item.branch ? versionsOf(item) : []}
+                  {@const versionPos =
+                    versions.findIndex(
+                      (version: { id: string }) => version.id === item.id,
+                    ) + 1}
+                  <div class="user" class:steered={item.steered}>
+                    <div class="user-actions">
+                      <button
+                        class="edit-button codicon codicon-edit"
+                        title="Edit and resend"
+                        aria-label="Edit and resend"
+                        onclick={() => startEdit(item.id, item.text)}
+                      ></button>
+                      <button
+                        class="edit-button codicon codicon-refresh"
+                        title="Regenerate the answer"
+                        aria-label="Regenerate the answer"
+                        onclick={() =>
+                          post({ command: "chat/regenerate", itemId: item.id })}
+                      ></button>
+                    </div>
+                    {#if versions.length > 1}
+                      <div class="versions" aria-label="Answer versions">
+                        {#each versions as version, at (version.id)}
+                          <button
+                            class="version"
+                            class:current={version.current}
+                            title="Answer {at + 1}{version.model
+                              ? ` (${version.model})`
+                              : ''}"
+                            aria-label={`Switch to answer ${at + 1}`}
+                            aria-current={version.current ? "true" : undefined}
+                            onclick={() =>
+                              post({
+                                command: "chat/branch",
+                                itemId: version.id,
+                                mode: "switch",
+                              })}
+                          >
+                            {at + 1}
+                          </button>
+                        {/each}
+                        <button
+                          class="version accept"
+                          title="Keep this answer and discard the others"
+                          aria-label="Keep this answer"
+                          onclick={() =>
+                            post({
+                              command: "chat/branch",
+                              itemId: item.id,
+                              mode: "accept",
+                            })}
+                        >
+                          <span class="codicon codicon-check" aria-hidden="true"
+                          ></span>
+                        </button>
+                        {#if item.branch}
+                          <button
+                            class="version discard"
+                            title="Discard this answer"
+                            aria-label="Discard this answer"
+                            onclick={() =>
+                              post({
+                                command: "chat/branch",
+                                itemId: item.id,
+                                mode: "discard",
+                              })}
+                          >
+                            <span
+                              class="codicon codicon-close"
+                              aria-hidden="true"
+                            ></span>
+                          </button>
+                        {/if}
+                      </div>
+                    {/if}
+                    {#if versionPos > 1}
+                      <span class="version-label">Answer {versionPos}</span>
+                    {/if}
+                    {#if item.steered}<span class="steered-label"
+                        ><span
+                          class="codicon codicon-arrow-small-right"
+                          aria-hidden="true"
+                        ></span>Steered</span
+                      >{/if}
                     {#if item.attachments.length}
-                        <div class="user-attachments">
-                            {#each item.attachments as attachment (attachment)}
-                                <span><span class="codicon codicon-file" aria-hidden="true"></span>{attachment}</span>
-                            {/each}
-                        </div>
+                      <div class="user-attachments">
+                        {#each item.attachments as attachment (attachment)}
+                          <span
+                            ><span
+                              class="codicon codicon-file"
+                              aria-hidden="true"
+                            ></span>{attachment}</span
+                          >
+                        {/each}
+                      </div>
                     {/if}
                     {#if item.text}<p>{item.text}</p>{/if}
-                </div>
+                  </div>
                 {/if}
-            {:else if item.kind === 'assistant'}
-                <div class="assistant"><Markdown text={item.text} onLink={(href, text) => post({command: 'chat/openLink', href, text})}/></div>
-            {:else if item.kind === 'thinking'}
-                <details class="thinking">
-                    <summary><span class="codicon codicon-lightbulb" aria-hidden="true"></span>Thinking</summary>
-                    <p>{item.text}</p>
-                </details>
-            {:else if item.kind === 'tool'}
-                <ToolCard {item} {post}/>
-            {:else if item.kind === 'question'}
-                <QuestionCard {item} {post}/>
-            {:else}
-                <p class={`notice ${item.tone}`}>
-                    <span class={`codicon codicon-${item.tone === 'error' ? 'error' : item.tone === 'warning' ? 'warning' : 'info'}`} aria-hidden="true"></span><span class="notice-text">{item.text}</span>
-                </p>
-            {/if}
-        {/each}
-
-        {#if chat.running}
-            {#if lastUserIndex === chat.items.length - 1}
-                <div class="reply-header">
-                    {#if logoUri}
-                        <span class="nova-mark reply-mark" style:--mark-url={`url("${logoUri}")`} aria-hidden="true"></span>
-                    {/if}
-                    <span class="reply-model">{replyModel(chat.items.length - 1)}</span>
-                    <span class="live-dot" aria-label="Generating"></span>
+              {:else if item.kind === "assistant"}
+                <div class="assistant">
+                  <Markdown
+                    text={item.text}
+                    onLink={(href, text) =>
+                      post({ command: "chat/openLink", href, text })}
+                  />
                 </div>
-            {/if}
-            <div class="working" aria-label="Nova is working"><span class="shimmer">Thinking…</span></div>
-        {/if}
-    </div>
-    </div>
-    {#if !locked}
-        <button class="jump" onclick={jumpToLatest} title="Jump to latest" aria-label="Jump to latest">
-            <span class="codicon codicon-arrow-down" aria-hidden="true"></span>
-        </button>
-    {/if}
-    </div>
+              {:else if item.kind === "thinking"}
+                <details class="thinking">
+                  <summary
+                    ><span class="codicon codicon-lightbulb" aria-hidden="true"
+                    ></span>{chat.running
+                      ? "Thinking"
+                      : thoughtFor(item.durationMs ?? null)}</summary
+                  >
+                  <p>{item.text}</p>
+                </details>
+              {:else if item.kind === "tool"}
+                <ToolCard {item} {post} />
+              {:else if item.kind === "question"}
+                <QuestionCard {item} {post} />
+              {:else}
+                <p class={`notice ${item.tone}`}>
+                  <span
+                    class={`codicon codicon-${item.tone === "error" ? "error" : item.tone === "warning" ? "warning" : "info"}`}
+                    aria-hidden="true"
+                  ></span><span class="notice-text">{item.text}</span>
+                </p>
+              {/if}
+            {/each}
 
-    {#if chat.changes?.length}
-        <ChangesStrip changes={chat.changes} {post}/>
-    {/if}
-    {#if chat.todos?.length}
-        <TodoStrip todos={chat.todos} running={chat.running} {post}/>
-    {/if}
-    <Composer {chat} {post}/>
+            {#if chat.running}
+              {#if lastUserIndex === scoped.length - 1}
+                <div class="reply-header">
+                  {#if logoUri}
+                    <span
+                      class="nova-mark reply-mark"
+                      style:--mark-url={`url("${logoUri}")`}
+                      aria-hidden="true"
+                    ></span>
+                  {/if}
+                  <span class="reply-model"
+                    >{replyModel(scoped.length - 1)}</span
+                  >
+                  <span class="live-dot" aria-label="Generating"></span>
+                </div>
+              {/if}
+              <div class="working" aria-label="Nova is working">
+                <span class="shimmer">Thinking…</span>
+              </div>
+            {/if}
+          </div>
+        </div>
+        {#if !locked}
+          <button
+            class="jump"
+            onclick={jumpToLatest}
+            title="Jump to latest"
+            aria-label="Jump to latest"
+          >
+            <span class="codicon codicon-arrow-down" aria-hidden="true"></span>
+          </button>
+        {/if}
+      </div>
+
+      {#if chat.changes?.length}
+        <ChangesStrip changes={chat.changes} {post} />
+      {/if}
+      {#if chat.todos?.length}
+        <TodoStrip todos={chat.todos} running={chat.running} {post} />
+      {/if}
+      <Composer {chat} {post} />
     </div>
     {#if chatsOpen}
-        <ChatsPage sessions={chat.sessions} openElsewhere={chat.openElsewhere ?? []} currentId={chat.sessionId} running={chat.running} {surface} {post} onClose={() => onChats(false)}/>
+      <ChatsPage
+        sessions={chat.sessions}
+        openElsewhere={chat.openElsewhere ?? []}
+        currentId={chat.sessionId}
+        running={chat.running}
+        {surface}
+        {post}
+        onClose={() => onChats(false)}
+      />
     {/if}
-    </div>
+  </div>
 </section>
 
 <style lang="scss">
@@ -348,7 +584,7 @@
     cursor: pointer;
 
     &:hover,
-    &[aria-pressed='true'] {
+    &[aria-pressed="true"] {
       background: var(--vscode-toolbar-hoverBackground, var(--nova-hover));
     }
   }
@@ -449,7 +685,8 @@
     padding: 6px 10px;
     border-radius: var(--nova-radius-large);
     background: var(--vscode-chat-requestBackground, var(--nova-surface));
-    border: 1px solid var(--vscode-chat-requestBorder, var(--nova-subtle-border));
+    border: 1px solid
+      var(--vscode-chat-requestBorder, var(--nova-subtle-border));
 
     p {
       white-space: pre-wrap;
@@ -532,6 +769,68 @@
     margin-bottom: 2px;
     color: var(--nova-muted);
     font-size: 0.85em;
+  }
+
+  .user-actions {
+    position: absolute;
+    top: 50%;
+    left: -56px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    transform: translateY(-50%);
+
+    .edit-button {
+      position: static;
+      transform: none;
+      opacity: 0;
+    }
+  }
+
+  .versions {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    margin-bottom: 2px;
+
+    .version {
+      min-width: 18px;
+      height: 18px;
+      padding: 0 5px;
+      border: 1px solid var(--nova-subtle-border);
+      border-radius: 999px;
+      background: none;
+      color: var(--nova-muted);
+      font: inherit;
+      font-size: 0.75em;
+      line-height: 1;
+      cursor: pointer;
+
+      &:hover {
+        color: var(--nova-fg);
+        background: var(--nova-hover);
+      }
+
+      &.current {
+        border-color: var(--nova-focus);
+        color: var(--nova-fg);
+        background: color-mix(in srgb, var(--nova-focus) 12%, transparent);
+      }
+
+      .codicon {
+        font-size: 11px;
+      }
+
+      &.accept {
+        border-style: dashed;
+      }
+    }
+  }
+
+  .version-label {
+    margin-right: 4px;
+    color: var(--nova-muted);
+    font-size: 0.8em;
   }
 
   /* Editor tab: center the conversation in a readable column, like the Nova platform. */
@@ -636,7 +935,8 @@
     flex: none;
     border-radius: 50%;
     background: var(--nova-brand-primary);
-    box-shadow: 0 0 0 0 color-mix(in srgb, var(--nova-brand-primary) 60%, transparent);
+    box-shadow: 0 0 0 0
+      color-mix(in srgb, var(--nova-brand-primary) 60%, transparent);
     animation: nova-pulse 1.6s ease-in-out infinite;
   }
 
@@ -650,12 +950,12 @@
   /* Text shimmer: a highlight sweeping through the label. */
   .shimmer {
     background: linear-gradient(
-        90deg,
-        var(--nova-muted) 0%,
-        var(--nova-muted) 40%,
-        var(--nova-fg) 50%,
-        var(--nova-muted) 60%,
-        var(--nova-muted) 100%
+      90deg,
+      var(--nova-muted) 0%,
+      var(--nova-muted) 40%,
+      var(--nova-fg) 50%,
+      var(--nova-muted) 60%,
+      var(--nova-muted) 100%
     );
     background-size: 200% 100%;
     -webkit-background-clip: text;
@@ -668,11 +968,13 @@
     0%,
     100% {
       opacity: 0.6;
-      box-shadow: 0 0 0 0 color-mix(in srgb, var(--nova-brand-primary) 50%, transparent);
+      box-shadow: 0 0 0 0
+        color-mix(in srgb, var(--nova-brand-primary) 50%, transparent);
     }
     50% {
       opacity: 1;
-      box-shadow: 0 0 0 4px color-mix(in srgb, var(--nova-brand-primary) 0%, transparent);
+      box-shadow: 0 0 0 4px
+        color-mix(in srgb, var(--nova-brand-primary) 0%, transparent);
     }
   }
 

@@ -1,213 +1,456 @@
 <script lang="ts">
-    import type {ApprovalMode, ChatState} from '../../../src/panel/protocol';
-    import {parseSlashCommand, suggestSlashCommands, type SlashCommand} from '../../../src/panel/slashCommands';
+  import type { ApprovalMode, ChatState } from "../../../src/panel/protocol";
+  import {
+    parseSlashCommand,
+    suggestSlashCommands,
+    type SlashCommand,
+  } from "../../../src/panel/slashCommands";
 
-    let {chat, post}: { chat: ChatState; post: (message: Record<string, unknown>) => void } = $props();
+  let {
+    chat,
+    post,
+  }: { chat: ChatState; post: (message: Record<string, unknown>) => void } =
+    $props();
 
-    let text = $state('');
-    let textarea: HTMLTextAreaElement | undefined = $state();
+  let text = $state("");
+  let textarea: HTMLTextAreaElement | undefined = $state();
+  let imageInput: HTMLInputElement | undefined = $state();
+  let draggingImage = $state(false);
 
-    const usagePercent = $derived(chat.usage ? Math.min(100, Math.round((chat.usage.used / Math.max(1, chat.usage.total)) * 100)) : 0);
-    const questionPending = $derived(chat.items.some((item) => item.kind === 'question' && item.status === 'pending'));
-    // Slash commands (/clear, /model, …) also work without a model.
-    const canSend = $derived(Boolean(text.trim() || chat.attachments.length) && (Boolean(chat.modelId) || Boolean(parseSlashCommand(text))));
+  const usagePercent = $derived(
+    chat.usage
+      ? Math.min(
+          100,
+          Math.round((chat.usage.used / Math.max(1, chat.usage.total)) * 100),
+        )
+      : 0,
+  );
+  const questionPending = $derived(
+    chat.items.some(
+      (item) => item.kind === "question" && item.status === "pending",
+    ),
+  );
+  // Slash commands (/clear, /model, …) also work without a model.
+  const canSend = $derived(
+    Boolean(text.trim() || chat.attachments.length) &&
+      (Boolean(chat.modelId) || Boolean(parseSlashCommand(text))),
+  );
 
-    /* Slash command menu: shown while the first word starts with "/"; Esc hides it until the text changes. */
-    let highlighted = $state(0);
-    let menuDismissed = $state(false);
-    const suggestions = $derived(menuDismissed ? [] : suggestSlashCommands(text));
+  /* Slash command menu: shown while the first word starts with "/"; Esc hides it until the text changes. */
+  let highlighted = $state(0);
+  let menuDismissed = $state(false);
+  const suggestions = $derived(menuDismissed ? [] : suggestSlashCommands(text));
 
-    const approvalLabels: Record<ApprovalMode, string> = {
-        ask: 'Ask every time',
-        autoReadOnly: 'Auto-run read-only',
-        autoAll: 'Auto-run all'
-    };
+  const approvalLabels: Record<ApprovalMode, string> = {
+    ask: "Ask every time",
+    autoReadOnly: "Auto-run read-only",
+    autoAll: "Auto-run all",
+  };
 
-    function send() {
-        if (!canSend) {
-            return;
-        }
-        post({command: 'chat/send', text});
-        text = '';
-        resize();
+  function send() {
+    if (!canSend) {
+      return;
     }
+    post({ command: "chat/send", text });
+    text = "";
+    resize();
+  }
 
-    /** Fills in a suggested command; Enter runs it at once unless it needs an argument. */
-    function pickCommand(command: SlashCommand, run: boolean) {
-        if (run && !command.args?.startsWith('<')) {
-            text = `/${command.name}`;
-            send();
-            return;
-        }
-        text = `/${command.name} `;
-        textarea?.focus();
-        resize();
+  /** Fills in a suggested command; Enter runs it at once unless it needs an argument. */
+  function pickCommand(command: SlashCommand, run: boolean) {
+    if (run && !command.args?.startsWith("<")) {
+      text = `/${command.name}`;
+      send();
+      return;
     }
+    text = `/${command.name} `;
+    textarea?.focus();
+    resize();
+  }
 
-    function onInput() {
-        highlighted = 0;
-        menuDismissed = false;
-        resize();
+  function onInput() {
+    highlighted = 0;
+    menuDismissed = false;
+    resize();
+  }
+
+  function onKeydown(event: KeyboardEvent) {
+    if (suggestions.length && !event.isComposing) {
+      const move =
+        event.key === "ArrowDown" ? 1 : event.key === "ArrowUp" ? -1 : 0;
+      if (move) {
+        event.preventDefault();
+        highlighted =
+          (highlighted + move + suggestions.length) % suggestions.length;
+        return;
+      }
+      if (event.key === "Tab" || (event.key === "Enter" && !event.shiftKey)) {
+        event.preventDefault();
+        pickCommand(
+          suggestions[Math.min(highlighted, suggestions.length - 1)],
+          event.key === "Enter",
+        );
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        menuDismissed = true;
+        return;
+      }
     }
-
-    function onKeydown(event: KeyboardEvent) {
-        if (suggestions.length && !event.isComposing) {
-            const move = event.key === 'ArrowDown' ? 1 : event.key === 'ArrowUp' ? -1 : 0;
-            if (move) {
-                event.preventDefault();
-                highlighted = (highlighted + move + suggestions.length) % suggestions.length;
-                return;
-            }
-            if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey)) {
-                event.preventDefault();
-                pickCommand(suggestions[Math.min(highlighted, suggestions.length - 1)], event.key === 'Enter');
-                return;
-            }
-            if (event.key === 'Escape') {
-                event.preventDefault();
-                menuDismissed = true;
-                return;
-            }
-        }
-        if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
-            event.preventDefault();
-            send();
-        }
+    if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+      event.preventDefault();
+      send();
     }
+  }
 
-    function resize() {
-        if (!textarea) {
-            return;
-        }
-        textarea.style.height = 'auto';
-        textarea.style.height = `${Math.min(textarea.scrollHeight, 240)}px`;
+  function resize() {
+    if (!textarea) {
+      return;
     }
+    textarea.style.height = "auto";
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 240)}px`;
+  }
 
-    $effect(() => {
-        textarea?.focus();
-    });
+  /*
+   * Images as context: pick one with the camera button, paste (Ctrl/Cmd+V), or drop a file
+   * on the composer. The extension decides which models actually send them.
+   */
+  function addImageDataUrl(name: string, dataUrl: string) {
+    post({ command: "chat/addImage", name, dataUrl });
+  }
+
+  function addImageFiles(files: File[]) {
+    for (const file of files.filter((file) => file.type.startsWith("image/"))) {
+      const reader = new FileReader();
+      reader.onload = () => addImageDataUrl(file.name, String(reader.result));
+      reader.readAsDataURL(file);
+    }
+  }
+
+  function onPaste(event: ClipboardEvent) {
+    const files = [...(event.clipboardData?.files ?? [])];
+    if (!files.some((file) => file.type.startsWith("image/"))) {
+      return;
+    }
+    event.preventDefault();
+    addImageFiles(files);
+  }
+
+  let dragDepth = 0;
+  function hasImage(dataTransfer: DataTransfer | null): boolean {
+    if (!dataTransfer) {
+      return false;
+    }
+    if (dataTransfer.types.includes("Files")) {
+      return [...(dataTransfer.files ?? [])].some((file) =>
+        file.type.startsWith("image/"),
+      );
+    }
+    return (
+      dataTransfer.types.includes("image/png") ||
+      dataTransfer.types.includes("image/jpeg") ||
+      dataTransfer.types.includes("image/webp")
+    );
+  }
+  function onDragEnter(event: DragEvent) {
+    if (hasImage(event.dataTransfer)) {
+      dragDepth += 1;
+      draggingImage = true;
+    }
+  }
+  function onDragLeave(event: DragEvent) {
+    if (hasImage(event.dataTransfer) && --dragDepth <= 0) {
+      dragDepth = 0;
+      draggingImage = false;
+    }
+  }
+  function onDrop(event: DragEvent) {
+    dragDepth = 0;
+    draggingImage = false;
+    const files = [...(event.dataTransfer?.files ?? [])];
+    if (!files.some((file) => file.type.startsWith("image/"))) {
+      return;
+    }
+    event.preventDefault();
+    addImageFiles(files);
+  }
+
+  function onPickedImages(event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    addImageFiles([...(input.files ?? [])]);
+    input.value = "";
+  }
+
+  $effect(() => {
+    textarea?.focus();
+  });
 </script>
 
 <div class="composer-wrap" class:running={chat.running}>
-{#if chat.queue.length}
+  {#if chat.queue.length}
     <ul class="queue" aria-label="Waiting messages">
-        {#each chat.queue as item (item.id)}
-            <li>
-                <button
-                        class="mode"
-                        class:steer={item.mode === 'steer'}
-                        title={item.mode === 'steer' ? 'Steer: given to Nova at its next step. Click to send after the reply instead.' : 'Queued: sent after the current reply. Click to steer Nova now instead.'}
-                        onclick={() => post({command: 'chat/queueMode', id: item.id, mode: item.mode === 'steer' ? 'queue' : 'steer'})}
-                >
-                    <span class={`codicon codicon-${item.mode === 'steer' ? 'arrow-small-right' : 'clock'}`} aria-hidden="true"></span>{item.mode === 'steer' ? 'Steer' : 'Queued'}
-                </button>
-                <span class="queue-text" title={item.text}>{item.text || item.attachments.join(', ')}</span>
-                {#if !chat.running || item.mode === 'queue'}
-                    <button class="icon codicon codicon-play" title={chat.running ? 'Steer now' : 'Send now'} aria-label="Send now" onclick={() => post({command: 'chat/queueSendNow', id: item.id})}></button>
-                {/if}
-                <button class="icon codicon codicon-close" title="Remove" aria-label="Remove from queue" onclick={() => post({command: 'chat/queueRemove', id: item.id})}></button>
-            </li>
-        {/each}
+      {#each chat.queue as item (item.id)}
+        <li>
+          <button
+            class="mode"
+            class:steer={item.mode === "steer"}
+            title={item.mode === "steer"
+              ? "Steer: given to Nova at its next step. Click to send after the reply instead."
+              : "Queued: sent after the current reply. Click to steer Nova now instead."}
+            onclick={() =>
+              post({
+                command: "chat/queueMode",
+                id: item.id,
+                mode: item.mode === "steer" ? "queue" : "steer",
+              })}
+          >
+            <span
+              class={`codicon codicon-${item.mode === "steer" ? "arrow-small-right" : "clock"}`}
+              aria-hidden="true"
+            ></span>{item.mode === "steer" ? "Steer" : "Queued"}
+          </button>
+          <span class="queue-text" title={item.text}
+            >{item.text || item.attachments.join(", ")}</span
+          >
+          {#if !chat.running || item.mode === "queue"}
+            <button
+              class="icon codicon codicon-play"
+              title={chat.running ? "Steer now" : "Send now"}
+              aria-label="Send now"
+              onclick={() =>
+                post({ command: "chat/queueSendNow", id: item.id })}
+            ></button>
+          {/if}
+          <button
+            class="icon codicon codicon-close"
+            title="Remove"
+            aria-label="Remove from queue"
+            onclick={() => post({ command: "chat/queueRemove", id: item.id })}
+          ></button>
+        </li>
+      {/each}
     </ul>
-{/if}
-<form class="composer" onsubmit={(event) => { event.preventDefault(); send(); }}>
+  {/if}
+  <form
+    class="composer"
+    class:dragging={draggingImage}
+    onsubmit={(event) => {
+      event.preventDefault();
+      send();
+    }}
+    ondragenter={onDragEnter}
+    ondragover={(event) => {
+      if (hasImage(event.dataTransfer)) {
+        event.preventDefault();
+      }
+    }}
+    ondragleave={onDragLeave}
+    ondrop={onDrop}
+  >
     {#if suggestions.length}
-        <ul class="slash-menu" id="nova-slash-menu" role="listbox" aria-label="Slash commands">
-            {#each suggestions as command, index (command.name)}
-                <li
-                        id={`nova-slash-${command.name}`}
-                        role="option"
-                        aria-selected={index === highlighted}
-                        class:active={index === highlighted}
-                        onmousedown={(event) => { event.preventDefault(); pickCommand(command, true); }}
-                        onmousemove={() => (highlighted = index)}
-                >
-                    <span class="slash-name">/{command.name}{#if command.args}<span class="slash-args"> {command.args}</span>{/if}</span>
-                    <span class="slash-description">{command.description}</span>
-                </li>
-            {/each}
-        </ul>
+      <ul
+        class="slash-menu"
+        id="nova-slash-menu"
+        role="listbox"
+        aria-label="Slash commands"
+      >
+        {#each suggestions as command, index (command.name)}
+          <li
+            id={`nova-slash-${command.name}`}
+            role="option"
+            aria-selected={index === highlighted}
+            class:active={index === highlighted}
+            onmousedown={(event) => {
+              event.preventDefault();
+              pickCommand(command, true);
+            }}
+            onmousemove={() => (highlighted = index)}
+          >
+            <span class="slash-name"
+              >/{command.name}{#if command.args}<span class="slash-args">
+                  {command.args}</span
+                >{/if}</span
+            >
+            <span class="slash-description">{command.description}</span>
+          </li>
+        {/each}
+      </ul>
     {/if}
     {#if chat.attachments.length}
-        <ul class="attachments">
-            {#each chat.attachments as attachment (attachment.id)}
-                <li>
-                    <span class="codicon codicon-file" aria-hidden="true"></span>
-                    <button class="chip-label" type="button" title={attachment.label} onclick={() => post({command: 'chat/openFile', path: attachment.path})}>{attachment.label}</button>
-                    <button class="chip-remove codicon codicon-close" type="button" aria-label={`Remove ${attachment.label}`} onclick={() => post({command: 'chat/removeAttachment', id: attachment.id})}></button>
-                </li>
-            {/each}
-        </ul>
+      <ul class="attachments">
+        {#each chat.attachments as attachment (attachment.id)}
+          <li>
+            {#if attachment.image}
+              <img
+                class="chip-image"
+                src={`data:${attachment.image.mimeType};base64,${attachment.image.data}`}
+                alt=""
+                title={attachment.label}
+              />
+            {:else}
+              <span class="codicon codicon-file" aria-hidden="true"></span>
+            {/if}
+            <button
+              class="chip-label"
+              type="button"
+              title={attachment.label}
+              onclick={() =>
+                attachment.path
+                  ? post({ command: "chat/openFile", path: attachment.path })
+                  : undefined}>{attachment.label}</button
+            >
+            <button
+              class="chip-remove codicon codicon-close"
+              type="button"
+              aria-label={`Remove ${attachment.label}`}
+              onclick={() =>
+                post({ command: "chat/removeAttachment", id: attachment.id })}
+            ></button>
+          </li>
+        {/each}
+      </ul>
     {/if}
 
     <textarea
-            bind:this={textarea}
-            bind:value={text}
-            oninput={onInput}
-            onkeydown={onKeydown}
-            rows="1"
-            placeholder={!chat.models.length ? 'No Nova models available' : questionPending ? 'Answer Nova\'s question…' : chat.running ? 'Steer Nova or queue a follow-up…' : 'Ask Nova to explain, change or build something…'}
-            aria-label="Message Nova"
-            aria-autocomplete="list"
-            aria-controls={suggestions.length ? 'nova-slash-menu' : undefined}
-            aria-activedescendant={suggestions[highlighted] ? `nova-slash-${suggestions[highlighted].name}` : undefined}
-    ></textarea>
+      bind:this={textarea}
+      bind:value={text}
+      oninput={onInput}
+      onkeydown={onKeydown}
+      onpaste={onPaste}
+      rows="1"
+      placeholder={!chat.models.length
+        ? "No Nova models available"
+        : questionPending
+          ? "Answer Nova's question…"
+          : chat.running
+            ? "Steer Nova or queue a follow-up…"
+            : "Ask Nova to explain, change or build something…"}
+      aria-label="Message Nova"
+      aria-autocomplete="list"
+      aria-controls={suggestions.length ? "nova-slash-menu" : undefined}
+      aria-activedescendant={suggestions[highlighted]
+        ? `nova-slash-${suggestions[highlighted].name}`
+        : undefined}></textarea>
+
+    <input
+      bind:this={imageInput}
+      class="image-input"
+      type="file"
+      accept="image/png,image/jpeg,image/webp"
+      multiple
+      aria-hidden="true"
+      tabindex="-1"
+      onchange={onPickedImages}
+    />
 
     <div class="toolbar">
-        <button class="icon codicon codicon-attach" type="button" title="Add files" aria-label="Add files" onclick={() => post({command: 'chat/addFile'})}></button>
-        <button class="icon codicon codicon-selection" type="button" title="Add editor selection" aria-label="Add editor selection" onclick={() => post({command: 'chat/addSelection'})}></button>
+      <button
+        class="icon codicon codicon-attach"
+        type="button"
+        title="Add files"
+        aria-label="Add files"
+        onclick={() => post({ command: "chat/addFile" })}
+      ></button>
+      <button
+        class="icon codicon codicon-file-media"
+        type="button"
+        title="Add images (or paste, or drop them here)"
+        aria-label="Add images"
+        onclick={() => imageInput?.click()}
+      ></button>
+      <button
+        class="icon codicon codicon-selection"
+        type="button"
+        title="Add editor selection"
+        aria-label="Add editor selection"
+        onclick={() => post({ command: "chat/addSelection" })}
+      ></button>
 
-        <select
-                class="select"
-                aria-label="Model"
-                value={chat.modelId}
-                onchange={(event) => post({command: 'chat/selectModel', modelId: event.currentTarget.value})}
+      <select
+        class="select"
+        aria-label="Model"
+        value={chat.modelId}
+        onchange={(event) =>
+          post({
+            command: "chat/selectModel",
+            modelId: event.currentTarget.value,
+          })}
+      >
+        {#each chat.models as model (model.id)}
+          <option value={model.id}>{model.name}</option>
+        {/each}
+      </select>
+
+      <select
+        class="select approvals"
+        aria-label="Tool approvals"
+        title="When to ask before running tools"
+        value={chat.approvalMode}
+        onchange={(event) =>
+          post({
+            command: "chat/setApprovalMode",
+            mode: event.currentTarget.value,
+          })}
+      >
+        {#each Object.entries(approvalLabels) as [mode, label] (mode)}
+          <option value={mode}>{label}</option>
+        {/each}
+      </select>
+
+      <span class="spacer"></span>
+
+      {#if chat.usage}
+        <span
+          class="meter"
+          title={`Context: ${chat.usage.used.toLocaleString()} / ${chat.usage.total.toLocaleString()} tokens (${usagePercent}%)`}
         >
-            {#each chat.models as model (model.id)}
-                <option value={model.id}>{model.name}</option>
-            {/each}
-        </select>
+          <svg viewBox="0 0 20 20" aria-hidden="true">
+            <circle cx="10" cy="10" r="8" class="track"></circle>
+            <circle
+              cx="10"
+              cy="10"
+              r="8"
+              class={`fill ${usagePercent >= 90 ? "high" : usagePercent >= 70 ? "mid" : ""}`}
+              stroke-dasharray={`${(usagePercent / 100) * 50.27} 50.27`}
+            ></circle>
+          </svg>
+        </span>
+      {/if}
 
-        <select
-                class="select approvals"
-                aria-label="Tool approvals"
-                title="When to ask before running tools"
-                value={chat.approvalMode}
-                onchange={(event) => post({command: 'chat/setApprovalMode', mode: event.currentTarget.value})}
+      {#if chat.running}
+        <button
+          class="send stop"
+          type="button"
+          title="Stop"
+          aria-label="Stop"
+          onclick={() => post({ command: "chat/stop" })}
         >
-            {#each Object.entries(approvalLabels) as [mode, label] (mode)}
-                <option value={mode}>{label}</option>
-            {/each}
-        </select>
-
-        <span class="spacer"></span>
-
-        {#if chat.usage}
-            <span class="meter" title={`Context: ${chat.usage.used.toLocaleString()} / ${chat.usage.total.toLocaleString()} tokens (${usagePercent}%)`}>
-                <svg viewBox="0 0 20 20" aria-hidden="true">
-                    <circle cx="10" cy="10" r="8" class="track"></circle>
-                    <circle cx="10" cy="10" r="8" class={`fill ${usagePercent >= 90 ? 'high' : usagePercent >= 70 ? 'mid' : ''}`}
-                            stroke-dasharray={`${(usagePercent / 100) * 50.27} 50.27`}></circle>
-                </svg>
-            </span>
+          <span class="stop-square" aria-hidden="true"></span>
+        </button>
+        {#if canSend}
+          <button
+            class="send"
+            type="submit"
+            title="Steer Nova (Enter)"
+            aria-label="Steer Nova"
+          >
+            <span class="codicon codicon-send" aria-hidden="true"></span>
+          </button>
         {/if}
-
-        {#if chat.running}
-            <button class="send stop" type="button" title="Stop" aria-label="Stop" onclick={() => post({command: 'chat/stop'})}>
-                <span class="stop-square" aria-hidden="true"></span>
-            </button>
-            {#if canSend}
-                <button class="send" type="submit" title="Steer Nova (Enter)" aria-label="Steer Nova">
-                    <span class="codicon codicon-send" aria-hidden="true"></span>
-                </button>
-            {/if}
-        {:else}
-            <button class="send" type="submit" title="Send (Enter)" aria-label="Send" disabled={!canSend}>
-                <span class="codicon codicon-send" aria-hidden="true"></span>
-            </button>
-        {/if}
+      {:else}
+        <button
+          class="send"
+          type="submit"
+          title="Send (Enter)"
+          aria-label="Send"
+          disabled={!canSend}
+        >
+          <span class="codicon codicon-send" aria-hidden="true"></span>
+        </button>
+      {/if}
     </div>
-</form>
+  </form>
 </div>
 
 <style lang="scss">
@@ -226,7 +469,7 @@
 
     &::before,
     &::after {
-      content: '';
+      content: "";
       position: absolute;
       /* Centered on the composer: the sidebar has no room below it for the platform's lower glow. */
       top: 55%;
@@ -237,25 +480,32 @@
       opacity: 0;
       pointer-events: none;
       transform: translate(-50%, -50%) scale(0.9);
-      transition: opacity 0.42s, transform 0.42s, filter 0.42s;
+      transition:
+        opacity 0.42s,
+        transform 0.42s,
+        filter 0.42s;
     }
 
     &::before {
       z-index: -2;
-      background: radial-gradient(ellipse at center, color-mix(in srgb, var(--nova-brand-primary) 26%, transparent) 0 26%, transparent 54%);
+      background: radial-gradient(
+        ellipse at center,
+        color-mix(in srgb, var(--nova-brand-primary) 26%, transparent) 0 26%,
+        transparent 54%
+      );
       filter: blur(28px);
     }
 
     &::after {
       z-index: -1;
       background: conic-gradient(
-          from var(--nova-glow-angle),
-          color-mix(in srgb, var(--nova-brand-primary) 0%, transparent) 0deg,
-          color-mix(in srgb, var(--nova-brand-primary) 72%, transparent) 55deg,
-          color-mix(in srgb, var(--nova-brand-info) 52%, transparent) 145deg,
-          color-mix(in srgb, var(--nova-brand-secondary) 40%, transparent) 220deg,
-          color-mix(in srgb, var(--nova-brand-primary) 72%, transparent) 300deg,
-          color-mix(in srgb, var(--nova-brand-primary) 0%, transparent) 360deg
+        from var(--nova-glow-angle),
+        color-mix(in srgb, var(--nova-brand-primary) 0%, transparent) 0deg,
+        color-mix(in srgb, var(--nova-brand-primary) 72%, transparent) 55deg,
+        color-mix(in srgb, var(--nova-brand-info) 52%, transparent) 145deg,
+        color-mix(in srgb, var(--nova-brand-secondary) 40%, transparent) 220deg,
+        color-mix(in srgb, var(--nova-brand-primary) 72%, transparent) 300deg,
+        color-mix(in srgb, var(--nova-brand-primary) 0%, transparent) 360deg
       );
       filter: blur(30px);
       animation: nova-orbit 5s linear infinite paused;
@@ -283,7 +533,9 @@
     border: 1px solid var(--nova-input-border);
     border-radius: 14px;
     background: var(--nova-input-bg);
-    transition: border-color 0.2s ease, box-shadow 0.3s ease;
+    transition:
+      border-color 0.2s ease,
+      box-shadow 0.3s ease;
 
     &:focus-within {
       border-color: var(--nova-focus);
@@ -292,6 +544,13 @@
 
   .running .composer {
     box-shadow: 0 2px 12px -6px color-mix(in srgb, var(--nova-brand-primary) 40%, transparent);
+  }
+
+  /* An image is being dragged over the composer. */
+  .composer.dragging {
+    border-color: var(--nova-focus);
+    outline: 1px dashed var(--nova-focus);
+    outline-offset: 2px;
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -343,7 +602,10 @@
       cursor: pointer;
 
       &.active {
-        background: var(--vscode-list-activeSelectionBackground, var(--nova-hover));
+        background: var(
+          --vscode-list-activeSelectionBackground,
+          var(--nova-hover)
+        );
         color: var(--vscode-list-activeSelectionForeground, var(--nova-fg));
 
         .slash-description,
@@ -405,7 +667,11 @@
     cursor: pointer;
 
     &.steer {
-      border-color: color-mix(in srgb, var(--nova-brand-primary) 50%, transparent);
+      border-color: color-mix(
+        in srgb,
+        var(--nova-brand-primary) 50%,
+        transparent
+      );
       color: var(--nova-fg);
     }
 
@@ -458,6 +724,23 @@
       border-radius: var(--nova-radius);
       font-size: 0.9em;
     }
+  }
+
+  .chip-image {
+    flex: none;
+    width: 22px;
+    height: 22px;
+    object-fit: cover;
+    border-radius: 3px;
+  }
+
+  /* The image picker is invisible; the camera button opens it. */
+  .image-input {
+    position: absolute;
+    width: 0;
+    height: 0;
+    opacity: 0;
+    pointer-events: none;
   }
 
   .chip-label,

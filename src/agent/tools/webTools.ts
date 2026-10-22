@@ -18,7 +18,7 @@ export const fetchUrlTool: NovaTool<FetchUrlInput> = {
     description:
         'Fetch a web page (http or https) and return its main content as text with links, or the raw body for text and JSON. ' +
         'Use it to read documentation, issues or articles the user refers to. Long pages are cut; pass startChar to read on. ' +
-        'You cannot search the web: you need a concrete URL.',
+        'Use web_search when you do not have the address of the page yet; it searches and opens the top results.',
     inputSchema: {
         type: 'object',
         properties: {
@@ -110,7 +110,7 @@ async function readLimited(response: Response, maxBytes: number): Promise<string
     const reader = response.body.getReader();
     const chunks: Uint8Array[] = [];
     let total = 0;
-    for (;;) {
+    for (; ;) {
         const { done, value } = await reader.read();
         if (done || !value) {
             break;
