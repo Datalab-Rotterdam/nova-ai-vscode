@@ -1,3 +1,4 @@
+import * as path from 'node:path';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -45,7 +46,8 @@ function setup(responses: Part[][], approvalMode = 'autoReadOnly', services: Rec
 
 const toolItems = (events: ChatEvent[]) => events
   .filter((event): event is Extract<ChatEvent, { type: 'chat/itemUpdated' }> => event.type === 'chat/itemUpdated')
-  .map((event) => event.item as ToolItem);
+  .map((event) => event.item)
+  .filter((item): item is ToolItem => item.kind === 'tool');
 
 /** The request array is mutated after the call, so search it instead of taking the last message. */
 function toolResultIn(messages: vscode.LanguageModelChatMessage[]): vscode.LanguageModelToolResultPart {
@@ -87,6 +89,70 @@ describe('ChatController', () => {
     expect(controller.getState().items.at(-1)).toMatchObject({ kind: 'assistant', text: 'All done.' });
     expect(controller.getState().title).toBe('run it');
     expect(store.save).toHaveBeenCalled();
+  });
+
+  it('runs research agents in parallel and returns their reports to the main agent', async () => {
+    const { controller, events, model } = setup([
+      [new vscode.LanguageModelToolCallPart('s1', 'spawn_agents', { agents: [{ name: 'Auth', prompt: 'How does auth work?' }, { name: 'Config', prompt: 'Where is config read?' }] })],
+      [new vscode.LanguageModelTextPart('report one')],
+      [new vscode.LanguageModelTextPart('report two')],
+      [new vscode.LanguageModelTextPart('Summary.')]
+    ]);
+
+    await controller.handle({ command: 'chat/send', text: 'research it' });
+
+    const agents = controller.getState().subagents;
+    expect(agents.map((agent) => agent.status)).toEqual(['done', 'done']);
+    expect(agents.map((agent) => agent.report).sort()).toEqual(['report one', 'report two']);
+    expect(agents.every((agent) => agent.callId === 's1' && agent.runId)).toBe(true);
+    expect(events.some((event) => event.type === 'chat/subagents')).toBe(true);
+    const result = toolResultIn(model.sendRequest.mock.calls[3][0]);
+    const text = (result.content[0] as vscode.LanguageModelTextPart).value;
+    expect(text).toContain('## Auth');
+    expect(text).toContain('report two');
+    // Children never get the spawn tool, so they cannot start more agents; and never edit tools.
+    const childTools = (model.sendRequest.mock.calls[1][1].tools as Array<{ name: string }>).map((tool) => tool.name);
+    expect(childTools).not.toContain('spawn_agents');
+    expect(childTools).not.toContain('edit_file');
+    expect(childTools).toContain('run_command');
+  });
+
+  it('routes a sub-agent command through the normal approval and keeps its steps out of the main flow', async () => {
+    const { controller, events } = setup([
+      [new vscode.LanguageModelToolCallPart('s1', 'spawn_agents', { agents: [{ name: 'Runner', prompt: 'run echo' }] })],
+      [new vscode.LanguageModelToolCallPart('c1', 'run_command', { command: 'echo from-agent' })],
+      [new vscode.LanguageModelTextPart('agent report')],
+      [new vscode.LanguageModelTextPart('Done.')]
+    ]);
+
+    const sending = controller.handle({ command: 'chat/send', text: 'go' });
+    await until(() => toolItems(events).some((item) => item.status === 'awaiting-approval'));
+    const pending = toolItems(events).find((item) => item.status === 'awaiting-approval')!;
+    const agent = controller.getState().subagents[0]!;
+    expect(pending.agentId).toBe(agent.id);
+    expect(agent.status).toBe('waiting-approval');
+
+    await controller.handle({ command: 'chat/approval', itemId: pending.id, decision: 'approve' });
+    await sending;
+
+    expect(controller.getState().subagents[0]).toMatchObject({ status: 'done', toolCount: 1, report: 'agent report' });
+  });
+
+  it('stops all agents with the main stop button', async () => {
+    const { controller, events } = setup([
+      [new vscode.LanguageModelToolCallPart('s1', 'spawn_agents', { agents: [{ name: 'Runner', prompt: 'run echo' }] })],
+      [new vscode.LanguageModelToolCallPart('c1', 'run_command', { command: 'echo from-agent' })]
+    ], 'ask');
+
+    const sending = controller.handle({ command: 'chat/send', text: 'go' });
+    // In "ask" mode even starting the agents is asked; then the agent's own command is.
+    await until(() => toolItems(events).some((item) => item.status === 'awaiting-approval'));
+    await controller.handle({ command: 'chat/approval', itemId: toolItems(events).find((item) => item.status === 'awaiting-approval')!.id, decision: 'approve' });
+    await until(() => toolItems(events).some((item) => item.agentId && item.status === 'awaiting-approval'));
+    await controller.handle({ command: 'chat/stop' });
+    await sending;
+
+    expect(controller.getState().subagents[0]!.status).toBe('stopped');
   });
 
   it('tells the model when the user rejects a tool call', async () => {
@@ -425,11 +491,13 @@ describe('ChatController', () => {
 
   it('keeps a task list from todo_write without adding tool cards', async () => {
     const { controller, events } = setup([
-      [new vscode.LanguageModelToolCallPart('c1', 'todo_write', { todos: [
-        { content: 'Read the code', status: 'completed' },
-        { content: 'Write the fix', status: 'in_progress' },
-        { content: 'Run tests', status: 'pending' }
-      ] })],
+      [new vscode.LanguageModelToolCallPart('c1', 'todo_write', {
+        todos: [
+          { content: 'Read the code', status: 'completed' },
+          { content: 'Write the fix', status: 'in_progress' },
+          { content: 'Run tests', status: 'pending' }
+        ]
+      })],
       [new vscode.LanguageModelTextPart('Working on it.')]
     ]);
 
@@ -599,6 +667,157 @@ describe('ChatController', () => {
       await controller.handle({ command: 'chat/send', text: '/etc/hosts looks wrong' });
       expect(model.sendRequest).toHaveBeenCalledTimes(2);
       expect(controller.getState().items.filter((item) => item.kind === 'user').map((item) => item.text)).toEqual(['/deploy now', '/etc/hosts looks wrong']);
+    });
+  });
+
+  describe('composer @-mentions and attachments', () => {
+    it('attaches a file the composer picked, and its content follows the next message to the model', async () => {
+      const { controller, model } = setup([[new vscode.LanguageModelTextPart('ok')]]);
+      vi.spyOn(vscode.workspace, 'fs', 'get').mockReturnValue({
+        readFile: async () => new TextEncoder().encode('export const a = 1;')
+      } as never);
+
+      await controller.handle({ command: 'chat/attachFile', path: 'src/one.ts' });
+
+      expect(controller.getState().attachments).toEqual([{ id: expect.any(String), label: 'src/one.ts', path: 'src/one.ts' }]);
+      expect(Array.from(controller.getState().attachments.map((attachment) => 'path' in attachment))).toEqual([true]);
+
+      await controller.handle({ command: 'chat/attachFile', path: 'src/one.ts' });
+      expect(controller.getState().attachments).toHaveLength(1);
+
+      await controller.handle({ command: 'chat/send', text: 'explain' });
+
+      // The request array is mutated after the call, so search it instead of indexing it.
+      const sent = (model.sendRequest.mock.calls[0][0] as vscode.LanguageModelChatMessage[])
+        .flatMap((message) => message.content)
+        .find((part) => part instanceof vscode.LanguageModelTextPart && (part.value as string).includes('<attachments>'));
+      expect((sent as vscode.LanguageModelTextPart).value).toContain('<attachment path="src/one.ts">\nexport const a = 1;\n</attachment>');
+      expect(controller.getState().attachments).toEqual([]);
+      const sentItem = controller.getState().items.find((item) => item.kind === 'user');
+      expect(sentItem).toMatchObject({ text: 'explain', attachments: ['src/one.ts'] });
+    });
+
+    it('the attach button opens one picker for files and images', async () => {
+      const { controller } = setup([]);
+      const open = vi.spyOn(vscode.window, 'showOpenDialog').mockResolvedValue([vscode.Uri.file('/tmp/shot.png')]);
+      vi.spyOn(vscode.workspace, 'fs', 'get').mockReturnValue({
+        stat: async () => ({ type: vscode.FileType.File }),
+        readFile: async () => new Uint8Array([1, 2, 3])
+      } as never);
+
+      await controller.handle({ command: 'chat/addFile' });
+
+      expect(open).toHaveBeenCalledWith(expect.objectContaining({ canSelectMany: true, canSelectFolders: false }));
+      expect(controller.getState().attachments).toEqual([
+        { id: expect.any(String), label: 'shot.png', image: { mimeType: 'image/png', data: 'AQID' } }
+      ]);
+    });
+
+    it('references files from inside the workspace by path, whether picked or dropped', async () => {
+      const { controller } = setup([]);
+      const root = process.cwd();
+      vi.spyOn(vscode.window, 'showOpenDialog').mockResolvedValue([vscode.Uri.file(`${root}/src/one.ts`), vscode.Uri.file(`${root}/docs/shot.png`)]);
+      vi.spyOn(vscode.workspace, 'fs', 'get').mockReturnValue({
+        stat: async () => ({ type: vscode.FileType.File }),
+        readFile: async () => new Uint8Array([1, 2, 3])
+      } as never);
+
+      await controller.handle({ command: 'chat/addFile' });
+      await controller.handle({ command: 'chat/attachUris', uris: [`file://${root}/src/one.ts`] });
+
+      // The text file is attached by its workspace path (once); the image keeps its path next to its data.
+      expect(controller.getState().attachments).toEqual([
+        { id: expect.any(String), label: 'src/one.ts', path: 'src/one.ts' },
+        { id: expect.any(String), label: 'docs/shot.png', path: 'docs/shot.png', image: { mimeType: 'image/png', data: 'AQID' } }
+      ]);
+    });
+
+    it('attaches a text file dropped from outside the workspace as inline content', async () => {
+      const { controller, model } = setup([[new vscode.LanguageModelTextPart('ok')]]);
+
+      await controller.handle({ command: 'chat/addTextFile', name: 'notes.md', content: '# hi' });
+      expect(controller.getState().attachments).toEqual([{ id: expect.any(String), label: 'notes.md', content: '# hi' }]);
+
+      await controller.handle({ command: 'chat/send', text: 'read it' });
+      const sent = (model.sendRequest.mock.calls[0][0] as vscode.LanguageModelChatMessage[])
+        .flatMap((message) => message.content)
+        .find((part) => part instanceof vscode.LanguageModelTextPart && (part.value as string).includes('<attachments>'));
+      expect((sent as vscode.LanguageModelTextPart).value).toContain('<attachment path="notes.md">\n# hi\n</attachment>');
+    });
+
+    it('stores a pasted image as bare base64 so the chip preview and the model can decode it', async () => {
+      const { controller } = setup([]);
+
+      await controller.handle({ command: 'chat/addImage', name: 'image.png', dataUrl: 'data:image/png;base64,iVBORw0KGgo=' });
+
+      expect(controller.getState().attachments).toEqual([
+        { id: expect.any(String), label: 'image.png', image: { mimeType: 'image/png', data: 'iVBORw0KGgo=' } }
+      ]);
+    });
+
+    it('refuses dropped binaries with a notice', async () => {
+      const { controller } = setup([]);
+
+      await controller.handle({ command: 'chat/addTextFile', name: 'report.pdf', content: '' });
+
+      expect(controller.getState().attachments).toEqual([]);
+      expect(controller.getState().items.at(-1)).toMatchObject({ kind: 'notice', tone: 'warning' });
+    });
+
+    it('offers the workspace files to the composer, newest first', async () => {
+      const root = process.cwd();
+      const scan = vi
+        .spyOn(vscode.workspace, 'findFiles')
+        .mockResolvedValue(['old.ts', 'brand-new.ts', 'recent.ts'].map((name) => vscode.Uri.file(join(root, name))));
+      vi.spyOn(vscode.workspace, 'fs', 'get').mockReturnValue({
+        stat: async (uri: vscode.Uri) => ({
+          mtime: uri.fsPath.includes('new') ? 3 : uri.fsPath.includes('recent') ? 2 : 1
+        })
+      } as never);
+      const { controller } = setup([]);
+
+      // The scan runs in the background: the first state starts it, the settled one holds it.
+      await until(() => controller.getState().fileOptions.length === 3);
+      expect(controller.getState().fileOptions).toEqual(['brand-new.ts', 'recent.ts', 'old.ts']);
+      expect(scan).toHaveBeenCalledTimes(1);
+      // A repeat within the stale window reuses the scan.
+      expect(controller.getState().fileOptions).toEqual(['brand-new.ts', 'recent.ts', 'old.ts']);
+      expect(scan).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('agents', () => {
+    const agents = () => ({
+      agents: () => ({ builtinDir: path.join(process.cwd(), 'resources', 'chat', 'agents', 'modes'), novaHome: '/nonexistent' })
+    });
+
+    it('offers the agents in the state and keeps the chosen one', async () => {
+      const { controller } = setup([], 'autoReadOnly', agents());
+      await controller.handle({ command: 'chat/setAgent', id: 'plan' });
+      const state = controller.getState();
+      expect(state.agent).toBe('plan');
+      expect(state.agents.map((agent) => agent.id)).toEqual(['interactive', 'plan', 'autopilot', 'ask']);
+    });
+
+    it('plan mode does not offer edit or command tools', async () => {
+      const { controller, model } = setup([[new vscode.LanguageModelTextPart('A plan.')]], 'autoAll', agents());
+      await controller.handle({ command: 'chat/setAgent', id: 'plan' });
+      await controller.handle({ command: 'chat/send', text: 'plan it' });
+      const names = (model.sendRequest as unknown as { mock: { calls: Array<[unknown, { tools?: Array<{ name: string }> }]> } }).mock.calls[0][1].tools?.map((tool) => tool.name) ?? [];
+      expect(names).toContain('read_file');
+      expect(names).not.toContain('edit_file');
+      expect(names).not.toContain('run_command');
+    });
+
+    it('autopilot answers ask_user itself', async () => {
+      const { controller, model } = setup([
+        [new vscode.LanguageModelToolCallPart('q1', 'ask_user', { question: 'Which one?' })],
+        [new vscode.LanguageModelTextPart('Chose.')]
+      ], 'autoReadOnly', agents());
+      await controller.handle({ command: 'chat/setAgent', id: 'autopilot' });
+      await controller.handle({ command: 'chat/send', text: 'go' });
+      const result = toolResultIn((model.sendRequest as unknown as { mock: { calls: Array<[vscode.LanguageModelChatMessage[]]> } }).mock.calls[1][0]);
+      expect(JSON.stringify(result.content)).toContain('Autopilot is on');
     });
   });
 });

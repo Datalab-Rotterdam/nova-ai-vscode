@@ -2,7 +2,9 @@
     import {onMount, untrack} from 'svelte';
     import type {ChatEvent} from '../../src/panel/protocol';
     import ChatView from './chat/ChatView.svelte';
+    import AgentsPage from './agents/AgentsPage.svelte';
     import SkillsPage from './skills/SkillsPage.svelte';
+    import type {AgentsPageData} from '../../src/agents/protocol';
     import type {SkillScopeName, SkillsPageData} from '../../src/skills/protocol';
     import {createChatStore} from './chat/store.svelte';
     import type {ExtensionMessage, SidebarRenderState, SidebarView, VsCodeApi} from './types';
@@ -21,14 +23,19 @@
     let chatsOpen = $state(false);
     /** The Skills tab runs this same app with surface "skills". */
     const skillsSurface = untrack(() => initialState.surface === 'skills');
+    const agentsSurface = untrack(() => initialState.surface === 'agents');
     let skills = $state<SkillsPageData | undefined>();
-    const savedScope = (vscode?.getState?.() as { scope?: SkillScopeName } | undefined)?.scope;
+    let agents = $state<AgentsPageData | undefined>();
+    const savedScope = (vscode?.getState?.() as { scope?: SkillScopeName & ('global' | 'project') } | undefined)?.scope;
+    const savedAgentScope = (vscode?.getState?.() as { scope?: 'builtin' | 'global' | 'project' } | undefined)?.scope;
 
     onMount(() => {
         const onMessage = (event: MessageEvent<ExtensionMessage | ChatEvent>) => {
             const message = event.data;
             if (message.type === 'skills') {
                 skills = (message as unknown as { data: SkillsPageData }).data;
+            } else if (message.type === 'agents') {
+                agents = (message as unknown as { data: AgentsPageData }).data;
             } else if (message.type.startsWith('chat/')) {
                 chat.apply(message as ChatEvent);
                 if (message.type === 'chat/state') {
@@ -67,6 +74,10 @@
             post({command: 'skills/ready'});
             return () => window.removeEventListener('message', onMessage);
         }
+        if (agentsSurface) {
+            post({command: 'agents/ready'});
+            return () => window.removeEventListener('message', onMessage);
+        }
         post({command: 'ready'});
         post({command: 'chat/ready'});
         return () => window.removeEventListener('message', onMessage);
@@ -86,7 +97,9 @@
     <title>Nova AI</title>
 </svelte:head>
 
-{#if skillsSurface}
+{#if agentsSurface}
+    <AgentsPage data={agents} {post} initialScope={savedAgentScope ?? 'builtin'} onScope={(scope) => vscode?.setState?.({scope})}/>
+{:else if skillsSurface}
     <SkillsPage data={skills} {post} initialScope={savedScope ?? 'global'} onScope={(scope) => vscode?.setState?.({scope})}/>
 {:else if view === 'chat' && chat.state}
     <ChatView chat={chat.state} {post} logoUri={state.logoUri} surface={state.surface} profile={state.profile} onAccount={() => view = 'account'} {chatsOpen} onChats={(open) => chatsOpen = open}/>

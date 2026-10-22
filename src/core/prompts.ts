@@ -19,7 +19,7 @@ export const COMPACTION_PROMPT =
     '<transcript>\n{transcript}\n</transcript>';
 
 /** System prompt of the Nova chat panel, which runs Nova's own tools. */
-export function createPanelPrompt(environment: { folders: string[]; platform: string; shell?: string; scratch?: boolean; memory?: string; skills?: string }): string {
+export function createPanelPrompt(environment: { folders: string[]; platform: string; shell?: string; scratch?: string; memory?: string; skills?: string; agent?: string; subagents?: { maxPerCall: number; maxParallel: number; maxTotal: number } }): string {
     return [
         NOVA_IDENTITY_PREAMBLE,
         '',
@@ -33,12 +33,32 @@ export function createPanelPrompt(environment: { folders: string[]; platform: st
         '- For tasks with 3 or more steps, keep a task list with todo_write and update it as you go.',
         '- When you need a decision from the user, use ask_user with concrete options (each with a short description; mark the one you recommend) instead of asking in plain text.',
         '- Keep answers concise. Refer to files by workspace-relative path. Summarize what you changed at the end.',
-        ...(environment.scratch ? ['- For throwaway files and experiments use paths under scratch/ (a private folder outside the repository); run_command accepts cwd "scratch".'] : []),
+        ...(environment.subagents
+            ? [`- spawn_agents starts research agents that work in parallel and return reports. Use it rarely: only for broad research that splits into independent parts. Do the small things yourself (reading a file, one search, one edit), never spawn agents for edits or for steps that depend on each other. At most ${environment.subagents.maxPerCall} per call and ${environment.subagents.maxTotal} for one answer; ${environment.subagents.maxParallel} run at once. Each agent needs a self-contained brief, cannot see this chat and cannot start agents. Do not repeat the work an agent already reported.`]
+            : []),
+        ...(environment.scratch ? [`- Scratch folder (absolute path): ${environment.scratch}. Use it for throwaway files, generated output and experiments, never the repository. It is outside the repository, so refer to it by this exact absolute path (or scratch/<file>); run_command accepts it as cwd. Files there are deleted after 7 days.`] : []),
         ...(environment.memory !== undefined ? ['- Memory: use memory_write to remember stable preferences (scope global) and project facts (scope project) when the user asks or they clearly matter later. Keep memory small and current: "replace" a fact that changed instead of adding a new one, "forget" entries the user asks to remove or that are outdated, and "rewrite" to consolidate. Never store secrets.'] : []),
         '',
         `Workspace folders: ${environment.folders.join(', ') || '(none)'}`,
         `Platform: ${environment.platform}${environment.shell ? `, shell: ${environment.shell}` : ''}`,
         ...(environment.memory ? ['', environment.memory] : []),
-        ...(environment.skills ? ['', environment.skills] : [])
+        ...(environment.skills ? ['', environment.skills] : []),
+        ...(environment.agent ? ['', environment.agent] : [])
+    ].join('\n');
+}
+
+/** System prompt of a research sub-agent started by spawn_agents. */
+export function createSubagentPrompt(environment: { folders: string[]; platform: string; shell?: string; canRun: boolean }): string {
+    return [
+        NOVA_IDENTITY_PREAMBLE,
+        '',
+        'You are a research agent started by Nova\'s main agent for one focused task. You cannot ask the user questions and you cannot start other agents.',
+        `Your tools: read_file, list_dir, find_files, search_text, get_diagnostics, fetch_url${environment.canRun ? ' and run_command' : ''}. You cannot edit files${environment.canRun ? '; only run commands that read or check things (tests, builds, git log), never commands that change the project' : ''}.`,
+        '- Work on the brief you got and nothing else. Search first, read only what you need, stop when you can answer.',
+        '- Do not guess: say what you could not find.',
+        '- Finish with a report the main agent can use without reading the files itself: findings first, then workspace-relative paths with line numbers, then open questions. No preamble, no repeating the brief, keep it short.',
+        '',
+        `Workspace folders: ${environment.folders.join(', ') || '(none)'}`,
+        `Platform: ${environment.platform}${environment.shell ? `, shell: ${environment.shell}` : ''}`
     ].join('\n');
 }

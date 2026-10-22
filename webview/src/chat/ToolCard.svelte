@@ -1,10 +1,18 @@
 <script lang="ts">
-    import type {ApprovalDecision, ToolItem} from '../../../src/panel/protocol';
+    import {getContext} from 'svelte';
+    import type {SubagentState, ToolItem} from '../../../src/panel/protocol';
     import DiffView from './DiffView.svelte';
 
     let {item, post}: { item: ToolItem; post: (message: Record<string, unknown>) => void } = $props();
 
     let expanded = $state(false);
+
+    // The agents a spawn_agents call started, from the chat; they stay on the card after the strip is gone.
+    const allAgents = getContext<(() => SubagentState[]) | undefined>('nova.subagents');
+    const agents = $derived(item.name === 'spawn_agents' ? (allAgents?.() ?? []).filter((agent) => agent.callId === item.callId) : []);
+    const agentIcon = (status: SubagentState['status']) => ({
+        queued: 'clock', running: 'loading codicon-modifier-spin', 'waiting-approval': 'shield', done: 'check', error: 'error', stopped: 'debug-stop'
+    }[status]);
 
     const icon = $derived({
         'awaiting-approval': 'shield',
@@ -14,9 +22,6 @@
         rejected: 'circle-slash'
     }[item.status]);
 
-    function decide(decision: ApprovalDecision) {
-        post({command: 'chat/approval', itemId: item.id, decision});
-    }
 </script>
 
 <div class={`tool ${item.status}`}>
@@ -29,33 +34,18 @@
         <span class={`codicon codicon-chevron-${expanded ? 'up' : 'down'} chevron`} aria-hidden="true"></span>
     </button>
 
-    {#if item.status === 'awaiting-approval'}
-        <div class="approval">
-            {#if item.detail}
-                <code class="command">{item.detail}</code>
-            {/if}
-            <div class="buttons">
-                <button class="nova-button" onclick={() => decide('approve')}>Allow</button>
-                {#if item.allowRule}
-                    <button class="nova-button secondary" onclick={() => decide('approveAlways')} title={`Always allow ${item.allowRule} in this workspace (saved to .nova-ai/settings.local.json)`}>Always allow</button>
-                {:else}
-                    <button class="nova-button secondary" onclick={() => decide('approveSession')} title="Allow all tool calls in this chat">Allow all</button>
-                {/if}
-                <button class="nova-button secondary" onclick={() => decide('reject')}>Reject</button>
-            </div>
-            <div class="approval-links">
-                {#if item.editPath}
-                    <button class="link" onclick={() => post({command: 'chat/openDiff', itemId: item.id})}>
-                        <span class="codicon codicon-diff" aria-hidden="true"></span>Review changes
-                    </button>
-                {/if}
-                {#if item.allowRule}
-                    <button class="link" onclick={() => decide('approveSession')} title="Allow all tool calls in this chat">
-                        <span class="codicon codicon-check-all" aria-hidden="true"></span>Allow all in this chat
-                    </button>
-                {/if}
-            </div>
+    {#if agents.length}
+        <div class="chips">
+            {#each agents as agent (agent.id)}
+                <span class={`chip ${agent.status}`} title={agent.task}>
+                    <span class={`codicon codicon-${agentIcon(agent.status)}`} aria-hidden="true"></span>{agent.name}
+                </span>
+            {/each}
         </div>
+    {/if}
+
+    {#if item.status === 'awaiting-approval'}
+        <div class="waiting">Waiting for your answer under the message box.</div>
     {:else if item.editPath && item.status === 'done'}
         {#if item.diff?.lines.length}
             <div class="inline-diff">
@@ -166,38 +156,45 @@
     color: var(--nova-focus);
   }
 
-  .approval {
-    display: grid;
-    gap: 8px;
-    padding: 2px 8px 8px;
-  }
-
-  .command {
-    display: block;
-    padding: 4px 6px;
-    border-radius: var(--nova-radius);
-    background: var(--nova-input-bg);
-    font-family: var(--nova-mono);
-    font-size: 0.92em;
-    overflow-wrap: anywhere;
-    white-space: pre-wrap;
-  }
-
-  .buttons {
+  .chips {
     display: flex;
-    gap: 6px;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 0 8px 6px;
+  }
 
-    .nova-button {
-      width: auto;
-      flex: 1 1 auto;
-      padding: 2px 8px;
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    max-width: 100%;
+    padding: 1px 8px;
+    border: 1px solid var(--nova-subtle-border);
+    border-radius: 10px;
+    font-size: 0.9em;
+
+    .codicon {
+      font-size: 12px;
+      color: var(--nova-muted);
+    }
+
+    &.done .codicon {
+      color: var(--nova-success);
+    }
+
+    &.error .codicon {
+      color: var(--nova-error);
+    }
+
+    &.running .codicon {
+      color: var(--nova-brand-primary);
     }
   }
 
-  .approval-links {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 12px;
+  .waiting {
+    padding: 0 8px 8px;
+    color: var(--nova-muted);
+    font-size: 0.9em;
   }
 
   .links {
