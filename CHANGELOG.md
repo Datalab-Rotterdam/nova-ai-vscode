@@ -1,3 +1,10 @@
+# [1.0.0-alpha.23](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.22...v1.0.0-alpha.23) (2026-10-23)
+
+
+### Bug Fixes
+
+* **chat:** hide stray </think>, stop spinner on finished step groups ([9b826eb](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/9b826eb3d75b08ba59f8ac7ff4de6569e3d0c756))
+
 # [1.0.0-alpha.22](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.21...v1.0.0-alpha.22) (2026-10-23)
 
 
