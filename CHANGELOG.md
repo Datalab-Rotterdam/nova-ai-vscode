@@ -1,3 +1,11 @@
+# [1.0.0-alpha.25](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.24...v1.0.0-alpha.25) (2026-10-23)
+
+
+### Features
+
+* **hooks:** Claude Code compatible hooks ([e4c317d](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/e4c317d060f0e21eaa8f33f02b1f65c7842af98e))
+* **mcp:** Nova's own MCP client with OAuth sign-in ([8aebc4d](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/8aebc4d5764793e096e05bfb0d5fd2fefd7fc4a3))
+
 # [1.0.0-alpha.24](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.23...v1.0.0-alpha.24) (2026-10-23)
 
 
