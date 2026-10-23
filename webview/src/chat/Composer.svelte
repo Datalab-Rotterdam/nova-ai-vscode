@@ -26,6 +26,16 @@
     $props();
 
   let text = $state("");
+  // A rewound message comes back here to edit and send again.
+  $effect(() => {
+    if (chat.draft) {
+      text = chat.draft.text;
+      queueMicrotask(() => {
+        textarea?.focus();
+        resize();
+      });
+    }
+  });
   let textarea: HTMLTextAreaElement | undefined = $state();
   let draggingImage = $state(false);
   let contextOpen = $state(false);

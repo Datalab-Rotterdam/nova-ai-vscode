@@ -213,6 +213,10 @@ export interface ChatState {
     /** The agent (mode) of this chat and the ones to choose from. */
     agent: string;
     agents: AgentOption[];
+    /** Text the input box should show (a rewound message); set by the webview from `chat/draft`. */
+    draft?: { text: string; at: number };
+    /** Hunks of changed files the user expanded; set by the webview from `chat/changeHunks`. */
+    hunks?: Record<string, DiffLine[][]>;
     /** Slash commands besides the built-ins: command files, skills and MCP prompts. */
     commands: SlashCommand[];
     queue: QueuedMessage[];
@@ -253,6 +257,8 @@ export type ChatEvent =
     | { type: 'chat/queue'; queue: QueuedMessage[] }
     | { type: 'chat/todos'; todos: TodoItem[] }
     | { type: 'chat/changes'; changes: FileChange[] }
+    | { type: 'chat/changeHunks'; path: string; hunks: DiffLine[][] }
+    | { type: 'chat/draft'; text: string }
     | { type: 'chat/subagents'; subagents: SubagentState[] };
 
 /** Webview → extension. */
@@ -305,6 +311,10 @@ export type ChatCommand =
     | { command: 'chat/dismissTodos' }
     | { command: 'chat/stopAgent'; id: string }
     | { command: 'chat/noticeAction'; id: string }
+    | { command: 'chat/changeHunks'; path: string }
+    | { command: 'chat/keepHunk'; path: string; index: number }
+    | { command: 'chat/undoHunk'; path: string; index: number }
+    | { command: 'chat/rewind'; itemId: string }
     | { command: 'chat/agentBranch'; id: string; action: 'review' | 'merge' | 'discard' | 'open' }
     | { command: 'chat/keepChange'; path?: string }
     | { command: 'chat/undoChange'; path?: string }

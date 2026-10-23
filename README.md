@@ -41,7 +41,8 @@ Stuck or curious? Run **Nova AI: Help** for a full guide inside VS Code.
 
 - **Read, search and edit**: find files, check problems, edit and create files, run commands, fetch web pages and use MCP tools registered in VS Code.
 - **Connect MCP servers**: add servers to `~/.nova-ai/mcp.json` or the workspace's `.mcp.json` / `.nova-ai/mcp.json` (Claude's format; stdio, HTTP and SSE). **Nova AI: MCP Servers** shows their status and signs you in to servers that use OAuth. Allow a whole server with a rule such as `mcp__github__*`.
-- **Review every change**: edit cards show the changed lines. A strip above the input lists the files Nova touched, with **Keep** and **Undo** per file or for all.
+- **Review every change**: edit cards show the changed lines. A strip above the input lists the files Nova touched, with **Keep** and **Undo** per file or for all; expand a file to keep or undo each change in it separately. The list survives a reload.
+- **Rewind**: the ⟲ button on a message rewinds to before it: the code (files Nova edited go back), the chat (the messages from there on go, the message returns to the input box to edit), or both. Commands Nova ran are not undone; Nova lists them before you choose.
 - **Stay in control**: choose how often Nova asks first with the permissions menu under the input (see [Modes](#modes-and-permissions)).
 - **Search the web**: Nova looks up current information and cites its sources. No API key needed.
 - **Use your browser**: with the Nova AI Browser integration Nova can open pages and take screenshots in Chrome, Edge or Brave. Set it up with **Nova AI: Set Up Browser Integration** (it runs automatically on startup by default).

@@ -138,6 +138,7 @@ Built on the extension's own agent (October 2026); each needs a place on ACP.
 | Edits see unsaved editor buffers | client `fs/read_text_file` / `fs/write_text_file` | ✅ the extension implements these with VS Code documents |
 | Diff in the tool card, "Open diff" | `diff` content in `tool_call` | ✅ render it; `ProposedContentProvider` stays |
 | Keep / Undo per file or all (`chat/keepChange`, `chat/undoChange`) | — | ✅ **stays in the extension**: every write goes through the client's `fs/write_text_file`, so the extension records the baseline exactly as today |
+| Keep / Undo per hunk, rewind code/chat to before a message (checkpoints per user message in the session) | — | ✅ **stays in the extension**, on the same `fs/write_text_file` writes; chat rewind needs a way to truncate the agent's session (open: `session/fork` at a message, or a `_nova` truncate) |
 | Command execution | client `terminal/*` or agent-side | 🟡 the extension implements ACP terminals (process tree kill as in `terminalTool.ts`); `nova.agent.commandTimeoutSeconds` → session setting `commandTimeoutSeconds` (✅ A: the agent kills with `terminal/kill`) |
 
 ### Permissions

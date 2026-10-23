@@ -236,6 +236,20 @@ export const workspace = {
   getConfiguration: () => ({
     get: <T>(_key: string, defaultValue: T) => defaultValue
   }),
+  /** A document over `workspace.fs` (whatever a test mocks it with); enough for whole-file edits. */
+  openTextDocument: async (uri: Uri) => {
+    const fs = workspace.fs as { readFile(uri: Uri): Promise<Uint8Array> };
+    const text = new TextDecoder().decode(await fs.readFile(uri));
+    return { uri, getText: () => text, positionAt: (offset: number) => new Position(0, offset), save: async () => true };
+  },
+  /** Applies whole-document replacements by writing through `workspace.fs`. */
+  applyEdit: async (edit: WorkspaceEdit) => {
+    const fs = workspace.fs as { writeFile(uri: Uri, data: Uint8Array): Promise<void> };
+    for (const change of edit.changes) {
+      await fs.writeFile(change.uri, new TextEncoder().encode(change.text));
+    }
+    return true;
+  },
   asRelativePath: (uri: Uri | string) => {
     const fsPath = typeof uri === 'string' ? uri : uri.fsPath;
     const folder = workspace.workspaceFolders?.find((candidate) => fsPath.startsWith(`${candidate.uri.fsPath}/`));
@@ -274,6 +288,13 @@ export class Position {
 
 export class Range {
   public constructor(public readonly start: Position, public readonly end: Position) { }
+}
+
+export class WorkspaceEdit {
+  public readonly changes: Array<{ uri: Uri; range: Range; text: string }> = [];
+  public replace(uri: Uri, range: Range, text: string): void {
+    this.changes.push({ uri, range, text });
+  }
 }
 
 export const ConfigurationTarget = { Global: 1, Workspace: 2, WorkspaceFolder: 3 };

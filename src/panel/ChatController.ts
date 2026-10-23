@@ -5,7 +5,7 @@ import * as nodePath from 'node:path';
 import * as vscode from 'vscode';
 import { runAgentLoop, summarize, type AgentLoopHost, type AgentLoopRequest } from '../agent/AgentLoop';
 import { BUILT_IN_TOOLS, outputParts, ToolInputError, type NovaTool, type ProposedEdit, type ToolPreparation } from '../agent/tools';
-import { diffLines } from './diff';
+import { applyHunk, diffHunks, diffLines, hunkLines, revertHunk } from './diff';
 import { createInteractionTools, type InteractionHost } from '../agent/tools/interactionTools';
 import { createMemoryTools } from '../agent/tools/memoryTools';
 import { createCodingAgentTool, createSubagentTool, SPAWN_AGENTS_TOOL, START_CODING_AGENT_TOOL, type CodingAgentHost, type SubagentHost, type SubagentOutcome, type SubagentTask } from '../agent/tools/subagentTool';
@@ -60,7 +60,7 @@ import { toCsv, toXlsx } from './tableExport';
 import { ensureDir } from '../storage/NovaHome';
 import { confirmAndDeleteChats, type ChatHistory } from './chatSearch';
 import { classifyFile } from './drop';
-import { fromStoredMessages, type SessionStore, type StoredSession, toStoredMessages } from './SessionStore';
+import { fromStoredMessages, type CheckpointFile, type SessionStore, type StoredSession, toStoredMessages } from './SessionStore';
 
 const MAX_ATTACHMENT_CHARS = 60_000;
 /** Images the model may see in one run: the newest plus what is already in the conversation. */
@@ -93,6 +93,8 @@ const IMAGE_MIME = new Map([
     ['webp', 'image/webp']
 ]);
 const MAX_CARD_OUTPUT_CHARS = 4_000;
+/** Larger files get no checkpoint, so a chat file stays a reasonable size; rewind says it skipped them. */
+const MAX_CHECKPOINT_CHARS = 1_000_000;
 /** How long a request waits for MCP servers that are still starting; slower ones join the next request. */
 const MCP_START_WAIT_MS = 10_000;
 /** How often Stop hooks may send the agent back to work in one answer. */
@@ -404,14 +406,31 @@ export class ChatController implements vscode.Disposable, ChatHistory {
             case 'chat/skipQuestion':
                 this.answerQuestion(command.itemId, undefined);
                 break;
+            // Changes are saved with the chat, so Keep and Undo save it too.
             case 'chat/keepChange':
                 this.keepChange(command.path);
+                await this.persistIfSaved();
                 break;
             case 'chat/undoChange':
                 await this.undoChange(command.path);
+                await this.persistIfSaved();
                 break;
             case 'chat/openChangeDiff':
                 await this.openChangeDiff(command.path);
+                break;
+            case 'chat/changeHunks':
+                this.postHunks(command.path);
+                break;
+            case 'chat/keepHunk':
+                this.keepHunk(command.path, command.index);
+                await this.persistIfSaved();
+                break;
+            case 'chat/undoHunk':
+                await this.undoHunk(command.path, command.index);
+                await this.persistIfSaved();
+                break;
+            case 'chat/rewind':
+                await this.rewind(command.itemId);
                 break;
             case 'chat/stopAgent':
                 this.stopSubagent(command.id);
@@ -1259,6 +1278,16 @@ export class ChatController implements vscode.Disposable, ChatHistory {
             return;
         }
 
+        await this.truncateAt(index);
+        await this.run(text.trim(), item.files ?? []);
+    }
+
+    /** Removes the user message at `index` and everything after it, from the chat and from what the model sees. */
+    private async truncateAt(index: number): Promise<void> {
+        const item = this.session.items[index];
+        if (!item || item.kind !== 'user') {
+            return;
+        }
         if (this.running) {
             this.stop();
             await this.currentRun;
@@ -1277,8 +1306,6 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         this.session.items = kept;
         this.usage = undefined;
         this.postState();
-
-        await this.run(text.trim(), item.files ?? []);
     }
 
     /** The user item with an ID, or undefined. */
@@ -1495,6 +1522,15 @@ export class ChatController implements vscode.Disposable, ChatHistory {
     }
 
     private recordChange(edit: ProposedEdit): void {
+        // The file as it was before this answer touched it, for rewinding to this message.
+        const runId = this.currentRunUser?.id;
+        if (runId) {
+            const files = (this.session.checkpoints ??= {})[runId] ??= [];
+            if (!files.some((file) => file.path === edit.path)) {
+                const before = edit.isNewFile ? null : edit.original;
+                files.push({ path: edit.path, file: edit.uri.fsPath, ...(before === null || before.length <= MAX_CHECKPOINT_CHARS ? { before } : {}) });
+            }
+        }
         const existing = this.changes.get(edit.path);
         this.changes.set(edit.path, {
             uri: edit.uri,
@@ -1556,15 +1592,7 @@ export class ChatController implements vscode.Disposable, ChatHistory {
 
         for (const change of targets) {
             try {
-                if (change.created) {
-                    await vscode.workspace.fs.delete(change.uri, { useTrash: true });
-                } else {
-                    const document = await vscode.workspace.openTextDocument(change.uri);
-                    const edit = new vscode.WorkspaceEdit();
-                    edit.replace(change.uri, new vscode.Range(document.positionAt(0), document.positionAt(document.getText().length)), change.baseline);
-                    await vscode.workspace.applyEdit(edit);
-                    await document.save();
-                }
+                await restoreFile(change.uri, change.created ? null : change.baseline);
                 this.changes.delete(change.path);
             } catch (error) {
                 void vscode.window.showErrorMessage(`Could not undo the changes to ${change.path}: ${error instanceof Error ? error.message : String(error)}`);
@@ -1581,6 +1609,144 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         }
         const baseline = this.proposedContent.register(`baseline-${randomUUID()}`, change.path, change.baseline);
         await vscode.commands.executeCommand('vscode.diff', baseline, change.uri, `${change.path} (changes by Nova)`, { preview: true });
+    }
+
+    /** The hunks of one changed file, for keeping or undoing them one by one. */
+    private postHunks(path: string): void {
+        const change = this.changes.get(path);
+        const hunks = change ? diffHunks(change.baseline, change.current).map((hunk) => hunkLines(hunk)) : [];
+        this.post({ type: 'chat/changeHunks', path, hunks });
+    }
+
+    /** Keeps one hunk: it becomes part of the baseline, so Undo no longer takes it back. */
+    private keepHunk(path: string, index: number): void {
+        const change = this.changes.get(path);
+        const hunk = change ? diffHunks(change.baseline, change.current)[index] : undefined;
+        if (!change || !hunk) {
+            return;
+        }
+        change.baseline = applyHunk(change.baseline, hunk);
+        if (change.baseline === change.current) {
+            this.changes.delete(path);
+        }
+        this.postChanges();
+        this.postHunks(path);
+    }
+
+    /** Undoes one hunk in the file, leaving Nova's other changes in place. */
+    private async undoHunk(path: string, index: number): Promise<void> {
+        const change = this.changes.get(path);
+        const hunk = change ? diffHunks(change.baseline, change.current)[index] : undefined;
+        if (!change || !hunk) {
+            return;
+        }
+        const now = await readText(change.uri).catch(() => undefined);
+        if (now !== undefined && now !== change.current) {
+            const choice = await vscode.window.showWarningMessage(`${path} changed after Nova edited it. Undo this part anyway? Your later changes to the file are lost.`, { modal: true }, 'Undo');
+            if (choice !== 'Undo') {
+                return;
+            }
+        }
+        const content = revertHunk(change.current, hunk);
+        try {
+            await restoreFile(change.uri, content);
+        } catch (error) {
+            this.notice('error', `Could not undo that change to ${path}: ${error instanceof Error ? error.message : String(error)}`);
+            return;
+        }
+        change.current = content;
+        if (change.current === change.baseline) {
+            this.changes.delete(path);
+        }
+        this.postChanges();
+        this.postHunks(path);
+    }
+
+    /**
+     * Rewinds to before a message: the files Nova changed from that answer on go back to how
+     * they were, the conversation from that message on is removed, or both. Only edits made
+     * with Nova's edit tools come back; commands that ran are listed, not undone.
+     */
+    private async rewind(itemId: string): Promise<void> {
+        const index = this.session.items.findIndex((item) => item.id === itemId);
+        const item = this.session.items[index];
+        if (!item || item.kind !== 'user') {
+            return;
+        }
+        const runIds = this.session.items.slice(index).filter((entry) => entry.kind === 'user').map((entry) => entry.id);
+        // Per file the oldest checkpoint from this answer on: how it was before Nova touched it here.
+        const files = new Map<string, CheckpointFile>();
+        for (const runId of runIds) {
+            for (const file of this.session.checkpoints?.[runId] ?? []) {
+                if (!files.has(file.path)) {
+                    files.set(file.path, file);
+                }
+            }
+        }
+        const commands = runIds.flatMap((runId) => this.session.commandsRan?.[runId] ?? []);
+        const restorable = [...files.values()].filter((file) => file.before !== undefined);
+        const tooLarge = [...files.values()].filter((file) => file.before === undefined).map((file) => file.path);
+
+        const fileCount = `${restorable.length} ${restorable.length === 1 ? 'file' : 'files'}`;
+        type Choice = vscode.QuickPickItem & { mode: 'both' | 'chat' | 'code' };
+        const choices: Choice[] = [
+            ...(restorable.length ? [{ label: '$(history) Code and chat', description: `restore ${fileCount}, remove the messages from here on`, mode: 'both' as const }] : []),
+            { label: '$(comment-discussion) Chat only', description: 'remove the messages from here on; files stay as they are', mode: 'chat' },
+            ...(restorable.length ? [{ label: '$(file-code) Code only', description: `restore ${fileCount}; the chat stays`, mode: 'code' as const }] : [])
+        ];
+        const notes = [
+            ...(commands.length ? [`Not undone: ${commands.length} ${commands.length === 1 ? 'command' : 'commands'} that ran (${commands.slice(0, 3).join('; ')}${commands.length > 3 ? '; …' : ''})`] : []),
+            ...(tooLarge.length ? [`Too large to restore: ${tooLarge.join(', ')}`] : [])
+        ];
+        const picked = await vscode.window.showQuickPick(choices, { title: 'Rewind to before this message', placeHolder: notes.join(' · ') || 'Choose what to rewind' });
+        if (!picked) {
+            return;
+        }
+
+        if (picked.mode !== 'chat') {
+            const modified: string[] = [];
+            for (const file of restorable) {
+                const now = await readText(vscode.Uri.file(file.file)).catch(() => undefined);
+                const known = this.changes.get(file.path)?.current;
+                if (now !== undefined && now !== known) {
+                    modified.push(file.path);
+                }
+            }
+            if (modified.length) {
+                const choice = await vscode.window.showWarningMessage(`${modified.join(', ')} changed since Nova's last edit. Rewind anyway? Those changes are lost.`, { modal: true }, 'Rewind');
+                if (choice !== 'Rewind') {
+                    return;
+                }
+            }
+            for (const file of restorable) {
+                try {
+                    await restoreFile(vscode.Uri.file(file.file), file.before ?? null);
+                } catch (error) {
+                    this.notice('error', `Could not restore ${file.path}: ${error instanceof Error ? error.message : String(error)}`);
+                    continue;
+                }
+                const change = this.changes.get(file.path);
+                if (change && file.before !== null && file.before !== change.baseline) {
+                    change.current = file.before!;
+                } else {
+                    this.changes.delete(file.path);
+                }
+            }
+            this.postChanges();
+        }
+        // Those answers are undone or gone: their checkpoints no longer apply.
+        for (const runId of runIds) {
+            delete this.session.checkpoints?.[runId];
+            delete this.session.commandsRan?.[runId];
+        }
+
+        if (picked.mode !== 'code') {
+            await this.truncateAt(index);
+            // The message comes back in the input box, to edit and send again.
+            this.post({ type: 'chat/draft', text: item.text });
+        }
+        this.notice('info', picked.mode === 'chat' ? 'Rewound the chat.' : picked.mode === 'code' ? `Restored ${fileCount}.` : `Rewound the chat and restored ${fileCount}.`);
+        await this.persist();
     }
 
     // --- Sub-agents (spawn_agents) ---
@@ -2206,6 +2372,10 @@ export class ChatController implements vscode.Disposable, ChatHistory {
 
             item.status = 'done';
             item.output = clip(output);
+            const runId = this.currentRunUser?.id;
+            if (call.name === 'run_command' && runId && !scope?.root && typeof input.command === 'string') {
+                ((this.session.commandsRan ??= {})[runId] ??= []).push(input.command);
+            }
             if (preparation.edit && call.name !== 'memory_write') {
                 item.diff = diffLines(preparation.edit.original, preparation.edit.proposed, MAX_CARD_DIFF_LINES);
                 if (!scope?.root) {
@@ -2761,13 +2931,25 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         this.usage = undefined;
         this.sessionApproved = false;
         this.edits.clear();
+        // Changes wait for Keep or Undo across reloads.
         this.changes.clear();
+        for (const change of session.changes ?? []) {
+            this.changes.set(change.path, { uri: vscode.Uri.file(change.file), path: change.path, baseline: change.baseline, current: change.current, created: change.created });
+        }
         this.snapshots.clear();
+    }
+
+    /** Saves the chat unless a running answer will save it when it ends. */
+    private async persistIfSaved(): Promise<void> {
+        if (!this.running) {
+            await this.persist();
+        }
     }
 
     private async persist(): Promise<void> {
         this.session.updatedAt = Date.now();
         this.session.messages = toStoredMessages(this.messages);
+        this.session.changes = [...this.changes.values()].map((change) => ({ path: change.path, file: change.uri.fsPath, baseline: change.baseline, current: change.current, created: change.created }));
         try {
             await this.store.save(this.session);
             await this.rememberAsLast();
@@ -3005,4 +3187,21 @@ function summarizeTitle(text: string): string {
 function newSession(): StoredSession {
     const now = Date.now();
     return { id: randomUUID(), title: 'New chat', createdAt: now, updatedAt: now, items: [], messages: [] };
+}
+
+/** Writes a file through its document (undo history, open editors), or moves it to the trash for null. */
+async function restoreFile(uri: vscode.Uri, content: string | null): Promise<void> {
+    if (content === null) {
+        await vscode.workspace.fs.delete(uri, { useTrash: true });
+        return;
+    }
+    if (!(await vscode.workspace.fs.stat(uri).then(() => true, () => false))) {
+        await vscode.workspace.fs.writeFile(uri, new TextEncoder().encode(content));
+        return;
+    }
+    const document = await vscode.workspace.openTextDocument(uri);
+    const edit = new vscode.WorkspaceEdit();
+    edit.replace(uri, new vscode.Range(document.positionAt(0), document.positionAt(document.getText().length)), content);
+    await vscode.workspace.applyEdit(edit);
+    await document.save();
 }

@@ -122,7 +122,17 @@ Thinking and tool calls fold into short steps you can expand. Replies render Mar
 
 ### Changes: keep or undo
 
-Every edit card shows the changed lines (⛶ opens the full diff). Above the input box a strip lists the files Nova changed in this chat. **Keep** accepts the changes, **Undo** puts a file back as it was before Nova's first edit (and deletes files Nova created). Both work per file or for all files; click a file to see its diff.
+Every edit card shows the changed lines (⛶ opens the full diff). Above the input box a strip lists the files Nova changed in this chat. **Keep** accepts the changes, **Undo** puts a file back as it was before Nova's first edit (and deletes files Nova created). Both work per file or for all files; click a file to see its diff. The chevron in front of a file shows each change in it on its own, with its own Keep and Undo. The list is saved with the chat, so it is still there after a reload.
+
+### Rewind
+
+Hover a message of yours and click ⟲ (**Rewind to before this message**). Choose:
+
+- **Code and chat**: the files Nova changed from that message on go back to how they were, and the conversation from that message on is removed. Your message returns to the input box, to change and send again.
+- **Chat only**: only the conversation is rewound; the files stay as they are (their changes stay in the strip for Keep or Undo).
+- **Code only**: only the files go back; the conversation stays.
+
+Rewind restores what Nova changed with its edit tools. It cannot undo what commands did (`npm install`, a migration, `git commit`): those are listed before you choose. Files you changed yourself since Nova's last edit are only overwritten after you confirm, and files larger than about 1 MB are not kept for rewinding.
 
 ### Task lists and questions
 

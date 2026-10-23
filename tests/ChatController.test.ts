@@ -1,5 +1,5 @@
 import * as path from 'node:path';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -624,6 +624,89 @@ describe('ChatController', () => {
     expect(notice.action).toEqual({ label: 'Sign in', id: 'mcp-signin:linear' });
     await controller.handle({ command: 'chat/noticeAction', id: notice.action!.id });
     expect(signInMcp).toHaveBeenCalledWith('linear');
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('rewinds code, chat or both to before a message, and says which commands it cannot undo', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'nova-rewind-'));
+    const nodeFs = await import('node:fs/promises');
+    vi.spyOn(vscode.workspace, 'fs', 'get').mockReturnValue({
+      stat: async (uri: vscode.Uri) => nodeFs.stat(uri.fsPath),
+      readFile: async (uri: vscode.Uri) => nodeFs.readFile(uri.fsPath),
+      writeFile: async (uri: vscode.Uri, data: Uint8Array) => nodeFs.writeFile(uri.fsPath, data),
+      delete: async (uri: vscode.Uri) => nodeFs.rm(uri.fsPath)
+    } as never);
+    writeFileSync(join(root, 'app.txt'), 'v0\n');
+    const { controller, events } = setup([
+      [new vscode.LanguageModelToolCallPart('e1', 'edit_file', { path: 'app.txt', old_string: 'v0', new_string: 'v1' }), new vscode.LanguageModelToolCallPart('c1', 'create_file', { path: 'new.txt', content: 'new\n' })],
+      [new vscode.LanguageModelTextPart('First done.')],
+      [new vscode.LanguageModelToolCallPart('e2', 'edit_file', { path: 'app.txt', old_string: 'v1', new_string: 'v2' }), new vscode.LanguageModelToolCallPart('r1', 'run_command', { command: 'echo hi' })],
+      [new vscode.LanguageModelTextPart('Second done.')]
+    ], 'autoAll');
+    (vscode.workspace as unknown as { workspaceFolders: unknown }).workspaceFolders = [{ name: 'repo', uri: vscode.Uri.file(root), index: 0 }];
+    const pick = vi.spyOn(vscode.window, 'showQuickPick');
+
+    await controller.handle({ command: 'chat/send', text: 'first' });
+    await controller.handle({ command: 'chat/send', text: 'second' });
+    expect(readFileSync(join(root, 'app.txt'), 'utf8')).toBe('v2\n');
+    const [first, second] = controller.getState().items.filter((item) => item.kind === 'user');
+
+    // Code only, from the second message: app.txt goes back to v1, the chat stays.
+    pick.mockImplementationOnce((async (choices: Array<{ mode: string }>, options: { placeHolder?: string }) => {
+      expect(options.placeHolder).toContain('Not undone: 1 command that ran (echo hi)');
+      return choices.find((choice) => choice.mode === 'code');
+    }) as never);
+    await controller.handle({ command: 'chat/rewind', itemId: second.id });
+    expect(readFileSync(join(root, 'app.txt'), 'utf8')).toBe('v1\n');
+    expect(controller.getState().items.filter((item) => item.kind === 'user')).toHaveLength(2);
+    expect(controller.getState().changes.map((change) => change.path).sort()).toEqual(['app.txt', 'new.txt']);
+
+    // Code and chat, from the first message: back to v0, new.txt gone, the message back in the input box.
+    pick.mockImplementationOnce((async (choices: Array<{ mode: string }>) => choices.find((choice) => choice.mode === 'both')) as never);
+    await controller.handle({ command: 'chat/rewind', itemId: first.id });
+    expect(readFileSync(join(root, 'app.txt'), 'utf8')).toBe('v0\n');
+    expect(existsSync(join(root, 'new.txt'))).toBe(false);
+    expect(controller.getState().items.filter((item) => item.kind === 'user')).toHaveLength(0);
+    expect(controller.getState().changes).toEqual([]);
+    expect(events).toContainEqual({ type: 'chat/draft', text: 'first' });
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('keeps or undoes single hunks of a changed file, and keeps changes across a reload', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'nova-hunks-'));
+    const nodeFs = await import('node:fs/promises');
+    vi.spyOn(vscode.workspace, 'fs', 'get').mockReturnValue({
+      stat: async (uri: vscode.Uri) => nodeFs.stat(uri.fsPath),
+      readFile: async (uri: vscode.Uri) => nodeFs.readFile(uri.fsPath),
+      writeFile: async (uri: vscode.Uri, data: Uint8Array) => nodeFs.writeFile(uri.fsPath, data)
+    } as never);
+    writeFileSync(join(root, 'a.txt'), 'one\ntwo\nthree\nfour\nfive\n');
+    const { controller, events, store } = setup([
+      [new vscode.LanguageModelToolCallPart('c1', 'create_file', { path: 'a.txt', content: 'ONE\ntwo\nthree\nfour\nFIVE\n' })],
+      [new vscode.LanguageModelTextPart('Done.')]
+    ], 'autoAll');
+    (vscode.workspace as unknown as { workspaceFolders: unknown }).workspaceFolders = [{ name: 'repo', uri: vscode.Uri.file(root), index: 0 }];
+    await controller.handle({ command: 'chat/send', text: 'shout' });
+
+    await controller.handle({ command: 'chat/changeHunks', path: 'a.txt' });
+    const hunks = () => (events.filter((event) => event.type === 'chat/changeHunks').at(-1) as { hunks: unknown[] }).hunks;
+    expect(hunks()).toHaveLength(2);
+
+    await controller.handle({ command: 'chat/undoHunk', path: 'a.txt', index: 1 });
+    expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('ONE\ntwo\nthree\nfour\nfive\n');
+    expect(hunks()).toHaveLength(1);
+    expect(controller.getState().changes).toEqual([{ path: 'a.txt', added: 1, removed: 1, created: false }]);
+
+    // Saved with the chat, so it is still there after a reload.
+    const saved = store.save.mock.calls.at(-1)![0];
+    expect(saved.changes).toMatchObject([{ path: 'a.txt', baseline: 'one\ntwo\nthree\nfour\nfive\n', current: 'ONE\ntwo\nthree\nfour\nfive\n' }]);
+    const reloaded = setup([]);
+    reloaded.store.load.mockResolvedValue({ ...saved, id: 'saved' });
+    await reloaded.controller.handle({ command: 'chat/open', sessionId: 'saved' });
+    expect(reloaded.controller.getState().changes).toEqual([{ path: 'a.txt', added: 1, removed: 1, created: false }]);
+
+    await controller.handle({ command: 'chat/keepHunk', path: 'a.txt', index: 0 });
+    expect(controller.getState().changes).toEqual([]);
     rmSync(root, { recursive: true, force: true });
   });
 
