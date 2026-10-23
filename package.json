@@ -645,6 +645,11 @@
         "title": "Tools & Integrations",
         "order": 6,
         "properties": {
+          "nova.skills.includeClaudeCodex": {
+            "type": "boolean",
+            "default": false,
+            "markdownDescription": "Also load skills from the `.claude/skills` and `.codex/skills` folders (in your home folder and in workspaces). `.agents` and Nova's own skills folders are always loaded."
+          },
           "nova.agent.includeMcpTools": {
             "type": "boolean",
             "default": true,

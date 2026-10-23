@@ -83,6 +83,8 @@ export interface SkillPaths {
     projectSettings?: string;
     /** Workspace folders (project skills), in order. */
     workspaceRoots: string[];
+    /** The shared folders to read skills from; all of them when unset. */
+    sharedFolders?: readonly SkillFolder[];
 }
 
 export const SKILL_NAME_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
@@ -91,11 +93,12 @@ const MAX_VISITED_DIRECTORIES = 500;
 
 /** Folders that hold skills, lowest priority first. */
 export function skillRoots(paths: SkillPaths): Array<{ path: string; scope: SkillScope; folder: SkillFolder }> {
+    const shared = SHARED_FOLDERS.filter((folder) => paths.sharedFolders?.includes(folder) ?? true);
     return [
-        ...SHARED_FOLDERS.map((folder) => ({ path: path.join(paths.home, folder, 'skills'), scope: 'global' as const, folder })),
+        ...shared.map((folder) => ({ path: path.join(paths.home, folder, 'skills'), scope: 'global' as const, folder })),
         { path: path.join(paths.novaHome, 'skills'), scope: 'global' as const, folder: 'nova' as const },
         ...paths.workspaceRoots.flatMap((root) => [
-            ...SHARED_FOLDERS.map((folder) => ({ path: path.join(root, folder, 'skills'), scope: 'project' as const, folder })),
+            ...shared.map((folder) => ({ path: path.join(root, folder, 'skills'), scope: 'project' as const, folder })),
             { path: path.join(root, '.nova-ai', 'skills'), scope: 'project' as const, folder: 'nova' as const }
         ])
     ];
