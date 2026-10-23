@@ -417,14 +417,18 @@ export class ModelProvider implements vscode.LanguageModelChatProvider<LanguageM
         );
         let promptTokens = 0;
         let completionTokens = 0;
+        let chunks = 0;
+        let firstChunk: unknown;
 
-        this.diagnostics.trace('Nova stream opened.', { model: request.model });
+        this.diagnostics.trace('Nova stream opened.', { model: request.model, reasoningEffort: request.reasoning_effort });
 
         try {
             for await (const event of client.chat.completions.stream(request, { signal: abortController.signal })) {
                 if (event.type !== 'chunk') {
                     continue;
                 }
+                chunks++;
+                firstChunk ??= event.data;
                 if (event.data.usage) {
                     promptTokens = event.data.usage.prompt_tokens ?? promptTokens;
                     completionTokens = event.data.usage.completion_tokens ?? completionTokens;
@@ -459,7 +463,9 @@ export class ModelProvider implements vscode.LanguageModelChatProvider<LanguageM
             invalidToolCalls: parser.invalidToolCalls,
             finishReasons: parser.finishReasons,
             promptTokens,
-            completionTokens
+            completionTokens,
+            chunks,
+            ...(parser.receivedText || parser.receivedToolCalls ? {} : { firstChunk })
         });
 
         if (!parser.receivedText && !parser.receivedToolCalls) {
@@ -614,8 +620,8 @@ function createConfigurationSchema(maxOutputTokens: number): LanguageModelInfo['
             },
             reasoningEffort: {
                 type: 'string',
-                enum: ['low', 'medium', 'high'],
-                description: 'Reasoning effort for models that support it.'
+                enum: ['none', 'low', 'medium', 'high', 'xhigh'],
+                description: 'Reasoning effort for models that support it; none turns thinking off.'
             },
             maxOutputTokens: {
                 type: 'integer',

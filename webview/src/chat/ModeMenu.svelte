@@ -301,7 +301,7 @@
     padding: 6px;
     border: 1px solid var(--nova-border);
     border-radius: var(--nova-radius-large, 8px);
-    background: var(--nova-surface);
+    background: var(--vscode-menu-background, var(--vscode-dropdown-background, var(--vscode-editorWidget-background, var(--vscode-editor-background))));
     box-shadow: 0 6px 24px rgb(0 0 0 / 0.35);
   }
 

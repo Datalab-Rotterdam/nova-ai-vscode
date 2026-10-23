@@ -622,7 +622,7 @@
                 </div>
               {/if}
               <div class="working" aria-label="Nova is working">
-                <span class="shimmer">Thinking…</span>
+                <span class="shimmer">{chat.effort === "none" ? "Working…" : "Thinking…"}</span>
               </div>
             {/if}
           </div>

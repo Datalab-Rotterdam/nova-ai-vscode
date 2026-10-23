@@ -81,7 +81,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         home: os.homedir(),
         novaHome: nova.home.root,
         projectSettings: nova.project.settings,
-        workspaceRoots: (vscode.workspace.workspaceFolders ?? []).filter((folder) => folder.uri.scheme === 'file').map((folder) => folder.uri.fsPath)
+        workspaceRoots: (vscode.workspace.workspaceFolders ?? []).filter((folder) => folder.uri.scheme === 'file').map((folder) => folder.uri.fsPath),
+        sharedFolders: vscode.workspace.getConfiguration('nova').get<boolean>('skills.includeClaudeCodex', false) ? ['.agents', '.claude', '.codex'] : ['.agents']
     });
     sidebarProvider.useSkills(skillPaths);
     // Skills this extension ships (reading PDF, Word, Excel and PowerPoint files) go into the skills folder.
