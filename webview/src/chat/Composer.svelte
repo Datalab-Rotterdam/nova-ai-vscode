@@ -1163,7 +1163,8 @@
     padding: 10px 12px;
     border: 1px solid var(--nova-border);
     border-radius: var(--nova-radius-large);
-    background: var(--nova-surface);
+    /* Opaque, like the mode and model menus: --nova-surface is a see-through tint, and the agent strip sits behind. */
+    background: var(--vscode-menu-background, var(--vscode-dropdown-background, var(--vscode-editorWidget-background, var(--vscode-editor-background))));
     box-shadow: 0 4px 18px rgb(0 0 0 / 25%);
     z-index: 40;
 
