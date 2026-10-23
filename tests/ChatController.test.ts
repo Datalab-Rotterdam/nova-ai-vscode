@@ -1,13 +1,14 @@
 import * as path from 'node:path';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 
 let currentModel: unknown;
 vi.mock('../src/panel/directModel', () => ({ createDirectModel: () => currentModel }));
 
+import { setScratchRoot } from '../src/agent/tools/workspacePaths';
 import { Diagnostics } from '../src/core/diagnostics';
 import { ChatController } from '../src/panel/ChatController';
 import type { ChatEvent, ToolItem } from '../src/panel/protocol';
@@ -791,13 +792,76 @@ describe('ChatController', () => {
       ]);
     });
 
-    it('refuses dropped binaries with a notice', async () => {
-      const { controller } = setup([]);
+    describe('files that are neither text nor images', () => {
+      let scratch: string;
+      const promptOf = (model: { sendRequest: { mock: { calls: unknown[][] } } }) =>
+        ((model.sendRequest.mock.calls[0][0] as vscode.LanguageModelChatMessage[]).flatMap((message) => message.content)
+          .find((part) => part instanceof vscode.LanguageModelTextPart && (part.value as string).includes('<attachments>')) as vscode.LanguageModelTextPart).value;
 
-      await controller.handle({ command: 'chat/addTextFile', name: 'report.pdf', content: '' });
+      beforeEach(() => {
+        scratch = mkdtempSync(join(tmpdir(), 'nova-scratch-'));
+        setScratchRoot(scratch);
+      });
+      afterEach(() => {
+        setScratchRoot(undefined);
+        rmSync(scratch, { recursive: true, force: true });
+      });
 
-      expect(controller.getState().attachments).toEqual([]);
-      expect(controller.getState().items.at(-1)).toMatchObject({ kind: 'notice', tone: 'warning' });
+      it('saves a spreadsheet from outside the workspace to scratch and tells the model where it is', async () => {
+        const { controller, model } = setup([[new vscode.LanguageModelTextPart('ok')]]);
+        const bytes = Buffer.from('PK-fake-xlsx');
+
+        await controller.handle({ command: 'chat/addBinaryFile', name: 'table.xlsx', dataUrl: `data:application/octet-stream;base64,${bytes.toString('base64')}` });
+
+        expect(controller.getState().attachments).toEqual([
+          { id: expect.any(String), label: 'table.xlsx', path: 'scratch/attachments/table.xlsx', binary: { size: bytes.length } }
+        ]);
+        expect(readFileSync(join(scratch, 'attachments', 'table.xlsx'))).toEqual(bytes);
+
+        await controller.handle({ command: 'chat/send', text: 'what is in it?' });
+        const prompt = promptOf(model);
+        expect(prompt).toContain(`<attachment path="scratch/attachments/table.xlsx" type="file" size="${bytes.length}" absolutePath="${join(scratch, 'attachments', 'table.xlsx')}">`);
+        expect(prompt).toContain('nova-xlsx');
+        expect(prompt).not.toContain('PK-fake-xlsx');
+      });
+
+      it('keeps two files with the same name apart', async () => {
+        const { controller } = setup([]);
+        const dataUrl = `data:application/octet-stream;base64,${Buffer.from('a').toString('base64')}`;
+
+        await controller.handle({ command: 'chat/addBinaryFile', name: 'report.pdf', dataUrl });
+        await controller.handle({ command: 'chat/addBinaryFile', name: 'report.pdf', dataUrl });
+
+        expect(controller.getState().attachments.map((attachment) => attachment.path)).toEqual([
+          'scratch/attachments/report.pdf', 'scratch/attachments/report-2.pdf'
+        ]);
+      });
+
+      it('references a workspace file by path without copying it, and refuses a huge outside one', async () => {
+        const { controller } = setup([]);
+        const root = process.cwd();
+        const sizes: Record<string, number> = { [`${root}/docs/table.xlsx`]: 2048, '/elsewhere/huge.zip': 60 * 1024 * 1024 };
+        vi.spyOn(vscode.workspace, 'fs', 'get').mockReturnValue({
+          stat: async (uri: vscode.Uri) => ({ type: vscode.FileType.File, size: sizes[uri.fsPath] ?? 0 }),
+          readFile: async () => { throw new Error('must not be read'); }
+        } as never);
+
+        await controller.handle({ command: 'chat/attachUris', uris: [`file://${root}/docs/table.xlsx`, 'file:///elsewhere/huge.zip'] });
+
+        expect(controller.getState().attachments).toEqual([
+          { id: expect.any(String), label: 'docs/table.xlsx', path: 'docs/table.xlsx', binary: { size: 2048 } }
+        ]);
+        expect(controller.getState().items.at(-1)).toMatchObject({ kind: 'notice', tone: 'warning', text: expect.stringContaining('too large') });
+      });
+
+      it('does not accept a text file that is really binary as text', async () => {
+        const { controller } = setup([]);
+
+        await controller.handle({ command: 'chat/addTextFile', name: 'data.bin', content: 'a\u0000b' });
+
+        expect(controller.getState().attachments).toEqual([]);
+        expect(controller.getState().items.at(-1)).toMatchObject({ kind: 'notice', tone: 'warning' });
+      });
     });
 
     it('offers the workspace files to the composer, newest first', async () => {

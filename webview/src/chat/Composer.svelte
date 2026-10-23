@@ -299,13 +299,20 @@
     }
   }
 
+  /** Any file that is neither text nor an image: its bytes go to the extension, which saves it for Nova's tools. */
+  function addBinaryFile(file: File) {
+    const reader = new FileReader();
+    reader.onload = () =>
+      post({ command: "chat/addBinaryFile", name: file.name, dataUrl: String(reader.result) });
+    reader.readAsDataURL(file);
+  }
+
   /** Images go to the vision path; text files are read here and sent inline. */
   function addFiles(files: File[]) {
     for (const file of files) {
       const kind = classifyFile(file.name, file.type);
-      if (kind === "unsupported") {
-        // The extension explains why it is refused.
-        post({ command: "chat/addTextFile", name: file.name, content: "" });
+      if (kind === "file") {
+        addBinaryFile(file);
         continue;
       }
       if (kind === "image" && file.size > SHRINK_ABOVE_BYTES) {
@@ -325,12 +332,15 @@
         reader.onload = () => addImageDataUrl(file.name, String(reader.result));
         reader.readAsDataURL(file);
       } else {
-        reader.onload = () =>
-          post({
-            command: "chat/addTextFile",
-            name: file.name,
-            content: String(reader.result),
-          });
+        reader.onload = () => {
+          const content = String(reader.result);
+          // A binary file with a text-like name (no extension, or an odd one) is a file for Nova's tools.
+          if (content.includes("\u0000")) {
+            addBinaryFile(file);
+            return;
+          }
+          post({ command: "chat/addTextFile", name: file.name, content });
+        };
         reader.readAsText(file);
       }
     }

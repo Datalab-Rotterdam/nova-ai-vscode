@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { promises as nodeFs } from 'node:fs';
 import * as nodeOs from 'node:os';
 import * as nodePath from 'node:path';
 import * as vscode from 'vscode';
@@ -47,6 +48,7 @@ import { parseSlashCommand, type ParsedSlashCommand } from './slashCommands';
 import { runIdOf, setRunId, visibleChatItems } from './steps';
 import { classifyLink, confirmAndOpenExternal } from './links';
 import { toCsv, toXlsx } from './tableExport';
+import { ensureDir } from '../storage/NovaHome';
 import { confirmAndDeleteChats, type ChatHistory } from './chatSearch';
 import { classifyFile } from './drop';
 import { fromStoredMessages, type SessionStore, type StoredSession, toStoredMessages } from './SessionStore';
@@ -54,6 +56,8 @@ import { fromStoredMessages, type SessionStore, type StoredSession, toStoredMess
 const MAX_ATTACHMENT_CHARS = 60_000;
 /** Images the model may see in one run: the newest plus what is already in the conversation. */
 const MAX_IMAGES_PER_RUN = 4;
+/** Largest file (PDF, spreadsheet, …) that can be attached; it is saved to disk, not sent to the model. */
+const MAX_FILE_BYTES = 50 * 1024 * 1024;
 /** Composer images up to this many bytes; larger than about 2.5 MB of base64 over the message port. */
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 /** Longest code block the open button hands to an editor. */
@@ -293,6 +297,15 @@ export class ChatController implements vscode.Disposable, ChatHistory {
             case 'chat/addTextFile':
                 this.addTextFile(command.name, command.content);
                 break;
+            case 'chat/addBinaryFile': {
+                const encoded = /^data:[^,]*;base64,([\s\S]*)$/.exec(command.dataUrl)?.[1];
+                if (encoded === undefined) {
+                    this.notice('warning', `${command.name} could not be read.`);
+                } else {
+                    await this.attachFileBytes(command.name, Buffer.from(encoded, 'base64'));
+                }
+                break;
+            }
             case 'chat/openDiff':
                 await this.openDiff(command.itemId);
                 break;
@@ -413,13 +426,57 @@ export class ChatController implements vscode.Disposable, ChatHistory {
     /** Adds a text file from outside the workspace as inline content, clipped like attached files. */
     private addTextFile(name: string, content: string): void {
         if (classifyFile(name) !== 'text' || content.includes('\u0000')) {
-            this.notice('warning', `${name} cannot be attached: only text files and PNG, JPEG or WebP images.`);
+            this.notice('warning', `${name} is not a text file.`);
             return;
         }
         if (content.length > MAX_ATTACHMENT_CHARS) {
             this.notice('info', `${name} is long; only the first ${MAX_ATTACHMENT_CHARS.toLocaleString()} characters are sent.`);
         }
         this.addAttachment({ id: randomUUID(), label: name, content: content.slice(0, MAX_ATTACHMENT_CHARS) });
+    }
+
+    /**
+     * Attaches a file that is neither text nor an image (PDF, spreadsheet, archive, …). The bytes
+     * are saved in the project's scratch folder, which Nova's tools can read, and only the path
+     * goes to the model: it decides how to open the file (see the nova-documents skill).
+     */
+    private async attachFileBytes(name: string, bytes: Uint8Array): Promise<void> {
+        if (bytes.byteLength > MAX_FILE_BYTES) {
+            this.notice('warning', `${name} is too large to attach (at most ${MAX_FILE_BYTES / 1024 / 1024} MB).`);
+            return;
+        }
+        const scratch = getScratchRoot();
+        if (!scratch) {
+            this.notice('warning', `${name} cannot be attached: Nova has no folder to keep it in. Open a folder first.`);
+            return;
+        }
+        const folder = nodePath.join(scratch, 'attachments');
+        await ensureDir(folder);
+        const safe = nodePath.basename(name).replace(/[\u0000-\u001f<>:"/\\|?*]/g, '_') || 'file';
+        const { name: stem, ext } = nodePath.parse(safe);
+        // A second file with the same name must not replace the first one.
+        for (let n = 1; ; n++) {
+            const candidate = n === 1 ? safe : `${stem}-${n}${ext}`;
+            try {
+                await nodeFs.writeFile(nodePath.join(folder, candidate), bytes, { flag: 'wx', mode: 0o600 });
+                this.addAttachment({ id: randomUUID(), label: n === 1 ? name : candidate, path: `scratch/attachments/${candidate}`, binary: { size: bytes.byteLength } });
+                this.warnIfFilesCannotBeOpened(name);
+                return;
+            } catch (error) {
+                if ((error as NodeJS.ErrnoException).code !== 'EEXIST' || n > 999) {
+                    this.notice('warning', `${name} could not be saved for Nova.`);
+                    return;
+                }
+            }
+        }
+    }
+
+    /** Nova opens such a file with tools: say so when the agent or model cannot use them. */
+    private warnIfFilesCannotBeOpened(name: string): void {
+        const model = this.models.find((candidate) => candidate.id === this.selectedModelId());
+        if (this.currentAgent().readOnly || model?.capabilities?.toolCalling === false) {
+            this.notice('info', `${name} is attached as a file. Nova opens it with tools, which this agent or model cannot run; use an agent that can run commands.`);
+        }
     }
 
     /**
@@ -437,15 +494,23 @@ export class ChatController implements vscode.Disposable, ChatHistory {
             const name = uri.path.split('/').pop() || 'file';
             try {
                 const kind = classifyFile(name);
-                if (kind === 'unsupported') {
-                    this.notice('warning', `${name} cannot be attached: only text files and PNG, JPEG or WebP images.`);
-                    continue;
-                }
-                if ((await vscode.workspace.fs.stat(uri)).type & vscode.FileType.Directory) {
+                const info = await vscode.workspace.fs.stat(uri);
+                if (info.type & vscode.FileType.Directory) {
                     this.notice('warning', `${name} is a folder; attach the files in it instead.`);
                     continue;
                 }
-                if (kind === 'image') {
+                if (kind === 'file') {
+                    // Not text, not an image: Nova gets the file on disk and opens it with its tools.
+                    if (vscode.workspace.getWorkspaceFolder(uri)) {
+                        const path = displayPath(uri);
+                        this.addAttachment({ id: randomUUID(), path, label: path, binary: { size: info.size ?? 0 } });
+                        this.warnIfFilesCannotBeOpened(name);
+                    } else if ((info.size ?? 0) > MAX_FILE_BYTES) {
+                        this.notice('warning', `${name} is too large to attach (at most ${MAX_FILE_BYTES / 1024 / 1024} MB).`);
+                    } else {
+                        await this.attachFileBytes(name, await vscode.workspace.fs.readFile(uri));
+                    }
+                } else if (kind === 'image') {
                     const bytes = await vscode.workspace.fs.readFile(uri);
                     this.addImage(
                         name,
@@ -2194,6 +2259,9 @@ async function createSystemMessage(memory?: MemoryService, skills?: string, agen
         : vscode.LanguageModelChatMessage.User(prompt);
 }
 
+/** Said in the prompt for each attached file that is not text or an image. */
+const BINARY_ATTACHMENT_HINT = 'This file is not shown here. Open it with your tools and decide what to extract. For a PDF, Word, Excel or PowerPoint file, load the matching skill with load_skill (nova-pdf, nova-docx, nova-xlsx or nova-pptx); they read, create and edit these files. For anything else, use run_command (python, unzip, …).';
+
 async function buildPrompt(prompt: string, attachments: readonly Attachment[]): Promise<Array<vscode.LanguageModelTextPart | vscode.LanguageModelDataPart>> {
     const parts: Array<vscode.LanguageModelTextPart | vscode.LanguageModelDataPart> = [];
     const blocks: string[] = [];
@@ -2204,6 +2272,12 @@ async function buildPrompt(prompt: string, attachments: readonly Attachment[]): 
             if (attachment.path) {
                 blocks.push(`<attachment path="${attachment.label}" type="image" />`);
             }
+            continue;
+        }
+        if (attachment.binary && attachment.path) {
+            const scratch = getScratchRoot();
+            const absolute = scratch && attachment.path.startsWith('scratch/') ? nodePath.join(scratch, attachment.path.slice('scratch/'.length)) : undefined;
+            blocks.push(`<attachment path="${attachment.path}" type="file" size="${attachment.binary.size}"${absolute ? ` absolutePath="${absolute}"` : ''}>\n${BINARY_ATTACHMENT_HINT}\n</attachment>`);
             continue;
         }
         if (attachment.content !== undefined) {

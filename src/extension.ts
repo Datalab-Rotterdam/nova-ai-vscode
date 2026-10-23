@@ -44,6 +44,7 @@ import * as os from 'node:os';
 import {registerAgentParticipant} from './chat/AgentParticipant';
 import {registerVsCodeTools} from './agent/tools/vscodeTools';
 import {registerBrowserSetup} from './browser/BrowserSetup';
+import {installBundledSkills} from './skills/bundledSkills';
 import {openHelp} from './core/help';
 import {ChatController} from './panel/ChatController';
 import {PROPOSED_SCHEME, ProposedContentProvider} from './panel/ProposedContentProvider';
@@ -83,6 +84,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         workspaceRoots: (vscode.workspace.workspaceFolders ?? []).filter((folder) => folder.uri.scheme === 'file').map((folder) => folder.uri.fsPath)
     });
     sidebarProvider.useSkills(skillPaths);
+    // Skills this extension ships (reading PDF, Word, Excel and PowerPoint files) go into the skills folder.
+    void installBundledSkills(path.join(context.extensionPath, 'resources', 'skills'), nova.home.root, String(context.extension.packageJSON.version))
+        .then((names) => names.length && diagnostics.info('Bundled skills installed.', names))
+        .catch((error: unknown) => diagnostics.error('Bundled skills could not be installed.', error));
     // Agent files: built in with the extension, then ~/.nova-ai/agents and the project's agents.
     const agentPaths = (): AgentPaths => ({
         builtinDir: path.join(context.extensionPath, 'resources', 'chat', 'agents', 'modes'),
