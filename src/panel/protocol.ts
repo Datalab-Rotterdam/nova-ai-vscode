@@ -82,6 +82,16 @@ export interface ToolItem {
 }
 
 /** A research agent started with the spawn_agents tool. */
+/** Tokens a chat (or an agent) used, and their cost from the models' prices when they list one. */
+export interface UsageTotals {
+    promptTokens: number;
+    completionTokens: number;
+    /** Part of the prompt tokens the provider served from its cache (charged as input here, hence "about"). */
+    cachedTokens: number;
+    cost?: number;
+    currency?: string;
+}
+
 export interface SubagentState {
     id: string;
     name: string;
@@ -104,6 +114,8 @@ export interface SubagentState {
     callId: string;
     /** The user message whose answer it belongs to. */
     runId?: string;
+    /** Cost of the agent's requests, when its model lists a price. */
+    cost?: { amount: number; currency: string };
     /** A coding agent: its own branch in a worktree, which outlives the answer. */
     background?: {
         repo: string;
@@ -189,6 +201,8 @@ export interface ChatState {
     attachments: Attachment[];
     /** Prompt tokens of the last request and the model's input budget. */
     usage?: { used: number; total: number };
+    /** Everything this chat used so far, with its agents. */
+    totals?: UsageTotals;
     /** Saved chats of the workspace, newest first (for the Chats page). */
     sessions: SessionSummary[];
     /** Chats open in another place (the sidebar or another editor tab). */
@@ -230,6 +244,7 @@ export type ChatEvent =
     | { type: 'chat/textDelta'; itemId: string; delta: string }
     | { type: 'chat/running'; running: boolean }
     | { type: 'chat/usage'; usage: { used: number; total: number } }
+    | { type: 'chat/totals'; totals: UsageTotals }
     | { type: 'chat/attachments'; attachments: Attachment[] }
     | { type: 'chat/queue'; queue: QueuedMessage[] }
     | { type: 'chat/todos'; todos: TodoItem[] }

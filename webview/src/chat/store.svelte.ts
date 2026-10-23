@@ -43,6 +43,9 @@ export function createChatStore() {
             case 'chat/usage':
                 state.usage = event.usage;
                 break;
+            case 'chat/totals':
+                state.totals = event.totals;
+                break;
             case 'chat/attachments':
                 state.attachments = event.attachments;
                 break;

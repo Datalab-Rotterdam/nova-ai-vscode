@@ -55,7 +55,7 @@ Anything else that starts with `/` (for example a path such as `/etc/hosts`) is 
 ### Context
 
 - Type **`@`** to mention a workspace file. Use the **paperclip** to attach files and images, or the **editor selection** with the selection button. In the editor, right-click → **Add to Nova Chat** does the same.
-- The ring next to the send button shows how full the model's context window is: yellow from 70%, red from 90%. Click it for the numbers and a **Compact** button.
+- The ring next to the send button shows how full the model's context window is: yellow from 70%, red from 90%. Click it for the numbers and a **Compact** button. It also shows what the chat used so far, agents included: tokens in, out and cached and, when the models list a price, about what it cost (cached tokens are counted as input, so it is an estimate). Each agent shows its own cost in the agent list.
 - Long conversations are **compacted automatically** (`nova.context.autoCompact`): old tool output is shortened first, then older messages are summarized. Use `/compact` to do it yourself, for example before starting a new part of the work.
 - After compaction the messages stay on screen for you, but Nova continues from the summary.
 

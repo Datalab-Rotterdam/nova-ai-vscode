@@ -417,6 +417,7 @@ export class ModelProvider implements vscode.LanguageModelChatProvider<LanguageM
         );
         let promptTokens = 0;
         let completionTokens = 0;
+        let cachedTokens = 0;
         let chunks = 0;
         let firstChunk: unknown;
 
@@ -432,6 +433,8 @@ export class ModelProvider implements vscode.LanguageModelChatProvider<LanguageM
                 if (event.data.usage) {
                     promptTokens = event.data.usage.prompt_tokens ?? promptTokens;
                     completionTokens = event.data.usage.completion_tokens ?? completionTokens;
+                    const details = (event.data.usage as { prompt_tokens_details?: { cached_tokens?: number } }).prompt_tokens_details;
+                    cachedTokens = details?.cached_tokens ?? cachedTokens;
                 }
                 parser.pushChunk(event.data);
             }
@@ -440,7 +443,7 @@ export class ModelProvider implements vscode.LanguageModelChatProvider<LanguageM
 
             if (promptTokens > 0 || completionTokens > 0) {
                 progress.report(vscode.LanguageModelDataPart.json(
-                    { promptTokens, completionTokens, outputBuffer: model.maxOutputTokens },
+                    { promptTokens, completionTokens, cachedTokens, outputBuffer: model.maxOutputTokens },
                     NOVA_USAGE_MIME_TYPE
                 ));
             }
@@ -594,14 +597,22 @@ function splitContextWindow(contextWindow: number, requestedMaxOutputTokens: num
     };
 }
 
-function createPricingLabel(model: ModelResponse): string | undefined {
-    const input = firstNumber(model, ['input_cost_per_1m']);
-    const output = firstNumber(model, ['output_cost_per_1m']);
+/** A model's price per 1M tokens, as the gateway lists it (`inputCostPer1M`, `outputCostPer1M`, `currency`). */
+export function modelPricing(model: ModelResponse): { input?: number; output?: number; currency: string } | undefined {
+    const input = firstNumber(model, ['inputCostPer1M', 'input_cost_per_1m']);
+    const output = firstNumber(model, ['outputCostPer1M', 'output_cost_per_1m']);
     if (input === undefined && output === undefined) {
         return undefined;
     }
+    return { input, output, currency: firstString(model, ['currency']) ?? 'EUR' };
+}
 
-    const currency = firstString(model, ['currency']) ?? 'EUR';
+function createPricingLabel(model: ModelResponse): string | undefined {
+    const pricing = modelPricing(model);
+    if (!pricing) {
+        return undefined;
+    }
+    const { input, output, currency } = pricing;
     const format = (value: number | undefined) => value === undefined
         ? '?'
         : new Intl.NumberFormat('en-US', { style: 'currency', currency, maximumFractionDigits: 4 }).format(value);

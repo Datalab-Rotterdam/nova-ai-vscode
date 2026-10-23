@@ -1,6 +1,7 @@
+import { NOVA_USAGE_MIME_TYPE } from '../src/core/constants';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
-import { ModelProvider, pricingLabel, providerInternals } from '../src/model/modelProvider';
+import { ModelProvider, modelPricing, pricingLabel, providerInternals } from '../src/model/modelProvider';
 import { Diagnostics } from '../src/core/diagnostics';
 
 describe('ModelProvider', () => {
@@ -331,7 +332,8 @@ describe('ModelProvider', () => {
                       },
                       finish_reason: 'tool_calls'
                     }
-                  ]
+                  ],
+                  usage: { prompt_tokens: 100, completion_tokens: 20, prompt_tokens_details: { cached_tokens: 60 } }
                 }
               } as const;
             }
@@ -353,6 +355,8 @@ describe('ModelProvider', () => {
 
     expect(progress.report).toHaveBeenCalledWith(expect.objectContaining({ value: 'Hello ' }));
     expect(progress.report).toHaveBeenCalledWith(expect.objectContaining({ name: 'searchWorkspace' }));
+    const usagePart = progress.report.mock.calls.map(([part]) => part).find((part) => part instanceof vscode.LanguageModelDataPart && part.mimeType === NOVA_USAGE_MIME_TYPE);
+    expect(JSON.parse(new TextDecoder().decode(usagePart.data))).toMatchObject({ promptTokens: 100, completionTokens: 20, cachedTokens: 60 });
   });
 
   it('falls back to chat-only when Nova rejects tools in auto mode', async () => {
@@ -507,6 +511,13 @@ describe('ModelProvider', () => {
     expect(model).not.toHaveProperty('configurationSchema');
     expect(model).not.toHaveProperty('pricing');
     expect(pricingLabel(model)).toBe('€0.20 in / €0.60 out per 1M tokens');
+  });
+
+  it('reads prices as the gateway lists them (inputCostPer1M, outputCostPer1M, currency)', () => {
+    const model = providerInternals.toModelInfo({ id: 'nova-pro', name: 'Nova Pro', created: 1, owned_by: 'system', contextWindow: 8192, inputCostPer1M: 1.5, outputCostPer1M: 6, currency: 'USD' });
+    expect(pricingLabel(model)).toBe('$1.50 in / $6.00 out per 1M tokens');
+    expect(modelPricing(model.raw)).toEqual({ input: 1.5, output: 6, currency: 'USD' });
+    expect(modelPricing({ id: 'free', created: 1, owned_by: 'system' } as never)).toBeUndefined();
   });
 
   it('maps per-model configuration to request options, with explicit model options winning', () => {

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { compactTokens, formatCost } from "./usage";
   import type { ChatState } from "../../../src/panel/protocol";
   import { nextAgentId } from "../../../src/panel/agentModes";
   import ModeMenu from "./ModeMenu.svelte";
@@ -664,6 +665,17 @@
                 {chat.usage.used.toLocaleString()} / {chat.usage.total.toLocaleString()}
                 tokens
               </p>
+              {#if chat.totals}
+                <div class="cp-head cp-session">
+                  <span>This chat</span>
+                  {#if chat.totals.cost !== undefined}
+                    <span class="cp-pct" title="Computed from the models' prices per 1M tokens; cached tokens are counted as input">≈ {formatCost(chat.totals.cost, chat.totals.currency)}</span>
+                  {/if}
+                </div>
+                <p class="cp-text">
+                  {compactTokens(chat.totals.promptTokens)} in · {compactTokens(chat.totals.completionTokens)} out{#if chat.totals.cachedTokens} · {compactTokens(chat.totals.cachedTokens)} cached{/if}
+                </p>
+              {/if}
               <button
                 class="cp-compact"
                 type="button"
@@ -1188,6 +1200,11 @@
       &.high {
         background: var(--nova-error);
       }
+    }
+
+    .cp-session {
+      padding-top: 8px;
+      border-top: 1px solid var(--nova-subtle-border);
     }
 
     .cp-text {

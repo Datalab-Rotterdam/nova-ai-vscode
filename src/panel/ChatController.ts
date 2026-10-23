@@ -27,6 +27,7 @@ import type { LanguageModelInfo } from '../core/types';
 import { toolResultText } from '../model/messages';
 import type { ModelProvider } from '../model/modelProvider';
 import { createDirectModel } from './directModel';
+import { modelPricing } from '../model/modelProvider';
 import { commitChanges, openPullRequest, reviewRequest, type GitCommandHost } from '../git/gitCommands';
 import { repoRoot } from '../git/git';
 import { baseContent, changedFiles, commitWorktree, createWorktree, mergeWorktree, removeWorktree, type AgentWorktree } from '../git/worktrees';
@@ -633,6 +634,7 @@ export class ChatController implements vscode.Disposable, ChatHistory {
             effort: this.currentEffort(),
             attachments: this.attachments,
             usage: this.usage,
+            totals: this.session.usageTotals,
             sessions: this.store.list(),
             openElsewhere: this.openElsewhere(),
             approvalMode: getApprovalMode(),
@@ -1010,6 +1012,28 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         this.selectModel(matches[0].id);
     }
 
+    /**
+     * Adds a request's tokens to the chat's totals (unless `toChat` is false) and returns its cost:
+     * computed here from the model's price per 1M tokens, as responses carry no cost.
+     */
+    private addUsage(info: LanguageModelInfo | undefined, promptTokens: number, completionTokens: number, cachedTokens: number, toChat = true): { amount: number; currency: string } | undefined {
+        const pricing = info?.raw ? modelPricing(info.raw) : undefined;
+        const cost = pricing ? { amount: (promptTokens * (pricing.input ?? 0) + completionTokens * (pricing.output ?? 0)) / 1_000_000, currency: pricing.currency } : undefined;
+        if (toChat) {
+            const totals = this.session.usageTotals ??= { promptTokens: 0, completionTokens: 0, cachedTokens: 0 };
+            totals.promptTokens += promptTokens;
+            totals.completionTokens += completionTokens;
+            totals.cachedTokens += cachedTokens;
+            if (cost) {
+                // ponytail: one currency per chat (the last model's); mixing currencies needs exchange rates.
+                totals.cost = (totals.cost ?? 0) + cost.amount;
+                totals.currency = cost.currency;
+            }
+            this.post({ type: 'chat/totals', totals: { ...totals } });
+        }
+        return cost;
+    }
+
     private notice(tone: Extract<ChatItem, { kind: 'notice' }>['tone'], text: string): void {
         this.addItem({ kind: 'notice', id: randomUUID(), tone, text });
     }
@@ -1138,9 +1162,10 @@ export class ChatController implements vscode.Disposable, ChatHistory {
                         ? 'Earlier messages were summarized to fit the context window.'
                         : 'Older tool output was shortened to fit the context window.'
                 }),
-                usage: (promptTokens) => {
+                usage: (promptTokens, completionTokens, cachedTokens) => {
                     this.usage = { used: promptTokens, total: model.maxInputTokens };
                     this.post({ type: 'chat/usage', usage: this.usage });
+                    this.addUsage(info, promptTokens, completionTokens, cachedTokens);
                 }
             };
             let result = await runAgentLoop(loopRequest, loopHost, running.token);
@@ -1652,9 +1677,14 @@ export class ChatController implements vscode.Disposable, ChatHistory {
                     state.currentTool = undefined;
                     touch();
                 },
-                usage: (promptTokens) => {
+                usage: (promptTokens, completionTokens, cachedTokens) => {
                     state.rounds++;
                     state.tokens += promptTokens;
+                    // A coding agent's chat may not be the open one; its cost stays on the agent then.
+                    const cost = this.addUsage(info, promptTokens, completionTokens, cachedTokens, !worktree || this.codingAgents.get(id)?.sessionId === this.session.id);
+                    if (cost) {
+                        state.cost = { amount: (state.cost?.amount ?? 0) + cost.amount, currency: cost.currency };
+                    }
                     touch();
                 }
             }, own.token);
