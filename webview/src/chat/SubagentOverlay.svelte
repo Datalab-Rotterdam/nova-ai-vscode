@@ -38,6 +38,16 @@
         }
     });
 
+    /**
+     * Shows the overlay as a child of <body>. Where the strip lives, an ancestor keeps a transform
+     * (the composer's entry animation), and a transformed ancestor captures `position: fixed`:
+     * the overlay would size to it, not the window, and the chat behind it would scroll.
+     */
+    function portal(node: HTMLElement) {
+        document.body.appendChild(node);
+        return {destroy: () => node.remove()};
+    }
+
     function onKey(event: KeyboardEvent) {
         if (event.key === 'Escape') {
             event.preventDefault();
@@ -50,7 +60,7 @@
 <svelte:window onkeydowncapture={onKey}/>
 
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-<div class="backdrop" onclick={(event) => event.target === event.currentTarget && onClose()}>
+<div class="backdrop" use:portal onclick={(event) => event.target === event.currentTarget && onClose()}>
     <div class="panel" role="dialog" aria-modal="true" aria-label={`Agent ${agent.name}`}>
         <header>
             <span class={`dot ${agent.status}`} aria-hidden="true"></span>
@@ -58,25 +68,28 @@
                 <div class="name">{agent.name}</div>
                 <div class="sub">{label}{agent.model ? ` · ${agent.model}` : ''} · {agent.toolCount} {agent.toolCount === 1 ? 'tool call' : 'tool calls'}</div>
             </div>
-            {#if branchOpen}
-                {#if agent.background?.files !== 0}
-                    <button class="nova-button secondary" onclick={() => branchAction('review')}>
-                        <span class="codicon codicon-diff-multiple" aria-hidden="true"></span> Review
-                    </button>
-                    <button class="nova-button secondary" onclick={() => branchAction('merge')}>
-                        <span class="codicon codicon-git-merge" aria-hidden="true"></span> Merge
-                    </button>
-                {/if}
-                <button class="nova-button secondary" onclick={() => branchAction('discard')}>
-                    <span class="codicon codicon-trash" aria-hidden="true"></span> Discard
-                </button>
-            {/if}
             {#if live}
                 <button class="nova-button secondary" onclick={() => post({command: 'chat/stopAgent', id: agent.id})}>
                     <span class="codicon codicon-debug-stop" aria-hidden="true"></span> Stop
                 </button>
             {/if}
             <button bind:this={closeButton} class="close codicon codicon-close" title="Close (Esc)" aria-label="Close" onclick={onClose}></button>
+            {#if branchOpen}
+                <!-- Own row, wrapping, so a narrow sidebar never pushes the buttons out of view. -->
+                <div class="actions">
+                    {#if agent.background?.files !== 0}
+                        <button class="nova-button secondary" onclick={() => branchAction('review')}>
+                            <span class="codicon codicon-diff-multiple" aria-hidden="true"></span> Review
+                        </button>
+                        <button class="nova-button secondary" onclick={() => branchAction('merge')}>
+                            <span class="codicon codicon-git-merge" aria-hidden="true"></span> Merge
+                        </button>
+                    {/if}
+                    <button class="nova-button secondary" onclick={() => branchAction('discard')}>
+                        <span class="codicon codicon-trash" aria-hidden="true"></span> Discard
+                    </button>
+                </div>
+            {/if}
         </header>
 
         <div class="body" bind:this={body}>
@@ -161,6 +174,7 @@
   header {
     flex: none;
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 10px;
     padding: 10px 12px;
@@ -237,6 +251,15 @@
     padding: 12px;
     overflow-x: hidden;
     overflow-y: auto;
+    /* Scrolling past the end does not move the chat behind the overlay. */
+    overscroll-behavior: contain;
+  }
+
+  .actions {
+    flex-basis: 100%;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
   }
 
   section {
