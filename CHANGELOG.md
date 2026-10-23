@@ -1,3 +1,17 @@
+# [1.0.0-alpha.27](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.26...v1.0.0-alpha.27) (2026-10-23)
+
+
+### Bug Fixes
+
+* **chat:** agent overlay buttons beside the name when there is room ([9661b12](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/9661b128d6dd961c6dd30cd8b0abfe233c118c3b))
+* **chat:** agent overlay scrolls itself and keeps its buttons in view ([8b0f28f](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/8b0f28f7df7056e0e5de640c831b92259f30fb71))
+* **chat:** keep agent steps within the agent overlay's width ([d3afdf1](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/d3afdf1c278c96686bd2c9284c29f2fc0d6277ce))
+
+
+### Features
+
+* **agents:** background coding agents in their own git worktree ([917a0ac](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/917a0ac195c510bd531ef1317c22e3aa94743a37))
+
 # [1.0.0-alpha.26](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.25...v1.0.0-alpha.26) (2026-10-23)
 
 
