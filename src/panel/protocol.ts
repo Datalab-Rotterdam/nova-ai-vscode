@@ -238,6 +238,10 @@ export type ChatCommand =
     | { command: 'chat/openDiff'; itemId: string }
     | { command: 'chat/openFile'; path: string }
     | { command: 'chat/openLink'; href: string; text: string }
+    /** A code block of an answer, opened as an untitled file in an editor. */
+    | { command: 'chat/openSnippet'; code: string; language: string }
+    /** A table of an answer, saved as a CSV or Excel file (the extension asks where). */
+    | { command: 'chat/exportTable'; format: 'csv' | 'xlsx'; rows: string[][] }
     | { command: 'chat/setApprovalMode'; mode: ApprovalMode }
     | { command: 'chat/setAgent'; id: string }
     /** Opens the Agents page. */

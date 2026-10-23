@@ -10,7 +10,7 @@ describe('classifyLink', () => {
   });
 
   it('refuses schemes that could run commands or leave the workspace', () => {
-    for (const href of ['command:workbench.action.terminal.new', 'vscode://settings', 'javascript:alert(1)', 'file:///etc/passwd', 'data:text/html,hi', '//evil.example', '#top', '']) {
+    for (const href of ['command:workbench.action.terminal.new', 'vscode://settings', 'javascript:alert(1)', 'file://other-host/share/a.txt', 'data:text/html,hi', '//evil.example', '#top', '']) {
       expect(classifyLink(href).kind, href).toBe('blocked');
     }
   });
@@ -19,6 +19,14 @@ describe('classifyLink', () => {
     expect(classifyLink('src/panel/links.ts')).toEqual({ kind: 'file', path: 'src/panel/links.ts', line: undefined });
     expect(classifyLink('./src/my%20file.ts#L12')).toEqual({ kind: 'file', path: 'src/my file.ts', line: 12 });
     expect(classifyLink('C:\\repo\\file.ts')).toMatchObject({ kind: 'file' });
+  });
+
+  it('reads positions, bare names, absolute paths and file: links', () => {
+    expect(classifyLink('src/a.ts:12:5')).toEqual({ kind: 'file', path: 'src/a.ts', line: 12, column: 5 });
+    expect(classifyLink('a.ts:12')).toEqual({ kind: 'file', path: 'a.ts', line: 12 });
+    expect(classifyLink('/Users/me/report.pdf')).toMatchObject({ kind: 'file', path: '/Users/me/report.pdf' });
+    expect(classifyLink('file:///Users/me/my%20doc.md#L3')).toEqual({ kind: 'file', path: '/Users/me/my doc.md', line: 3 });
+    expect(classifyLink('file:///C:/repo/a.ts')).toMatchObject({ kind: 'file', path: 'C:/repo/a.ts' });
   });
 });
 

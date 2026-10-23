@@ -1,3 +1,5 @@
+import { statSync as nodeStatSync } from 'node:fs';
+const statSync = async (path: string) => nodeStatSync(path);
 type Listener<T> = (event: T) => unknown;
 
 export class Disposable {
@@ -208,7 +210,15 @@ export const workspace = {
   get fs(): unknown {
     return {
       readFile: async () => new Uint8Array(),
-      stat: async () => ({ mtime: 0 }),
+      // The real file's type when it exists (so links can tell files from folders), else an entry without one.
+      stat: async (uri?: { fsPath?: string }) => {
+        try {
+          const info = await statSync(uri?.fsPath ?? '');
+          return { type: info.isDirectory() ? 2 : 1, mtime: info.mtimeMs, ctime: 0, size: info.size };
+        } catch {
+          return { mtime: 0 };
+        }
+      },
       readDirectory: async () => []
     };
   },

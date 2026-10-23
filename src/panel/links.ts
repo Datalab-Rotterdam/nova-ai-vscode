@@ -1,9 +1,10 @@
 import * as vscode from 'vscode';
+import { splitFileRef } from './fileRefs';
 
 /** What a link in the chat points to. */
 export type ChatLink =
     | { kind: 'external'; url: URL }
-    | { kind: 'file'; path: string; line?: number }
+    | { kind: 'file'; path: string; line?: number; column?: number }
     | { kind: 'blocked'; reason: string };
 
 const EXTERNAL_SCHEMES = new Set(['http:', 'https:', 'mailto:']);
@@ -19,8 +20,14 @@ export function classifyLink(href: string): ChatLink {
         return { kind: 'blocked', reason: 'This link does not point anywhere.' };
     }
     const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(trimmed)?.[1];
+    // `file:` links point to a path; the chat opens it in the workspace or shows it in the file manager.
+    if (scheme?.toLowerCase() === 'file') {
+        return fileLink(trimmed);
+    }
+    // `a.ts:12` is a file and a line, not a scheme.
+    const isPosition = /^[^:/\\]+:\d+(?::\d+)?(?:-\d+)?$/.test(trimmed);
     // Single letters are Windows drive letters (C:\...), not schemes.
-    if (scheme && scheme.length > 1) {
+    if (scheme && scheme.length > 1 && !isPosition) {
         let url: URL;
         try {
             url = new URL(trimmed);
@@ -36,14 +43,41 @@ export function classifyLink(href: string): ChatLink {
         return { kind: 'blocked', reason: 'This link has no scheme.' };
     }
     const [pathPart, fragment] = trimmed.split('#', 2);
-    const line = /^L(\d+)/.exec(fragment ?? '')?.[1];
+    const fromFragment = /^L(\d+)(?:C(\d+))?/.exec(fragment ?? '');
+    const target = splitFileRef(pathPart.split('?', 1)[0]);
     let path: string;
     try {
-        path = decodeURIComponent(pathPart.split('?', 1)[0]);
+        path = decodeURIComponent(target.path);
     } catch {
-        path = pathPart;
+        path = target.path;
     }
-    return { kind: 'file', path: path.replace(/^\.\//, ''), line: line ? Number(line) : undefined };
+    const line = target.line ?? (fromFragment ? Number(fromFragment[1]) : undefined);
+    const column = target.column ?? (fromFragment?.[2] ? Number(fromFragment[2]) : undefined);
+    return { kind: 'file', path: path.replace(/^\.\//, ''), line, ...(column ? { column } : {}) };
+}
+
+/** A `file:` link as a path (the chat decides whether it is in the workspace). */
+function fileLink(href: string): ChatLink {
+    let url: URL;
+    try {
+        url = new URL(href);
+    } catch {
+        return { kind: 'blocked', reason: 'This link is not a valid address.' };
+    }
+    if (url.hostname && url.hostname !== 'localhost') {
+        return { kind: 'blocked', reason: 'Nova does not open files on other machines.' };
+    }
+    let path = decodeURIComponent(url.pathname);
+    if (/^\/[a-zA-Z]:/.test(path)) {
+        path = path.slice(1); // file:///C:/dir → C:/dir
+    }
+    const fromFragment = /^L(\d+)(?:C(\d+))?/.exec(url.hash.slice(1));
+    return {
+        kind: 'file',
+        path,
+        line: fromFragment ? Number(fromFragment[1]) : undefined,
+        ...(fromFragment?.[2] ? { column: Number(fromFragment[2]) } : {})
+    };
 }
 
 /** Host of `text` when the visible link text is itself an address on a different host than the link. */

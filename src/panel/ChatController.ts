@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import * as nodeOs from 'node:os';
+import * as nodePath from 'node:path';
 import * as vscode from 'vscode';
 import { runAgentLoop, summarize } from '../agent/AgentLoop';
 import { BUILT_IN_TOOLS, outputParts, ToolInputError, type NovaTool, type ProposedEdit, type ToolPreparation } from '../agent/tools';
@@ -44,6 +46,7 @@ import type { ChatHub } from './ChatHub';
 import { parseSlashCommand, type ParsedSlashCommand } from './slashCommands';
 import { runIdOf, setRunId, visibleChatItems } from './steps';
 import { classifyLink, confirmAndOpenExternal } from './links';
+import { toCsv, toXlsx } from './tableExport';
 import { confirmAndDeleteChats, type ChatHistory } from './chatSearch';
 import { classifyFile } from './drop';
 import { fromStoredMessages, type SessionStore, type StoredSession, toStoredMessages } from './SessionStore';
@@ -52,7 +55,24 @@ const MAX_ATTACHMENT_CHARS = 60_000;
 /** Images the model may see in one run: the newest plus what is already in the conversation. */
 const MAX_IMAGES_PER_RUN = 4;
 /** Composer images up to this many bytes; larger than about 2.5 MB of base64 over the message port. */
-const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+/** Longest code block the open button hands to an editor. */
+const MAX_SNIPPET_CHARS = 2_000_000;
+/** Fence tags that are not VS Code language IDs. */
+const SNIPPET_LANGUAGES: Record<string, string> = {
+    js: 'javascript', mjs: 'javascript', cjs: 'javascript', jsx: 'javascriptreact', ts: 'typescript', tsx: 'typescriptreact',
+    sh: 'shellscript', bash: 'shellscript', zsh: 'shellscript', shell: 'shellscript', console: 'shellscript',
+    py: 'python', rb: 'ruby', rs: 'rust', cs: 'csharp', 'c++': 'cpp', yml: 'yaml', md: 'markdown', ps1: 'powershell',
+    kt: 'kotlin', golang: 'go', objc: 'objective-c', vue: 'html', svg: 'xml'
+};
+/** File extension for a snippet's language; anything else is .txt. */
+const SNIPPET_EXTENSIONS: Record<string, string> = {
+    typescript: 'ts', typescriptreact: 'tsx', javascript: 'js', javascriptreact: 'jsx', python: 'py', shellscript: 'sh',
+    json: 'json', jsonc: 'jsonc', yaml: 'yml', markdown: 'md', html: 'html', css: 'css', scss: 'scss', less: 'less',
+    go: 'go', rust: 'rs', java: 'java', csharp: 'cs', cpp: 'cpp', c: 'c', php: 'php', ruby: 'rb', sql: 'sql', xml: 'xml',
+    kotlin: 'kt', swift: 'swift', powershell: 'ps1', diff: 'diff', dockerfile: 'Dockerfile', toml: 'toml', ini: 'ini',
+    lua: 'lua', r: 'r', perl: 'pl', dart: 'dart', 'objective-c': 'm', graphql: 'graphql', svelte: 'svelte'
+};
 const IMAGE_MIME = new Map([
     ['png', 'image/png'],
     ['jpg', 'image/jpeg'],
@@ -282,6 +302,12 @@ export class ChatController implements vscode.Disposable, ChatHistory {
             case 'chat/openLink':
                 await this.openLink(command.href, command.text);
                 break;
+            case 'chat/openSnippet':
+                await this.openSnippet(command.code, command.language);
+                break;
+            case 'chat/exportTable':
+                await this.exportTable(command.format, command.rows);
+                break;
             case 'chat/queueMode':
                 this.queue = this.queue.map((item) => (item.id === command.id ? { ...item, mode: command.mode } : item));
                 this.postQueue();
@@ -313,7 +339,10 @@ export class ChatController implements vscode.Disposable, ChatHistory {
                 this.post({ type: 'chat/todos', todos: [] });
                 break;
             case 'chat/editMessage':
-                if (this.findUser(command.itemId)?.branch) {
+                if (this.isLastGroup(command.itemId)) {
+                    // The newest question: the edit becomes a new answer version next to the old one.
+                    await this.regenerate(command.itemId, command.text);
+                } else if (this.findUser(command.itemId)?.branch) {
                     // Editing an answer version re-runs only that version of the answer.
                     await this.rerunBranch(command.itemId, command.text);
                 } else {
@@ -369,7 +398,7 @@ export class ChatController implements vscode.Disposable, ChatHistory {
             return;
         }
         if (source.length > (MAX_IMAGE_BYTES * 4) / 3 + 4) {
-            this.notice('warning', `${name} is too large to attach (at most ${Math.round(MAX_IMAGE_BYTES / 1024 / 10) / 10} MB).`);
+            this.notice('warning', `${name} is too large to attach (at most ${MAX_IMAGE_BYTES / 1024 / 1024} MB).`);
             return;
         }
         // An image from the workspace keeps its path, so the model can find the file again with its tools.
@@ -1049,10 +1078,25 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         this.snapshots.delete(target.id);
     }
 
-    /** Regenerates the answer of a version: a new branch is added next to it and becomes current. */
-    private async regenerate(itemId: string): Promise<void> {
+    /** True when no later question follows the answer group of this message, so new versions can sit at the end. */
+    private isLastGroup(itemId: string): boolean {
         const target = this.findUser(itemId);
         if (!target) {
+            return false;
+        }
+        const host = this.hostIdOf(target);
+        const items = this.session.items;
+        const start = items.findIndex((item) => item.kind === 'user' && (item.id === host || item.branch?.hostId === host));
+        return !items.some((item, index) => index > start && item.kind === 'user' && item.id !== host && item.branch?.hostId !== host);
+    }
+
+    /**
+     * Adds a new answer version next to `itemId` and makes it current: a regenerated answer, or,
+     * with `text`, the same question edited. The previous version stays behind the version switcher.
+     */
+    private async regenerate(itemId: string, text?: string): Promise<void> {
+        const target = this.findUser(itemId);
+        if (!target || (text !== undefined && !text.trim() && !target.files?.length)) {
             return;
         }
         await this.settleIfRunning();
@@ -1062,7 +1106,7 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         const branchItem: Extract<ChatItem, { kind: 'user' }> = {
             kind: 'user',
             id: randomUUID(),
-            text: target.text,
+            text: text?.trim() ?? target.text,
             attachments: target.attachments,
             files: target.files,
             model: this.runModelName,
@@ -1071,6 +1115,8 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         this.session.items.push(branchItem);
         // The previous answer is no longer the context a fresh run should keep.
         await this.activate(branchItem, false);
+        // Show the new version now: the old one is hidden at once, not when the first reply step arrives.
+        this.postState();
         this.messages = await this.conversationBeforeGroup(host);
         await this.run(branchItem.text, branchItem.files ?? [], false, branchItem);
     }
@@ -1685,12 +1731,64 @@ export class ChatController implements vscode.Disposable, ChatHistory {
     }
 
     /** Links in replies: web links open in the browser after the user sees where they go, paths open in the workspace. */
+    /** Opens a code block of an answer as an untitled file, with its language, to read in full or save. */
+    private async openSnippet(code: unknown, language: unknown): Promise<void> {
+        if (typeof code !== 'string' || !code || code.length > MAX_SNIPPET_CHARS) {
+            return;
+        }
+        const tag = typeof language === 'string' ? language.toLowerCase() : '';
+        const id = SNIPPET_LANGUAGES[tag] ?? tag;
+        const known = id ? await vscode.languages.getLanguages() : [];
+        const languageId = known.includes(id) ? id : 'plaintext';
+        // snippet.ts, then snippet-2.ts, … so a second snippet does not reopen the first.
+        const extension = SNIPPET_EXTENSIONS[languageId] ?? 'txt';
+        const open = new Set(vscode.workspace.textDocuments.map((document) => document.uri.toString()));
+        let uri = vscode.Uri.from({ scheme: 'untitled', path: `snippet.${extension}` });
+        for (let n = 2; open.has(uri.toString()); n++) {
+            uri = vscode.Uri.from({ scheme: 'untitled', path: `snippet-${n}.${extension}` });
+        }
+        let document = await vscode.workspace.openTextDocument(uri);
+        const editor = await vscode.window.showTextDocument(document, { preview: false });
+        await editor.edit((edit) => edit.insert(new vscode.Position(0, 0), code));
+        if (document.languageId !== languageId) {
+            document = await vscode.languages.setTextDocumentLanguage(document, languageId);
+        }
+    }
+
+    /** Asks where to save a table of an answer and writes it as CSV or Excel. */
+    private async exportTable(format: 'csv' | 'xlsx', rows: unknown): Promise<void> {
+        const valid = Array.isArray(rows) && rows.length > 0 && rows.every((row) => Array.isArray(row) && row.every((cell) => typeof cell === 'string'));
+        if (!valid) {
+            return;
+        }
+        const folder = vscode.workspace.workspaceFolders?.[0]?.uri;
+        const target = await vscode.window.showSaveDialog({
+            defaultUri: folder ? vscode.Uri.joinPath(folder, `table.${format}`) : undefined,
+            filters: format === 'csv' ? { 'CSV file': ['csv'] } : { 'Excel workbook': ['xlsx'] },
+            saveLabel: 'Save table'
+        });
+        if (!target) {
+            return;
+        }
+        try {
+            const data = format === 'csv' ? new TextEncoder().encode(toCsv(rows as string[][])) : toXlsx(rows as string[][]);
+            await vscode.workspace.fs.writeFile(target, data);
+        } catch (error) {
+            void vscode.window.showErrorMessage(`The table could not be saved: ${error instanceof Error ? error.message : String(error)}`);
+            return;
+        }
+        const open = await vscode.window.showInformationMessage(`Saved ${displayPath(target)}.`, 'Open');
+        if (open) {
+            await vscode.env.openExternal(target);
+        }
+    }
+
     private async openLink(href: string, text: string): Promise<void> {
         const link = classifyLink(href);
         if (link.kind === 'external') {
             await confirmAndOpenExternal(link.url, text);
         } else if (link.kind === 'file') {
-            await this.openFile(link.path, link.line);
+            await this.openFileLink(link.path, link.line, link.column);
         } else {
             void vscode.window.showWarningMessage(link.reason);
         }
@@ -1728,6 +1826,73 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         } else {
             this.postState();
         }
+    }
+
+    /**
+     * Opens a file named in an answer. A workspace file opens in the editor (images, PDFs and the
+     * like in their own viewer) at its line, a folder is revealed in the Explorer, and a path
+     * outside the workspace is shown in Finder / the file manager, not opened. A name that is not
+     * where it was said to be is looked up in the workspace.
+     */
+    private async openFileLink(rawPath: string, line?: number, column?: number): Promise<void> {
+        if (/^(Global|Project) memory/.test(rawPath)) {
+            await this.openFile(rawPath, line);
+            return;
+        }
+        const expanded = rawPath.startsWith('~/') || rawPath === '~' ? nodePath.join(nodeOs.homedir(), rawPath.slice(1)) : rawPath;
+        let uri: vscode.Uri | undefined;
+        let outside = false;
+        try {
+            uri = resolveWorkspacePath(expanded);
+        } catch {
+            if (nodePath.isAbsolute(expanded)) {
+                uri = vscode.Uri.file(nodePath.normalize(expanded));
+                outside = true;
+            }
+        }
+        let type = uri ? await this.fileType(uri) : undefined;
+        if (!type && !outside) {
+            // Not there: a bare name or a partial path is looked up in the workspace.
+            uri = await this.findInWorkspace(expanded);
+            type = uri ? await this.fileType(uri) : undefined;
+        }
+        if (!uri || !type) {
+            void vscode.window.showWarningMessage(`${rawPath} was not found.`);
+            return;
+        }
+        if (outside) {
+            await vscode.commands.executeCommand('revealFileInOS', uri);
+        } else if (type & vscode.FileType.Directory) {
+            await vscode.commands.executeCommand('revealInExplorer', uri);
+        } else {
+            const position = line ? new vscode.Position(line - 1, Math.max(0, (column ?? 1) - 1)) : undefined;
+            await vscode.commands.executeCommand('vscode.open', uri, { preview: true, ...(position ? { selection: new vscode.Range(position, position) } : {}) });
+        }
+    }
+
+    private async fileType(uri: vscode.Uri): Promise<vscode.FileType | undefined> {
+        try {
+            return (await vscode.workspace.fs.stat(uri)).type;
+        } catch {
+            return undefined;
+        }
+    }
+
+    /** The workspace file a name or partial path points to; asks which when several match. */
+    private async findInWorkspace(name: string): Promise<vscode.Uri | undefined> {
+        const pattern = name.replace(/^(?:\.{1,2}[\\/])+/, '').replace(/\\/g, '/');
+        if (!pattern || /[*?[\]{}]/.test(pattern)) {
+            return undefined;
+        }
+        const matches = await vscode.workspace.findFiles(`**/${pattern}`, '**/{node_modules,.git}/**', 20);
+        if (matches.length <= 1) {
+            return matches[0];
+        }
+        const picked = await vscode.window.showQuickPick(
+            matches.map((uri) => ({ label: nodePath.basename(uri.fsPath), description: displayPath(uri), uri })),
+            { placeHolder: `Several files match ${name}` }
+        );
+        return picked?.uri;
     }
 
     private async openFile(path: string, line?: number): Promise<void> {

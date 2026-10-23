@@ -102,6 +102,33 @@
     }
   }
 
+  /** Text selected in the conversation (not in a field, which copies natively). */
+  function selectedText(target: EventTarget | null): string {
+    if (target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement) {
+      return "";
+    }
+    return window.getSelection()?.toString() ?? "";
+  }
+
+  // Selected messages go to the clipboard. The webview does not always pass Ctrl/Cmd+C on to
+  // the browser's own copy, so write the selection ourselves.
+  function onWindowKeydown(event: KeyboardEvent) {
+    if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === "c") {
+      const selected = selectedText(event.target);
+      if (selected) {
+        void navigator.clipboard?.writeText(selected).catch(() => undefined);
+      }
+    }
+  }
+
+  function onWindowCopy(event: ClipboardEvent) {
+    const selected = selectedText(event.target);
+    if (selected && event.clipboardData) {
+      event.clipboardData.setData("text/plain", selected);
+      event.preventDefault();
+    }
+  }
+
   function onKeydown(event: KeyboardEvent) {
     if (["ArrowUp", "PageUp", "Home"].includes(event.key)) {
       locked = false;
@@ -202,6 +229,33 @@
     scoped.findLastIndex((item) => item.kind === "user"),
   );
 
+  /** No later question follows this message's answer (versions of it do not count). */
+  function isLastQuestion(user: {
+    id: string;
+    branch?: { hostId: string };
+  }): boolean {
+    const host = user.branch?.hostId ?? user.id;
+    const start = chat.items.findIndex(
+      (item) =>
+        item.kind === "user" && (item.id === host || item.branch?.hostId === host),
+    );
+    return !chat.items.some(
+      (item, index) =>
+        index > start &&
+        item.kind === "user" &&
+        item.id !== host &&
+        item.branch?.hostId !== host,
+    );
+  }
+
+  /** Copies a message and flashes the button's icon as a check. */
+  function copyText(text: string, event: MouseEvent) {
+    void navigator.clipboard?.writeText(text);
+    const icon = event.currentTarget as HTMLElement;
+    icon.classList.replace("codicon-copy", "codicon-check");
+    setTimeout(() => icon.classList.replace("codicon-check", "codicon-copy"), 1200);
+  }
+
   /** The versions of the answer of `item`: it, its host and its branches, in order. */
   function versionsOf(user: {
     kind: "user";
@@ -247,6 +301,8 @@
     );
   }
 </script>
+
+<svelte:window onkeydown={onWindowKeydown} oncopy={onWindowCopy} />
 
 <section class="chat" class:editor={surface === "editor"}>
   <header>
@@ -304,7 +360,7 @@
               </div>
             {/if}
 
-            {#each entries as entry (entry.kind === "group" ? entry.id : entry.item.id)}
+            {#each entries as entry, entryIndex (entry.kind === "group" ? entry.id : entry.item.id)}
               {@const at = entry.kind === "group" ? entry.first : entry.index}
               {@const item =
                 entry.kind === "group"
@@ -329,7 +385,12 @@
                 </div>
               {/if}
               {#if entry.kind === "group"}
-                <StepGroup group={entry} running={chat.running} {post} />
+                <!-- Only the group still being worked on spins; earlier ones are done. -->
+                <StepGroup
+                  group={entry}
+                  running={chat.running && entryIndex === entries.length - 1}
+                  {post}
+                />
               {:else if item.kind === "user"}
                 {#if editingId === item.id}
                   <form
@@ -359,7 +420,9 @@
                       }}></textarea>
                     <div class="edit-actions">
                       <span class="edit-hint"
-                        >Later messages will be replaced{chat.running
+                        >{isLastQuestion(item)
+                          ? "The edit becomes a new answer version"
+                          : "Later messages will be replaced"}{chat.running
                           ? " and the current reply stopped"
                           : ""}.</span
                       >
@@ -383,6 +446,12 @@
                     ) + 1}
                   <div class="user" class:steered={item.steered}>
                     <div class="user-actions">
+                      <button
+                        class="edit-button codicon codicon-copy"
+                        title="Copy message"
+                        aria-label="Copy message"
+                        onclick={(event) => copyText(item.text, event)}
+                      ></button>
                       <button
                         class="edit-button codicon codicon-edit"
                         title="Edit and resend"
@@ -491,10 +560,24 @@
                 {/if}
               {:else if item.kind === "assistant"}
                 <div class="assistant">
+                  {#if item.text && !(chat.running && at === scoped.length - 1)}
+                    <div class="message-actions">
+                      <button
+                        class="edit-button codicon codicon-copy"
+                        title="Copy answer"
+                        aria-label="Copy answer"
+                        onclick={(event) => copyText(item.text, event)}
+                      ></button>
+                    </div>
+                  {/if}
                   <Markdown
                     text={item.text}
                     onLink={(href, text) =>
                       post({ command: "chat/openLink", href, text })}
+                    onTable={(format, rows) =>
+                      post({ command: "chat/exportTable", format, rows })}
+                    onCode={(code, language) =>
+                      post({ command: "chat/openSnippet", code, language })}
                   />
                 </div>
               {:else if item.kind === "thinking"}
@@ -729,31 +812,18 @@
   }
 
   .edit-button {
-    position: absolute;
-    top: 50%;
-    left: -26px;
     padding: 3px;
     border: 0;
     border-radius: var(--nova-radius);
     background: none;
     color: var(--nova-muted);
+    font-size: 14px;
     cursor: pointer;
-    opacity: 0;
-    transform: translateY(-50%);
-    transition: opacity 0.12s;
 
     &:hover {
       background: var(--vscode-toolbar-hoverBackground, var(--nova-hover));
       color: var(--nova-fg);
     }
-
-    &:focus-visible {
-      opacity: 1;
-    }
-  }
-
-  .user:hover .edit-button {
-    opacity: 1;
   }
 
   .user.editing {
@@ -801,20 +871,42 @@
     font-size: 0.85em;
   }
 
-  .user-actions {
+  /* A small toolbar on the message's edge, shown while it is hovered or focused: top-right on a
+     question, bottom-right under an answer. */
+  .user-actions,
+  .message-actions {
     position: absolute;
-    top: 50%;
-    left: -56px;
+    top: -12px;
+    right: 8px;
+    z-index: 1;
     display: flex;
-    flex-direction: column;
-    gap: 2px;
-    transform: translateY(-50%);
+    gap: 1px;
+    padding: 1px 2px;
+    border: 1px solid var(--nova-subtle-border);
+    border-radius: var(--nova-radius);
+    background: var(--vscode-editorWidget-background, var(--nova-bg));
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.12s;
+  }
 
-    .edit-button {
-      position: static;
-      transform: none;
-      opacity: 0;
-    }
+  .user:hover .user-actions,
+  .user:focus-within .user-actions,
+  .assistant:hover .message-actions,
+  .assistant:focus-within .message-actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .assistant {
+    position: relative;
+    margin-bottom: 10px;
+  }
+
+  .message-actions {
+    top: auto;
+    bottom: -12px;
+    right: 0;
   }
 
   .versions {
