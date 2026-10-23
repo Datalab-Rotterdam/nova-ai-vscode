@@ -65,7 +65,7 @@ Pick the model in the input box (or with `/model`). Earlier replies keep the mod
 
 ### Tools and approvals
 
-Nova reads, lists, finds and searches files, checks problems, edits and creates files, runs commands, searches the web and fetches web pages. MCP tools registered in VS Code are available too (`nova.agent.includeMcpTools`).
+Nova reads, lists, finds and searches files, checks problems, edits and creates files, runs commands, searches the web and fetches web pages. It also uses the tools of your MCP servers (see MCP servers below), and MCP tools registered in VS Code (`nova.agent.includeMcpTools`).
 
 Two menus under the input box set how Nova works.
 
@@ -154,23 +154,60 @@ A skill is a folder with a `SKILL.md`: reusable instructions Nova loads when a t
 
 Only the names and short descriptions of the skills that are on are sent with each request; Nova reads a skill's instructions when it uses it.
 
+## MCP servers
+
+Nova connects MCP servers itself, in Claude's format:
+
+- `~/.nova-ai/mcp.json`: your own servers, for every project.
+- `.mcp.json` and `.nova-ai/mcp.json` in the repository: shared with your team. They only start in a trusted workspace.
+
+```json
+{ "mcpServers": {
+    "files":  { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "."] },
+    "github": { "type": "http", "url": "https://api.githubcopilot.com/mcp/", "headers": { "Authorization": "Bearer ${GITHUB_TOKEN}" } } } }
+```
+
+Servers run as a local program (`command`) or over HTTP (`url`; Streamable HTTP, or `"type": "sse"`). `${VAR}` takes a value from your environment. **Nova AI: MCP Servers** lists each server with its status and tools; from there you connect, reconnect, sign out, turn a server off for this workspace, or open its config. Servers that use OAuth are signed in to through your browser; the tokens stay in VS Code's secret storage.
+
+The tools show up as `mcp__<server>__<tool>` and are approved like other tools. Tools a server marks as read-only run without asking in the default mode; allow a whole server with a rule such as `mcp__github__*`.
+
 ## Permission rules
 
 Rules decide which tool calls run without asking and which never run:
 
 - `~/.nova-ai/settings.json`: your own rules, for every project.
 - `.nova-ai/settings.json` in the repository: shared with your team.
-- `.nova-ai/settings.local.json`: personal and gitignored (**Always allow** writes here).
+- `.nova-ai/settings.local.json` in the repository: personal and gitignored.
+- **Always allow** saves its rule in this project's private settings in `~/.nova-ai`, outside the repository.
 
 ```json
 { "permissions": { "allow": ["run_command(npm test*)", "edit_file"], "deny": ["run_command(rm -rf*)"] } }
 ```
 
-A rule is a tool name, optionally with a `*` pattern for the command, URL or path. Deny rules always win. Allow rules from a repository only apply in a trusted workspace.
+A rule is a tool name, optionally with a `*` pattern for the command, URL or path. `mcp__<server>__*` covers every tool of an MCP server. Deny rules always win. Allow rules from a repository only apply in a trusted workspace.
+
+## Hooks
+
+Hooks run your own commands at fixed moments, in Claude Code's format, so hooks from `.claude/settings.json` work as they are. They go in the same settings files as the rules:
+
+```json
+{ "hooks": {
+    "PreToolUse": [{ "matcher": "run_command|Bash", "hooks": [{ "type": "command", "command": "./scripts/check-command.sh" }] }],
+    "Stop":       [{ "hooks": [{ "type": "command", "command": "npm test --silent || exit 2" }] }] } }
+```
+
+- **Events**: `PreToolUse` (before a tool runs, before its approval card), `PostToolUse` (after it ran), `UserPromptSubmit` (when you send a message), `SessionStart` (before a chat's first message) and `Stop` (when Nova wants to finish).
+- **`matcher`**: a regular expression over the tool name; Claude Code's names (`Bash`, `Edit`, `Write`, `Read`, …) match Nova's tools too.
+- **Input**: the event as JSON on stdin (tool name and input, your message, …).
+- **Exit code 2 blocks**: the tool call, your message, or finishing; what the hook prints to stderr is the reason, and Nova sees it. A `Stop` hook can send Nova back to work, up to three times per answer (for example until the tests pass).
+- **Exit code 0** may print a JSON decision (`{"decision": "block", "reason": "…"}`, or approve a call so no approval card is shown). Plain output of `UserPromptSubmit` and `SessionStart` hooks is added to your message as context.
+- Any other exit code shows a warning and Nova goes on.
+
+Hooks from a repository only run in a trusted workspace: a hook runs any command.
 
 ## Where Nova keeps its data
 
-Everything lives in `~/.nova-ai` (change it with `nova.home` or `NOVA_AI_HOME`): global memory and rules, skills, and one folder per workspace with its memory, chat history and a scratch folder for throwaway files. **Nova AI: Reveal Nova Folder** opens it; **Nova AI: Clean Up Projects** removes the data of workspaces that no longer exist.
+Everything lives in `~/.nova-ai` (change it with `nova.home` or `NOVA_AI_HOME`): global memory, rules and MCP servers, skills, and one folder per workspace with its memory, chat history, a scratch folder for throwaway files and the worktrees of coding agents. **Nova AI: Reveal Nova Folder** opens it; **Nova AI: Clean Up Projects** removes the data of workspaces that no longer exist.
 
 ---
 
@@ -184,6 +221,7 @@ Everything lives in `~/.nova-ai` (change it with `nova.home` or `NOVA_AI_HOME`):
 | Nova AI: Chats / Search Chats | Find, open, rename or delete chats |
 | Add to Nova Chat | Attach the editor selection |
 | Nova AI: Manage Skills / Manage Agents | Create and manage skills and agent modes |
+| Nova AI: MCP Servers | Status of your MCP servers; connect (sign in), reconnect, turn off |
 | Nova AI: Set Up Browser Integration | Let Nova use your browser |
 | Nova AI: Open Global Memory / Open Project Memory | Edit Nova's memory |
 | Nova AI: Reveal Nova Folder | Open `~/.nova-ai` |
@@ -203,7 +241,9 @@ Everything lives in `~/.nova-ai` (change it with `nova.home` or `NOVA_AI_HOME`):
 | `nova.agent.approvalMode` | `autoReadOnly` | When the Nova chat asks before running tools |
 | `nova.agent.maxToolRounds` | 25 | Tool rounds per request before Nova pauses |
 | `nova.agent.commandTimeoutSeconds` | 120 | Time limit for commands the Nova chat runs |
-| `nova.agent.includeMcpTools` | on | Offer MCP tools to the Nova chat |
+| `nova.mcp.enabled` | on | Connect the servers in your `mcp.json` files |
+| `nova.mcp.toolTimeoutSeconds` | 60 | Time limit for one MCP tool call |
+| `nova.agent.includeMcpTools` | on | Also offer MCP tools registered in VS Code |
 | `nova.agent.subagents.*` | on | Research sub-agents: on/off, model and limits |
 | `nova.agent.codingAgents.*` | on | Background coding agents: on/off, how many at once, round limit |
 | `nova.webSearch.*` | on | Web search providers |
@@ -222,6 +262,8 @@ Everything lives in `~/.nova-ai` (change it with `nova.home` or `NOVA_AI_HOME`):
 - **No models**: check the connection on the account page, then **Nova AI: Refresh Models**.
 - **"Stopped after 25 tool rounds"**: send `continue`, or raise `nova.agent.maxToolRounds`.
 - **The conversation no longer fits**: use `/compact`, switch to a model with a larger context window, or start over with `/clear`.
+- **An MCP server shows a key or an error**: run **Nova AI: MCP Servers**, choose the server and **Connect (sign in)**, or **Show error** for what it reported. Workspace servers only start in a trusted workspace.
+- **A hook blocks or warns**: the message names the hook. Hooks come from the settings files (see Hooks); run the command yourself to see what it does.
 - **Something else**: turn on `nova.enableDiagnostics` and look at the **Nova AI** output channel.
 
 > AI can make mistakes. Review important output before relying on it.

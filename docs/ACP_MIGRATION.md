@@ -108,6 +108,9 @@ Legend: ✅ the ACP agent already does this · 🟡 small change · 🔴 new wor
 | `get_diagnostics` (VS Code problems) | — | 🔴 editor-only: provided by the extension's MCP bridge (below) |
 | VS Code MCP tools (`mcp_*`, `nova.agent.includeMcpTools`) | agent connects MCP servers given in `session/new` | 🔴 MCP bridge (below) |
 | MCP servers from `.mcp.json` / `.nova-ai/settings.json` | ✅ agent reads them (trusted workspaces) | ✅ |
+| MCP servers from `~/.nova-ai/mcp.json` / `.nova-ai/mcp.json` (the extension's own client, `src/mcp/`) | — | 🔴 (A) agent reads both files, as `docs/NOVA_HOME.md` ("MCP servers") describes |
+| MCP OAuth sign-in (dynamic client registration, loopback redirect, tokens in Secret Storage) | — | 🟡 decide: the extension keeps signing in (Nova AI: MCP Servers) and passes the token as a header in `session/new`, or the agent gets its own token store |
+| MCP tool names `mcp__<server>__<tool>`, rule `mcp__<server>__*` | — | 🔴 (A) same names and the same rule matching in the agent's copy of `rules.ts` |
 
 **MCP bridge.** The extension runs a small MCP server on `127.0.0.1` (random
 port, bearer token) and passes it to the agent as an `http` server in
@@ -116,6 +119,16 @@ VS Code-managed MCP tools (`vscode.lm.invokeTool`). This needs no
 Nova-specific protocol and also works for other editors. Open point: the agent
 should honour MCP `readOnlyHint` annotations, so diagnostics don't need
 approval every time.
+
+### Added in the extension since this proposal
+
+Built on the extension's own agent (October 2026); each needs a place on ACP.
+
+| Panel feature | ACP agent today | Status / work |
+|---|---|---|
+| Hooks (`PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `SessionStart`, `Stop`; Claude Code's format, `src/hooks/HookService.ts`) | — | 🔴 (A) run them in the agent, where the tool calls happen; same settings key and semantics (`docs/NOVA_HOME.md`, "Hooks") |
+| `/commit`, `/review`, `/pr` (`src/git/`) | — | ✅ **stays in the extension**: git and `gh`/`glab` with one model answer; `/review` becomes a normal `session/prompt` with the diff attached |
+| Coding agents in their own git worktree (`start_coding_agent`, `src/git/worktrees.ts`) | — | 🟡 the worktree and branch handling (create, commit, review, merge, discard) stays in the extension; each agent becomes its own ACP session with `cwd` set to its worktree, so no tool rooting is needed. The tool that starts one has to be offered to the agent (an extension-provided tool over the MCP bridge) |
 
 ### Files and edits
 
@@ -163,6 +176,8 @@ when the user changes one (see the agent's `docs/ACP.md`).
 | `nova.context.defaultContextWindow` | the agent uses the window the gateway reports; open: a fallback setting for models that report none |
 | `nova.agent.commandTimeoutSeconds` | ✅ (A) session setting `commandTimeoutSeconds` |
 | `nova.agent.includeMcpTools` | MCP bridge on/off |
+| `nova.mcp.enabled`, `nova.mcp.toolTimeoutSeconds` | session settings, once the agent reads `mcp.json` (see Tools) |
+| `nova.agent.codingAgents.*` | extension only: it starts the agents' sessions |
 | `nova.home` | `NOVA_AI_HOME` |
 | `nova.memory.enabled` | see above |
 | `nova.models.editTools`, `nova.developer.parseModelCapabilities`, `nova.chat.rewriteAssistantIdentity`, `nova.enableDiagnostics` | language-model provider / extension only: unchanged |
@@ -182,7 +197,7 @@ Chat with a Nova model from the language-model provider). **Decision needed.**
 
 | Phase | Where | Done when |
 |---|---|---|
-| **A. Agent gaps** | agent package | `find_files`, `fetch_url` (approval), tool name aliases, `kind`/`front` in `queue/update`, context window in the model list, import of extension sessions, config options for rounds/compaction/memory, `readOnlyHint` for MCP; tests + `docs/ACP.md` updated; released as alpha |
+| **A. Agent gaps** | agent package | `find_files`, `fetch_url` (approval), tool name aliases, `kind`/`front` in `queue/update`, context window in the model list, import of extension sessions, config options for rounds/compaction/memory, `readOnlyHint` for MCP, `mcp.json` files and `mcp__` names, hooks; tests + `docs/ACP.md` updated; released as alpha |
 | **B. ACP client in the extension** | extension | Agent process lifecycle, version check, client `fs` (documents) and `terminal`, permission and question requests into the webview, session updates → `ChatEvent`s, MCP bridge; panel runs on ACP behind a setting `nova.agent.engine: "acp" \| "builtin"` |
 | **C. Panel on ACP by default** | extension | Feature table all ✅ in manual testing (incl. Windows, Remote SSH); default switched; built-in loop still selectable for one release |
 | **D. Participant** | extension | Decision above implemented |

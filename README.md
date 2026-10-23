@@ -172,6 +172,8 @@ A repository can also hold a `.nova-ai/` folder (rules, skills, agents) and a `N
 - **No models**: check the connection in the Nova AI view, then run **Nova AI: Refresh Models**.
 - **"Stopped after 25 tool rounds"**: send `continue`, or raise `nova.agent.maxToolRounds`.
 - **Conversation no longer fits**: use `/compact`, pick a model with a larger context window, or start over with `/clear`.
+- **An MCP server shows a key or an error**: run **Nova AI: MCP Servers**, choose the server and **Connect (sign in)**, or **Show error** for what it reported. Workspace servers only start in a trusted workspace.
+- **A hook blocks or warns**: the message names the hook. Hooks come from the settings files (see Make Nova yours); run the command yourself to see what it does.
 - **Something else**: turn on `nova.enableDiagnostics` and read the **Nova AI** output channel.
 
 ## Privacy & security
