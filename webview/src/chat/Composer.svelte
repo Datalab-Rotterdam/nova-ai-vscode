@@ -241,13 +241,90 @@
     post({ command: "chat/addImage", name, dataUrl });
   }
 
+  /** Images above this size are downscaled here before they are sent to the extension. */
+  const SHRINK_ABOVE_BYTES = 1.5 * 1024 * 1024;
+  const MAX_IMAGE_SIDE = 2048;
+  /** Stays under the extension's 5 MB attachment limit, with room for base64 overhead. */
+  const TARGET_IMAGE_BYTES = 3.5 * 1024 * 1024;
+
+  function encodeCanvas(canvas: HTMLCanvasElement, mimeType: string): Promise<Blob | null> {
+    return new Promise((resolve) => canvas.toBlob(resolve, mimeType, 0.85));
+  }
+
+  /**
+   * Scales a big image down (longest side {@link MAX_IMAGE_SIDE}, smaller still until it fits).
+   * JPEGs stay JPEG; everything else becomes PNG, so transparency survives. Null when the
+   * browser cannot decode it or scaling does not make it smaller, and the original is sent.
+   */
+  async function shrinkImage(file: File): Promise<{ name: string; dataUrl: string } | null> {
+    try {
+      const bitmap = await createImageBitmap(file);
+      const mimeType = file.type === "image/jpeg" ? "image/jpeg" : "image/png";
+      let side = Math.min(MAX_IMAGE_SIDE, Math.max(bitmap.width, bitmap.height));
+      let blob: Blob | null = null;
+      for (;;) {
+        const scale = Math.min(1, side / Math.max(bitmap.width, bitmap.height));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+        canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+        const context = canvas.getContext("2d");
+        if (!context) {
+          return null;
+        }
+        if (mimeType === "image/jpeg") {
+          context.fillStyle = "#fff";
+          context.fillRect(0, 0, canvas.width, canvas.height);
+        }
+        context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+        blob = await encodeCanvas(canvas, mimeType);
+        if (!blob || blob.size <= TARGET_IMAGE_BYTES || side <= 256) {
+          break;
+        }
+        side = Math.round(side * 0.75);
+      }
+      bitmap.close();
+      if (!blob || (blob.size >= file.size && file.size <= TARGET_IMAGE_BYTES)) {
+        return null;
+      }
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(blob);
+      });
+      const extension = mimeType === "image/jpeg" ? ".jpg" : ".png";
+      return { name: file.name.replace(/\.[^.]+$/, "") + extension, dataUrl };
+    } catch {
+      return null;
+    }
+  }
+
+  /** Any file that is neither text nor an image: its bytes go to the extension, which saves it for Nova's tools. */
+  function addBinaryFile(file: File) {
+    const reader = new FileReader();
+    reader.onload = () =>
+      post({ command: "chat/addBinaryFile", name: file.name, dataUrl: String(reader.result) });
+    reader.readAsDataURL(file);
+  }
+
   /** Images go to the vision path; text files are read here and sent inline. */
   function addFiles(files: File[]) {
     for (const file of files) {
       const kind = classifyFile(file.name, file.type);
-      if (kind === "unsupported") {
-        // The extension explains why it is refused.
-        post({ command: "chat/addTextFile", name: file.name, content: "" });
+      if (kind === "file") {
+        addBinaryFile(file);
+        continue;
+      }
+      if (kind === "image" && file.size > SHRINK_ABOVE_BYTES) {
+        void shrinkImage(file).then((shrunk) => {
+          if (shrunk) {
+            addImageDataUrl(shrunk.name, shrunk.dataUrl);
+            return;
+          }
+          const reader = new FileReader();
+          reader.onload = () => addImageDataUrl(file.name, String(reader.result));
+          reader.readAsDataURL(file);
+        });
         continue;
       }
       const reader = new FileReader();
@@ -255,12 +332,15 @@
         reader.onload = () => addImageDataUrl(file.name, String(reader.result));
         reader.readAsDataURL(file);
       } else {
-        reader.onload = () =>
-          post({
-            command: "chat/addTextFile",
-            name: file.name,
-            content: String(reader.result),
-          });
+        reader.onload = () => {
+          const content = String(reader.result);
+          // A binary file with a text-like name (no extension, or an odd one) is a file for Nova's tools.
+          if (content.includes("\u0000")) {
+            addBinaryFile(file);
+            return;
+          }
+          post({ command: "chat/addTextFile", name: file.name, content });
+        };
         reader.readAsText(file);
       }
     }

@@ -30,12 +30,14 @@ describe('isOnlyFileUris', () => {
 });
 
 describe('classifyFile', () => {
-    it('sorts images, text and binaries', () => {
+    it('sorts images, text and other files', () => {
         expect(classifyFile('shot.PNG')).toBe('image');
         expect(classifyFile('x', 'image/webp')).toBe('image');
         expect(classifyFile('notes.md')).toBe('text');
         expect(classifyFile('Makefile')).toBe('text');
-        expect(classifyFile('doc.pdf')).toBe('unsupported');
-        expect(classifyFile('anim.gif', 'image/gif')).toBe('unsupported');
+        expect(classifyFile('doc.pdf')).toBe('file');
+        expect(classifyFile('table.xlsx')).toBe('file');
+        expect(classifyFile('anim.gif', 'image/gif')).toBe('file');
+        expect(classifyFile('x', 'application/octet-stream')).toBe('file');
     });
 });

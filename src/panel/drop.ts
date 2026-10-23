@@ -61,16 +61,17 @@ const BINARY_EXTENSIONS = new Set([
     'mp3', 'mp4', 'mov', 'avi', 'mkv', 'wav', 'flac', 'ogg', 'woff', 'woff2', 'ttf', 'otf', 'sqlite', 'db'
 ]);
 
-export type FileKind = 'image' | 'text' | 'unsupported';
+/** `file`: anything else (PDF, spreadsheet, archive, …); Nova gets it as a file on disk, not as content. */
+export type FileKind = 'image' | 'text' | 'file';
 
-/** Sorts a file by name and MIME type: an image Nova can see, text to inline, or neither. */
+/** Sorts a file by name and MIME type: an image Nova can see, text to inline, or another file. */
 export function classifyFile(name: string, mime = ''): FileKind {
     const extension = name.split('.').pop()?.toLowerCase() ?? '';
     if (IMAGE_EXTENSIONS.has(extension) || /^image\/(png|jpeg|webp)$/.test(mime)) {
         return 'image';
     }
     if (BINARY_EXTENSIONS.has(extension) || /^(image|audio|video)\//.test(mime) || mime === 'application/pdf' || mime === 'application/zip' || mime === 'application/octet-stream') {
-        return 'unsupported';
+        return 'file';
     }
     return 'text';
 }

@@ -7,6 +7,7 @@
     import type {AgentsPageData} from '../../src/agents/protocol';
     import type {SkillScopeName, SkillsPageData} from '../../src/skills/protocol';
     import {createChatStore} from './chat/store.svelte';
+    import {SYNTAX_ROLES} from '../../src/views/syntaxColors';
     import type {ExtensionMessage, SidebarRenderState, SidebarView, VsCodeApi} from './types';
     import ApiKeyView from './views/ApiKeyView.svelte';
     import MainView from './views/MainView.svelte';
@@ -28,6 +29,19 @@
     let agents = $state<AgentsPageData | undefined>();
     const savedScope = (vscode?.getState?.() as { scope?: SkillScopeName & ('global' | 'project') } | undefined)?.scope;
     const savedAgentScope = (vscode?.getState?.() as { scope?: 'builtin' | 'global' | 'project' } | undefined)?.scope;
+
+    // The editor theme's token colors, as --nova-syn-<role> variables for code in answers.
+    $effect(() => {
+        const colors = state.syntaxColors ?? {};
+        for (const role of SYNTAX_ROLES) {
+            const color = colors[role];
+            if (color) {
+                document.documentElement.style.setProperty(`--nova-syn-${role}`, color);
+            } else {
+                document.documentElement.style.removeProperty(`--nova-syn-${role}`);
+            }
+        }
+    });
 
     onMount(() => {
         const onMessage = (event: MessageEvent<ExtensionMessage | ChatEvent>) => {

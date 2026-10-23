@@ -18,6 +18,8 @@ add('md mdx markdown rst adoc', { icon: 'markdown', tone: 'doc' });
 add('txt log', { icon: 'file-text', tone: 'plain' });
 add('png jpg jpeg webp gif bmp ico svg avif', { icon: 'file-media', tone: 'media' });
 add('pdf', { icon: 'file-pdf', tone: 'doc' });
+add('doc docx odt rtf pages ppt pptx odp key', { icon: 'file', tone: 'doc' });
+add('xls xlsx ods numbers', { icon: 'table', tone: 'data' });
 add('zip gz tgz tar rar 7z', { icon: 'file-zip', tone: 'plain' });
 add('yml yaml toml ini cfg conf env properties xml', { icon: 'settings-gear', tone: 'config' });
 add('lock', { icon: 'lock', tone: 'config' });

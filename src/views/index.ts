@@ -29,6 +29,8 @@ import type { ChatController, ChatControllerOptions } from '../panel/ChatControl
 import type { ChatCommand, ChatEvent } from '../panel/protocol';
 import { SessionService } from '../services/SessionService';
 import { Manifest, Resource } from './svelte';
+import type { SyntaxColors } from './syntaxColors';
+import { loadSyntaxColors, onDidChangeSyntaxTheme } from './syntaxTheme';
 
 const WEBVIEW_ENTRY = 'webview/index.html' as const;
 const HEAD_MARKER = '<!--nova:svelte-head-->';
@@ -68,6 +70,8 @@ export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer
   ) {
     this.sessionService.onDidChangeSession(() => void this.refresh());
     this.modelProvider.onDidChangeLanguageModelChatInformation(() => void this.refresh());
+    // Code in answers uses the editor theme's token colors, so a theme change reaches every surface.
+    onDidChangeSyntaxTheme(() => void this.refresh());
   }
 
   /** Sets how chats are created and creates the sidebar's. */
@@ -460,7 +464,8 @@ export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer
       preferredModelId: (models.find((model) => model.id === snapshot.selectedModelId) ?? models[0])?.id,
       profile: await this.profiles.view(snapshot.accountSummary?.profile),
       logoUri: resource('favicon.svg'),
-      datalabLogoUri: resource('datalab-logo.svg')
+      datalabLogoUri: resource('datalab-logo.svg'),
+      syntaxColors: await loadSyntaxColors()
     };
   }
 
@@ -511,6 +516,8 @@ export interface SidebarModel {
 
 export interface SidebarRenderState {
   snapshot: SessionSnapshot;
+  /** Token colors of the active editor theme for code in answers; absent when they cannot be read. */
+  syntaxColors?: SyntaxColors;
   /** The signed-in user for the avatar; undefined until the Nova API reports a profile. */
   profile?: ProfileView;
   /** Where this webview runs: the sidebar view or an editor tab. */

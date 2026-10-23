@@ -13,3 +13,7 @@ dist
 .DS_Store
 .env
 inspiration
+
+# Python caches the bundled skill scripts leave behind
+__pycache__/
+*.pyc

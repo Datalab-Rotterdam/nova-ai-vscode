@@ -14,6 +14,8 @@ export interface SidebarModel {
 /** Mirrors `SidebarRenderState` in src/views/index.ts. */
 export interface SidebarRenderState {
   snapshot: SessionSnapshot;
+  /** Token colors of the editor theme by role (keyword, string, …); see src/views/syntaxColors.ts. */
+  syntaxColors?: Partial<Record<string, string>>;
   profile?: ProfileView;
   surface?: 'sidebar' | 'editor' | 'skills' | 'agents';
   models?: SidebarModel[];

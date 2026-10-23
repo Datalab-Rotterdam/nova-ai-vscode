@@ -136,6 +136,8 @@ export interface Attachment {
     lines?: [number, number];
     /** Text of a file dropped from outside the workspace, sent as is instead of read from `path`. */
     content?: string;
+    /** A file that is not text or an image (PDF, spreadsheet, …): never inlined, Nova opens it with its tools. `path` is workspace-relative or `scratch/…`. */
+    binary?: { size: number };
     /** An image attached from the composer: base64 while it is in the message. */
     image?: { mimeType: string; data: string };
 }
@@ -234,10 +236,16 @@ export type ChatCommand =
     | { command: 'chat/attachUris'; uris: string[] }
     /** A text file dropped or pasted from outside VS Code, read by the webview. */
     | { command: 'chat/addTextFile'; name: string; content: string }
+    /** Any other file dropped or pasted from outside VS Code, as a data URL. */
+    | { command: 'chat/addBinaryFile'; name: string; dataUrl: string }
     | { command: 'chat/removeAttachment'; id: string }
     | { command: 'chat/openDiff'; itemId: string }
     | { command: 'chat/openFile'; path: string }
     | { command: 'chat/openLink'; href: string; text: string }
+    /** A code block of an answer, opened as an untitled file in an editor. */
+    | { command: 'chat/openSnippet'; code: string; language: string }
+    /** A table of an answer, saved as a CSV or Excel file (the extension asks where). */
+    | { command: 'chat/exportTable'; format: 'csv' | 'xlsx'; rows: string[][] }
     | { command: 'chat/setApprovalMode'; mode: ApprovalMode }
     | { command: 'chat/setAgent'; id: string }
     /** Opens the Agents page. */

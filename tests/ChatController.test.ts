@@ -1,13 +1,14 @@
 import * as path from 'node:path';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 
 let currentModel: unknown;
 vi.mock('../src/panel/directModel', () => ({ createDirectModel: () => currentModel }));
 
+import { setScratchRoot } from '../src/agent/tools/workspacePaths';
 import { Diagnostics } from '../src/core/diagnostics';
 import { ChatController } from '../src/panel/ChatController';
 import type { ChatEvent, ToolItem } from '../src/panel/protocol';
@@ -315,6 +316,27 @@ describe('ChatController', () => {
     const { controller, model } = setup([
       [new vscode.LanguageModelTextPart('Answer one.')],
       [new vscode.LanguageModelTextPart('Answer two.')],
+      [new vscode.LanguageModelTextPart('Answer one, revised.')]
+    ]);
+
+    await controller.handle({ command: 'chat/send', text: 'first question' });
+    await controller.handle({ command: 'chat/send', text: 'second question' });
+    const first = controller.getState().items.find((item) => item.kind === 'user' && item.text === 'first question')!;
+
+    await controller.handle({ command: 'chat/editMessage', itemId: first.id, text: 'first question, rephrased' });
+
+    const texts = (messages: vscode.LanguageModelChatMessage[]) => messages.slice(1).map((message) =>
+      message.content.map((part) => (part as vscode.LanguageModelTextPart).value).join(''));
+    expect(texts(model.sendRequest.mock.calls[2][0])).toEqual(['first question, rephrased', 'Answer one, revised.']);
+    expect(controller.getState().items.map((item) => (item as { text?: string }).text)).toEqual([
+      'first question, rephrased', 'Answer one, revised.'
+    ]);
+  });
+
+  it('edits the newest message into a new answer version and switches to it at once', async () => {
+    const { controller, events, model } = setup([
+      [new vscode.LanguageModelTextPart('Answer one.')],
+      [new vscode.LanguageModelTextPart('Answer two.')],
       [new vscode.LanguageModelTextPart('Answer two, revised.')]
     ]);
 
@@ -327,9 +349,12 @@ describe('ChatController', () => {
     const texts = (messages: vscode.LanguageModelChatMessage[]) => messages.slice(1).map((message) =>
       message.content.map((part) => (part as vscode.LanguageModelTextPart).value).join(''));
     expect(texts(model.sendRequest.mock.calls[2][0])).toEqual(['first question', 'Answer one.', 'second question, rephrased', 'Answer two, revised.']);
-    expect(controller.getState().items.map((item) => (item as { text?: string }).text)).toEqual([
-      'first question', 'Answer one.', 'second question, rephrased', 'Answer two, revised.'
+    const users = controller.getState().items.filter((item) => item.kind === 'user') as Array<{ text: string; branch?: { current: boolean } }>;
+    expect(users.map((user) => [user.text, user.branch?.current])).toEqual([
+      ['first question', undefined], ['second question', false], ['second question, rephrased', true]
     ]);
+    // The new version is announced before its first reply step arrives.
+    expect(events.some((event) => (event as { type?: string }).type === 'chat/state')).toBe(true);
   });
 
   it('stops a running reply before resending an edited message', async () => {
@@ -347,7 +372,7 @@ describe('ChatController', () => {
 
     expect(model.sendRequest).toHaveBeenCalledTimes(2);
     const items = controller.getState().items;
-    expect(items.filter((item) => item.kind === 'user').map((item) => (item as { text: string }).text)).toEqual(['edited']);
+    expect(items.filter((item) => item.kind === 'user').map((item) => (item as { text: string }).text)).toEqual(['original', 'edited']);
     expect(items.at(-1)).toMatchObject({ kind: 'assistant', text: 'Edited answer.' });
   });
 
@@ -434,7 +459,7 @@ describe('ChatController', () => {
     const { controller } = setup([]);
     const warn = vi.spyOn(vscode.window, 'showWarningMessage').mockResolvedValue(undefined as never);
     const open = vi.spyOn(vscode.env, 'openExternal');
-    const show = vi.spyOn(vscode.window, 'showTextDocument');
+    const run = vi.spyOn(vscode.commands, 'executeCommand');
 
     await controller.handle({ command: 'chat/openLink', href: 'https://example.com/', text: 'Example' });
     expect(warn).toHaveBeenLastCalledWith('Open example.com in your browser?', expect.objectContaining({ modal: true }), 'Open in Browser', 'Copy Link');
@@ -444,8 +469,20 @@ describe('ChatController', () => {
     expect(warn).toHaveBeenLastCalledWith('Nova does not open command: links from the chat.');
 
     await controller.handle({ command: 'chat/openLink', href: 'package.json#L3', text: 'package.json' });
-    expect(show).toHaveBeenCalledWith(expect.objectContaining({ fsPath: expect.stringContaining('package.json') }), expect.objectContaining({ selection: expect.objectContaining({ start: { line: 2, character: 0 } }) }));
+    expect(run).toHaveBeenCalledWith('vscode.open', expect.objectContaining({ fsPath: expect.stringContaining('package.json') }), expect.objectContaining({ selection: expect.objectContaining({ start: { line: 2, character: 0 } }) }));
     expect(open).not.toHaveBeenCalled();
+
+    // `file:line:column` in the text of an answer, and a folder.
+    await controller.handle({ command: 'chat/openLink', href: 'package.json:5:3', text: 'package.json:5:3' });
+    expect(run).toHaveBeenLastCalledWith('vscode.open', expect.anything(), expect.objectContaining({ selection: expect.objectContaining({ start: { line: 4, character: 2 } }) }));
+    await controller.handle({ command: 'chat/openLink', href: 'src', text: 'src' });
+    expect(run).toHaveBeenLastCalledWith('revealInExplorer', expect.objectContaining({ fsPath: expect.stringContaining('src') }));
+
+    // Outside the workspace: shown in the file manager, never opened.
+    await controller.handle({ command: 'chat/openLink', href: '/etc/hosts', text: '/etc/hosts' });
+    expect(run).toHaveBeenLastCalledWith('revealFileInOS', expect.objectContaining({ fsPath: '/etc/hosts' }));
+    await controller.handle({ command: 'chat/openLink', href: 'nowhere/missing-file.ts', text: 'missing' });
+    expect(warn).toHaveBeenLastCalledWith('nowhere/missing-file.ts was not found.');
   });
 
   it('refuses to switch chats while Nova is working', async () => {
@@ -755,13 +792,76 @@ describe('ChatController', () => {
       ]);
     });
 
-    it('refuses dropped binaries with a notice', async () => {
-      const { controller } = setup([]);
+    describe('files that are neither text nor images', () => {
+      let scratch: string;
+      const promptOf = (model: { sendRequest: { mock: { calls: unknown[][] } } }) =>
+        ((model.sendRequest.mock.calls[0][0] as vscode.LanguageModelChatMessage[]).flatMap((message) => message.content)
+          .find((part) => part instanceof vscode.LanguageModelTextPart && (part.value as string).includes('<attachments>')) as vscode.LanguageModelTextPart).value;
 
-      await controller.handle({ command: 'chat/addTextFile', name: 'report.pdf', content: '' });
+      beforeEach(() => {
+        scratch = mkdtempSync(join(tmpdir(), 'nova-scratch-'));
+        setScratchRoot(scratch);
+      });
+      afterEach(() => {
+        setScratchRoot(undefined);
+        rmSync(scratch, { recursive: true, force: true });
+      });
 
-      expect(controller.getState().attachments).toEqual([]);
-      expect(controller.getState().items.at(-1)).toMatchObject({ kind: 'notice', tone: 'warning' });
+      it('saves a spreadsheet from outside the workspace to scratch and tells the model where it is', async () => {
+        const { controller, model } = setup([[new vscode.LanguageModelTextPart('ok')]]);
+        const bytes = Buffer.from('PK-fake-xlsx');
+
+        await controller.handle({ command: 'chat/addBinaryFile', name: 'table.xlsx', dataUrl: `data:application/octet-stream;base64,${bytes.toString('base64')}` });
+
+        expect(controller.getState().attachments).toEqual([
+          { id: expect.any(String), label: 'table.xlsx', path: 'scratch/attachments/table.xlsx', binary: { size: bytes.length } }
+        ]);
+        expect(readFileSync(join(scratch, 'attachments', 'table.xlsx'))).toEqual(bytes);
+
+        await controller.handle({ command: 'chat/send', text: 'what is in it?' });
+        const prompt = promptOf(model);
+        expect(prompt).toContain(`<attachment path="scratch/attachments/table.xlsx" type="file" size="${bytes.length}" absolutePath="${join(scratch, 'attachments', 'table.xlsx')}">`);
+        expect(prompt).toContain('nova-xlsx');
+        expect(prompt).not.toContain('PK-fake-xlsx');
+      });
+
+      it('keeps two files with the same name apart', async () => {
+        const { controller } = setup([]);
+        const dataUrl = `data:application/octet-stream;base64,${Buffer.from('a').toString('base64')}`;
+
+        await controller.handle({ command: 'chat/addBinaryFile', name: 'report.pdf', dataUrl });
+        await controller.handle({ command: 'chat/addBinaryFile', name: 'report.pdf', dataUrl });
+
+        expect(controller.getState().attachments.map((attachment) => attachment.path)).toEqual([
+          'scratch/attachments/report.pdf', 'scratch/attachments/report-2.pdf'
+        ]);
+      });
+
+      it('references a workspace file by path without copying it, and refuses a huge outside one', async () => {
+        const { controller } = setup([]);
+        const root = process.cwd();
+        const sizes: Record<string, number> = { [`${root}/docs/table.xlsx`]: 2048, '/elsewhere/huge.zip': 60 * 1024 * 1024 };
+        vi.spyOn(vscode.workspace, 'fs', 'get').mockReturnValue({
+          stat: async (uri: vscode.Uri) => ({ type: vscode.FileType.File, size: sizes[uri.fsPath] ?? 0 }),
+          readFile: async () => { throw new Error('must not be read'); }
+        } as never);
+
+        await controller.handle({ command: 'chat/attachUris', uris: [`file://${root}/docs/table.xlsx`, 'file:///elsewhere/huge.zip'] });
+
+        expect(controller.getState().attachments).toEqual([
+          { id: expect.any(String), label: 'docs/table.xlsx', path: 'docs/table.xlsx', binary: { size: 2048 } }
+        ]);
+        expect(controller.getState().items.at(-1)).toMatchObject({ kind: 'notice', tone: 'warning', text: expect.stringContaining('too large') });
+      });
+
+      it('does not accept a text file that is really binary as text', async () => {
+        const { controller } = setup([]);
+
+        await controller.handle({ command: 'chat/addTextFile', name: 'data.bin', content: 'a\u0000b' });
+
+        expect(controller.getState().attachments).toEqual([]);
+        expect(controller.getState().items.at(-1)).toMatchObject({ kind: 'notice', tone: 'warning' });
+      });
     });
 
     it('offers the workspace files to the composer, newest first', async () => {
