@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import * as vscode from 'vscode';
 import type { Attachment } from '../panel/protocol';
-import { compareUrl, currentBranch, defaultBase, git, gitOk, hasGh, repoRoot, run } from './git';
+import { compareUrl, currentBranch, defaultBase, git, gitOk, repoRoot, reviewCliFor, run, type ReviewCli } from './git';
 
 /** Most diff text handed to the model; the rest is cut from the middle. */
 const MAX_DIFF_CHARS = 60_000;
@@ -114,7 +114,7 @@ export async function reviewRequest(host: GitCommandHost, baseArg: string): Prom
     };
 }
 
-/** `/pr [hint]`: pushes the branch and opens a pull request (gh), or the host's page to open one. */
+/** `/pr [hint]`: pushes the branch and opens a pull request (gh) or merge request (glab), or the host's page to open one. */
 export async function openPullRequest(host: GitCommandHost, hint: string, token: vscode.CancellationToken): Promise<void> {
     const root = await requireRepo(host);
     if (!root) {
@@ -156,20 +156,22 @@ export async function openPullRequest(host: GitCommandHost, hint: string, token:
         throw new Error(`git push failed:\n${push.stderr.trim()}`);
     }
 
-    if (!await hasGh(root)) {
-        const remote = (await git(['remote', 'get-url', 'origin'], root)).stdout.trim();
+    const remote = (await git(['remote', 'get-url', 'origin'], root)).stdout.trim();
+    const cli = await reviewCliFor(remote, root);
+    if (!cli) {
         const url = compareUrl(remote, branch, base);
         if (!url) {
-            host.notice('info', `Pushed ${branch}. Open a pull request on your Git host (install the GitHub CLI, gh, to let Nova create it).`);
+            host.notice('info', `Pushed ${branch}. Open a pull request on your Git host (install the GitHub CLI, gh, or GitLab CLI, glab, to let Nova create it).`);
             return;
         }
         host.notice('info', `Pushed ${branch}. Opening the page to create the pull request.`);
         await host.openExternal(url);
         return;
     }
-    const existing = await run('gh', ['pr', 'view', '--json', 'url', '-q', '.url'], root);
-    if (existing.code === 0 && existing.stdout.trim()) {
-        host.notice('info', `Pushed ${branch}; its pull request is updated: ${existing.stdout.trim()}`);
+    const kind = cli === 'glab' ? 'merge request' : 'pull request';
+    const existing = await existingRequestUrl(cli, root);
+    if (existing) {
+        host.notice('info', `Pushed ${branch}; its ${kind} is updated: ${existing}`);
         return;
     }
 
@@ -179,7 +181,7 @@ export async function openPullRequest(host: GitCommandHost, hint: string, token:
         gitOk(['diff', base ? `${base}...HEAD` : 'HEAD'], root)
     ]);
     const answer = cleanMessage(await host.complete([
-        'Write a pull request title and description for the commits below.',
+        `Write a ${kind} title and description for the commits below.`,
         '- First line: the title, at most 72 characters, in the style of the commit subjects.',
         '- Then a blank line and the description in Markdown: a short "## Summary" with bullet points of what changed and why, and a "## Test plan" with how it was or can be tested.',
         '- Reply with the title and description only: no code fences around the whole, no commentary.',
@@ -194,21 +196,37 @@ export async function openPullRequest(host: GitCommandHost, hint: string, token:
     if (token.isCancellationRequested) {
         return;
     }
-    const final = await confirmText(`Create a pull request from ${branch}${baseName ? ` into ${baseName}` : ''}?`, answer || branch, 'Create', 'Pull request title (the description stays as written)');
+    const final = await confirmText(`Create a ${kind} from ${branch}${baseName ? ` into ${baseName}` : ''}?`, answer || branch, 'Create', `${kind[0].toUpperCase()}${kind.slice(1)} title (the description stays as written)`);
     if (!final) {
-        host.notice('info', `Pushed ${branch}. No pull request was created.`);
+        host.notice('info', `Pushed ${branch}. No ${kind} was created.`);
         return;
     }
-    const [title, ...body] = final.split('\n');
-    const created = await run('gh', ['pr', 'create', '--head', branch, ...(baseName ? ['--base', baseName] : []), '--title', title.trim(), '--body-file', '-'], root, {
-        input: body.join('\n').trim(),
-        timeoutMs: PUSH_TIMEOUT_MS
-    });
+    const [title, ...rest] = final.split('\n');
+    const body = rest.join('\n').trim();
+    // glab takes the description as an argument: --description-file only exists in newer versions.
+    const created = cli === 'gh'
+        ? await run('gh', ['pr', 'create', '--head', branch, ...(baseName ? ['--base', baseName] : []), '--title', title.trim(), '--body-file', '-'], root, { input: body, timeoutMs: PUSH_TIMEOUT_MS })
+        : await run('glab', ['mr', 'create', '--source-branch', branch, ...(baseName ? ['--target-branch', baseName] : []), '--title', title.trim(), '--description', body, '--yes'], root, { timeoutMs: PUSH_TIMEOUT_MS });
     if (created.code !== 0) {
-        throw new Error(`gh pr create failed:\n${(created.stderr || created.stdout).trim()}`);
+        throw new Error(`${cli} could not create the ${kind}:\n${(created.stderr || created.stdout).trim()}`);
     }
-    const url = created.stdout.trim().split('\n').pop() ?? '';
-    host.notice('info', `Pull request created: ${url}`);
+    const url = /https?:\/\/\S+/.exec(created.stdout)?.[0] ?? created.stdout.trim();
+    host.notice('info', `${kind[0].toUpperCase()}${kind.slice(1)} created: ${url}`);
+}
+
+/** The URL of the open pull/merge request of the current branch, if it has one. */
+async function existingRequestUrl(cli: ReviewCli, root: string): Promise<string | undefined> {
+    if (cli === 'gh') {
+        const result = await run('gh', ['pr', 'view', '--json', 'url,state', '-q', 'select(.state == "OPEN") | .url'], root);
+        return result.code === 0 ? result.stdout.trim() || undefined : undefined;
+    }
+    const result = await run('glab', ['mr', 'view', '--output', 'json'], root);
+    try {
+        const request = JSON.parse(result.stdout) as { web_url?: string; state?: string };
+        return result.code === 0 && request.state === 'opened' ? request.web_url : undefined;
+    } catch {
+        return undefined;
+    }
 }
 
 async function requireRepo(host: GitCommandHost): Promise<string | undefined> {

@@ -1,10 +1,10 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
-import { compareUrl, defaultBase, gitOk } from '../src/git/git';
+import { compareUrl, defaultBase, gitOk, reviewCliFor } from '../src/git/git';
 import { cleanMessage, commitChanges, openPullRequest, reviewRequest, type GitCommandHost } from '../src/git/gitCommands';
 
 let dir: string;
@@ -158,5 +158,59 @@ describe('/pr', () => {
         expect(sh(repo, 'branch', '--show-current').trim()).toBe('feat/second');
         expect(await gitOk(['ls-remote', '--heads', 'origin', 'feat/second'], repo)).toContain('refs/heads/feat/second');
         expect(chat.notices[0]).toContain('Pushed feat/second');
+    });
+
+    /** Fake gh and glab on PATH that log their arguments; `auth status` succeeds for `authHost` only. */
+    async function withFakeClis(authHost: string, work: (log: () => string[]) => Promise<void>): Promise<void> {
+        const bin = path.join(dir, 'bin');
+        const logFile = path.join(dir, 'cli.log');
+        mkdirSync(bin);
+        for (const cli of ['gh', 'glab']) {
+            writeFileSync(path.join(bin, cli), [
+                '#!/bin/sh',
+                `echo "${cli} $*" >> "${logFile}"`,
+                'case "$*" in',
+                '  --version) exit 0;;',
+                `  "auth status --hostname ${authHost}") exit 0;;`,
+                '  *create*) cat > /dev/null; echo "https://example.test/request/1";;',
+                '  *) exit 1;;',
+                'esac'
+            ].join('\n'), { mode: 0o755 });
+        }
+        const pathBefore = process.env.PATH;
+        process.env.PATH = `${bin}:/usr/bin:/bin`;
+        try {
+            await work(() => readFileSync(logFile, 'utf8').trim().split('\n'));
+        } finally {
+            process.env.PATH = pathBefore;
+        }
+    }
+
+    it('picks gh for GitHub, glab for GitLab, and the logged-in CLI for other hosts', async () => {
+        await withFakeClis('git.example.nl', async () => {
+            expect(await reviewCliFor('git@github.com:a/b.git', repo)).toBe('gh');
+            expect(await reviewCliFor('https://gitlab.com/a/b.git', repo)).toBe('glab');
+            expect(await reviewCliFor('git@git.example.nl:a/b.git', repo)).toBe('glab');
+            expect(await reviewCliFor('git@other.example.com:a/b.git', repo)).toBeUndefined();
+        });
+    });
+
+    it('creates a GitLab merge request with glab after the user confirms', async () => {
+        sh(repo, 'switch', '-q', '-c', 'feat/mr');
+        writeFileSync(path.join(repo, 'a.txt'), 'two\n');
+        sh(repo, 'commit', '-q', '-am', 'feat: second');
+        // Fetch URL on GitLab (picks glab); pushes still go to the local bare repository.
+        sh(repo, 'config', 'remote.origin.pushurl', sh(repo, 'remote', 'get-url', 'origin').trim());
+        sh(repo, 'remote', 'set-url', 'origin', 'git@gitlab.com:group/project.git');
+        vi.spyOn(vscode.window, 'showInformationMessage').mockResolvedValue('Create' as never);
+        const chat = host('feat: second\n\n## Summary\n- changed a');
+
+        await withFakeClis('none', async (log) => {
+            await openPullRequest(chat, '', token());
+            // The log holds one line per output line: the description's newline splits the call.
+            expect(log()).toEqual(expect.arrayContaining(['glab mr create --source-branch feat/mr --target-branch main --title feat: second --description ## Summary', '- changed a --yes']));
+        });
+        expect(chat.prompts[0]).toContain('Write a merge request title');
+        expect(chat.notices).toEqual(['Merge request created: https://example.test/request/1']);
     });
 });

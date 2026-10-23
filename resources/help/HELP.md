@@ -47,7 +47,7 @@ Type `/` at the start of the input box for a menu: **↑/↓** to choose, **Tab*
 | `/rename <title>` | Rename this chat. |
 | `/commit [note]` | Commit the staged changes with a message Nova writes from the diff (in the style of your recent commits). Nothing staged? Nova offers to stage everything. You confirm or edit the subject before anything is committed. |
 | `/review [base]` | Review the changes on this branch against its base branch (default: origin's default branch), committed and uncommitted. Nova reads the surrounding code and reports findings by severity; it edits nothing. |
-| `/pr [note]` (or `/mr`) | Push the branch and open a pull request. With the GitHub CLI (`gh`) Nova writes the title and description and creates it after you confirm; otherwise it opens your Git host's page for a new pull or merge request. On the default branch it first asks for a new branch name. |
+| `/pr [note]` (or `/mr`) | Push the branch and open a pull request. With the GitHub CLI (`gh`) or GitLab CLI (`glab`) Nova writes the title and description and creates the pull or merge request after you confirm; otherwise it opens your Git host's page for a new one. Self-hosted hosts use the CLI you are logged in to there. On the default branch it first asks for a new branch name. |
 | `/help` | Open this page. |
 
 Anything else that starts with `/` (for example a path such as `/etc/hosts`) is sent as an ordinary message.
