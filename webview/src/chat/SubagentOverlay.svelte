@@ -68,14 +68,8 @@
                 <div class="name">{agent.name}</div>
                 <div class="sub">{label}{agent.model ? ` · ${agent.model}` : ''} · {agent.toolCount} {agent.toolCount === 1 ? 'tool call' : 'tool calls'}</div>
             </div>
-            {#if live}
-                <button class="nova-button secondary" onclick={() => post({command: 'chat/stopAgent', id: agent.id})}>
-                    <span class="codicon codicon-debug-stop" aria-hidden="true"></span> Stop
-                </button>
-            {/if}
-            <button bind:this={closeButton} class="close codicon codicon-close" title="Close (Esc)" aria-label="Close" onclick={onClose}></button>
             {#if branchOpen}
-                <!-- Own row, wrapping, so a narrow sidebar never pushes the buttons out of view. -->
+                <!-- Next to the name when the panel is wide; below it, wrapping, when narrow (see .actions). -->
                 <div class="actions">
                     {#if agent.background?.files !== 0}
                         <button class="nova-button secondary" onclick={() => branchAction('review')}>
@@ -90,6 +84,12 @@
                     </button>
                 </div>
             {/if}
+            {#if live}
+                <button class="nova-button secondary" onclick={() => post({command: 'chat/stopAgent', id: agent.id})}>
+                    <span class="codicon codicon-debug-stop" aria-hidden="true"></span> Stop
+                </button>
+            {/if}
+            <button bind:this={closeButton} class="close codicon codicon-close" title="Close (Esc)" aria-label="Close" onclick={onClose}></button>
         </header>
 
         <div class="body" bind:this={body}>
@@ -160,6 +160,7 @@
   }
 
   .panel {
+    container: agent-panel / inline-size;
     width: min(720px, 100%);
     max-height: 100%;
     display: flex;
@@ -255,11 +256,21 @@
     overscroll-behavior: contain;
   }
 
+  /* Narrow: a row of its own under the name (last, full width). Wide: in the title row, before close. */
   .actions {
+    order: 1;
     flex-basis: 100%;
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
+  }
+
+  @container agent-panel (min-width: 460px) {
+    .actions {
+      order: 0;
+      flex-basis: auto;
+      flex-wrap: nowrap;
+    }
   }
 
   section {
