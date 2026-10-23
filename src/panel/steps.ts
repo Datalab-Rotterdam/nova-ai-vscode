@@ -92,6 +92,10 @@ export function groupItems(items: readonly ChatItem[]): ConversationItem[] {
     return result;
 }
 
+/** A step that is still going: thinking not yet finished, or a tool that runs or waits for approval. */
+export const isStepActive = (step: StepItem): boolean =>
+    step.kind === 'thinking' ? step.durationMs === undefined : step.status === 'running' || step.status === 'awaiting-approval';
+
 /** "Thought for 8 seconds" and the like, for thinking that took `durationMs`. */
 export function thoughtFor(durationMs: number | null): string {
     if (durationMs === null) return 'Thought';
@@ -118,7 +122,7 @@ function lastLine(text: string, max = 90): string {
  * Read a file and 2 more".
  */
 export function stepsLine(steps: readonly StepItem[], running: boolean): string {
-    const current = steps.at(-1);
+    const current = [...steps].reverse().find(isStepActive) ?? steps.at(-1);
     if (running && current) {
         if (current.kind === 'thinking') {
             const glimpse = lastLine(current.text);
