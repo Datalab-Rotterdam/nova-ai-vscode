@@ -1,3 +1,11 @@
+# [1.0.0-alpha.22](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.21...v1.0.0-alpha.22) (2026-10-23)
+
+
+### Features
+
+* **attachments:** attach any file; bundled skills read, create and edit documents ([13f0e7c](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/13f0e7ca33ff18d1ccebc31bdb3c9722d3dcf73e))
+* **chat:** richer answers and message actions, bigger image attachments ([b9b46aa](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/b9b46aaae0e95d75a3d4bb1fa34674198d93613b))
+
 # [1.0.0-alpha.21](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.20...v1.0.0-alpha.21) (2026-10-22)
 
 
