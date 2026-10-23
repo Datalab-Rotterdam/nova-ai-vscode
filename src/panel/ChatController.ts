@@ -27,6 +27,7 @@ import type { LanguageModelInfo } from '../core/types';
 import { toolResultText } from '../model/messages';
 import type { ModelProvider } from '../model/modelProvider';
 import { createDirectModel } from './directModel';
+import { commitChanges, openPullRequest, reviewRequest, type GitCommandHost } from '../git/gitCommands';
 import type { ProposedContentProvider } from './ProposedContentProvider';
 import type {
     ApprovalDecision,
@@ -808,10 +809,94 @@ export class ChatController implements vscode.Disposable, ChatHistory {
                     this.notice('info', 'Give the new name: /rename <title>');
                 }
                 break;
+            case 'commit':
+                await this.gitTask((host, token) => commitChanges(host, args, token));
+                break;
+            case 'pr':
+                await this.gitTask((host, token) => openPullRequest(host, args, token));
+                break;
+            case 'review':
+                await this.review(args);
+                break;
             case 'help':
                 await vscode.commands.executeCommand(COMMAND_SHOW_HELP);
                 break;
         }
+    }
+
+    /** `/commit` and `/pr`: git work with one model answer in between, shown as running so Stop cancels it. */
+    private async gitTask(work: (host: GitCommandHost, token: vscode.CancellationToken) => Promise<void>): Promise<void> {
+        if (this.running) {
+            this.notice('warning', 'Nova is working. Run the command after the reply, or stop it first.');
+            return;
+        }
+        if (!this.models.length) {
+            await this.refreshModels();
+        }
+        const info = this.models.find((candidate) => candidate.id === this.selectedModelId());
+        const model = info ? createDirectModel(this.modelProvider, info) : undefined;
+        if (!model) {
+            this.notice('error', 'No Nova model is available. Connect Nova AI or refresh the models.');
+            return;
+        }
+        await this.track((async () => {
+            const running = new vscode.CancellationTokenSource();
+            this.running = running;
+            this.post({ type: 'chat/running', running: true });
+            try {
+                await work(this.gitHost(model), running.token);
+            } catch (error) {
+                if (!running.token.isCancellationRequested) {
+                    this.diagnostics.error('A git command failed.', error);
+                    this.notice('error', error instanceof Error ? error.message : String(error));
+                }
+            } finally {
+                this.running = undefined;
+                running.dispose();
+                this.post({ type: 'chat/running', running: false });
+                await this.persist();
+                this.drainQueue();
+            }
+        })());
+    }
+
+    /** `/review`: a normal request with the branch's diff attached. */
+    private async review(base: string): Promise<void> {
+        if (this.running) {
+            this.notice('warning', 'Nova is working. Use /review after the reply, or stop it first.');
+            return;
+        }
+        try {
+            const request = await reviewRequest(this.gitHost(), base);
+            if (request) {
+                await this.run(request.prompt, request.attachments);
+            }
+        } catch (error) {
+            this.notice('error', error instanceof Error ? error.message : String(error));
+        }
+    }
+
+    private gitHost(model?: vscode.LanguageModelChat): GitCommandHost {
+        return {
+            cwd: () => workspaceFolders()[0]?.uri.fsPath,
+            complete: async (prompt, token) => {
+                if (!model) {
+                    throw new Error('No model is available.');
+                }
+                const response = await model.sendRequest([vscode.LanguageModelChatMessage.User(prompt)], {}, token);
+                let text = '';
+                for await (const part of response.stream) {
+                    if (part instanceof vscode.LanguageModelTextPart) {
+                        text += part.value;
+                    }
+                }
+                return text;
+            },
+            notice: (tone, text) => this.notice(tone, text),
+            openExternal: async (url) => {
+                await vscode.env.openExternal(vscode.Uri.parse(url));
+            }
+        };
     }
 
     /**

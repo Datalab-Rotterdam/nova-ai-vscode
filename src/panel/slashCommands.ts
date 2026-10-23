@@ -3,7 +3,7 @@
  * which runs them, and the webview, which suggests them while typing, so it must not import `vscode`.
  */
 
-export type SlashCommandName = 'clear' | 'compact' | 'model' | 'rename' | 'help';
+export type SlashCommandName = 'clear' | 'compact' | 'model' | 'rename' | 'commit' | 'review' | 'pr' | 'help';
 
 export interface SlashCommand {
     name: SlashCommandName;
@@ -19,6 +19,9 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
     { name: 'compact', args: '[focus]', description: 'Summarize the conversation to free up context' },
     { name: 'model', args: '[name]', description: 'Switch the model, or list the models' },
     { name: 'rename', args: '<title>', description: 'Rename this chat' },
+    { name: 'commit', args: '[note]', description: 'Commit the staged changes with a message Nova writes' },
+    { name: 'review', args: '[base]', description: 'Review the changes on this branch' },
+    { name: 'pr', aliases: ['mr'], args: '[note]', description: 'Push this branch and open a pull request' },
     { name: 'help', description: 'Open the Nova AI help' }
 ];
 
