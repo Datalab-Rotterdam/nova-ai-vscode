@@ -100,7 +100,7 @@ function matchingRule(
         if (
             !parsed ||
             !target.names.some(
-                (name) => name.toLowerCase() === parsed.name.toLowerCase(),
+                (name) => nameMatches(parsed.name, name),
             )
         )
             continue;
@@ -125,7 +125,7 @@ function matchingExactRule(
             !parsed ||
             parsed.pattern === null ||
             !target.names.some(
-                (name) => name.toLowerCase() === parsed.name.toLowerCase(),
+                (name) => nameMatches(parsed.name, name),
             )
         ) {
             continue;
@@ -134,6 +134,16 @@ function matchingExactRule(
         if (literal !== null && literal === target.value) return rule;
     }
     return null;
+}
+
+// `mcp__<server>` and `mcp__<server>__*` cover every tool of that MCP server,
+// as in Claude Code; other names match exactly (ignoring case).
+function nameMatches(ruleName: string, toolName: string): boolean {
+    const rule = ruleName.toLowerCase();
+    const tool = toolName.toLowerCase();
+    if (rule === tool) return true;
+    const server = /^(mcp__.+?)(?:__\*)?$/.exec(rule)?.[1];
+    return !!server && !server.slice(5).includes("__") && tool.startsWith(`${server}__`);
 }
 
 function parseRule(

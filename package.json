@@ -326,6 +326,12 @@
         "category": "Nova AI"
       },
       {
+        "command": "nova.manageMcpServers",
+        "title": "Nova AI: MCP Servers",
+        "category": "Nova AI",
+        "icon": "$(server)"
+      },
+      {
         "command": "nova.manageSkills",
         "title": "Nova AI: Manage Skills",
         "category": "Nova AI",
@@ -416,6 +422,11 @@
           "command": "nova.manageAgents",
           "when": "view == nova.sidebar",
           "group": "2_memory@5"
+        },
+        {
+          "command": "nova.manageMcpServers",
+          "when": "view == nova.sidebar",
+          "group": "2_memory@6"
         },
         {
           "command": "nova.showHelp",
@@ -654,6 +665,18 @@
             "type": "boolean",
             "default": true,
             "markdownDescription": "Offer MCP server tools registered in VS Code to the Nova chat."
+          },
+          "nova.mcp.enabled": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Connect the MCP servers in `~/.nova-ai/mcp.json` and the workspace's `.nova-ai/mcp.json` (trusted workspaces only). Manage them with **Nova AI: MCP Servers**. Takes effect in new chats."
+          },
+          "nova.mcp.toolTimeoutSeconds": {
+            "type": "number",
+            "default": 60,
+            "minimum": 5,
+            "maximum": 3600,
+            "markdownDescription": "Time limit for one MCP tool call."
           }
         }
       },
@@ -760,7 +783,8 @@
     "pretest": "npm run compile"
   },
   "dependencies": {
-    "@datalabrotterdam/nova-sdk": "1.4.0-k8s.3"
+    "@datalabrotterdam/nova-sdk": "1.4.0-k8s.3",
+    "@modelcontextprotocol/sdk": "^1.32.2"
   },
   "devDependencies": {
     "@semantic-release/changelog": "^6.0.3",

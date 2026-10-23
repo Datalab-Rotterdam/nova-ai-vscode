@@ -12,6 +12,8 @@ import { createSubagentTool, SPAWN_AGENTS_TOOL, type SubagentHost, type Subagent
 import { displayPath, getScratchRoot, readText, resolveWorkspacePath, workspaceFolders } from '../agent/tools/workspacePaths';
 import { agentsFolder } from '../agents/AgentsController';
 import { agentAllowsTool, findAgent, listAgents, type AgentDefinition, type AgentPaths } from '../agents/AgentService';
+import type { McpService } from '../mcp/McpService';
+import { createMcpTool } from '../mcp/tools';
 import type { MemoryService } from '../memory/MemoryService';
 import { type PermissionService, suggestRule } from '../permissions/PermissionService';
 import { getSystemRole } from '../core/apiSupport';
@@ -85,6 +87,8 @@ const IMAGE_MIME = new Map([
     ['webp', 'image/webp']
 ]);
 const MAX_CARD_OUTPUT_CHARS = 4_000;
+/** How long a request waits for MCP servers that are still starting; slower ones join the next request. */
+const MCP_START_WAIT_MS = 10_000;
 const LAST_SESSION_KEY = 'nova.chat.lastSession';
 
 export interface ChatControllerOptions {
@@ -200,7 +204,7 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         private readonly proposedContent: ProposedContentProvider,
         private readonly diagnostics: Diagnostics,
         private post: (event: ChatEvent) => void,
-        private readonly services: { memory?: MemoryService; permissions?: PermissionService; skillPaths?: () => SkillPaths; agents?: () => AgentPaths } = {},
+        private readonly services: { memory?: MemoryService; permissions?: PermissionService; skillPaths?: () => SkillPaths; agents?: () => AgentPaths; mcp?: McpService } = {},
         private readonly options: ChatControllerOptions = {}
     ) {
         this.rememberLast = options.rememberLast ?? true;
@@ -949,8 +953,9 @@ export class ChatController implements vscode.Disposable, ChatHistory {
             ? { maxPerCall: subagentSettings.maxPerCall, maxParallel: subagentSettings.maxParallel, maxTotal: subagentSettings.maxTotalPerRun }
             : undefined), ...this.messages];
         this.conversation = conversation;
-        const tools = availableTools(this.services.memory, this.interactionHost(), skills, subagentsOn ? this.subagentHost(agent) : undefined)
-            .filter((tool) => agentAllowsTool(agent, tool.info.name, !tool.nova) && (!agent.readOnly || tool.readOnly));
+        await this.services.mcp?.ensureStarted(MCP_START_WAIT_MS);
+        const tools = availableTools(this.services.memory, this.interactionHost(), skills, subagentsOn ? this.subagentHost(agent) : undefined, this.services.mcp)
+            .filter((tool) => agentAllowsTool(agent, tool.info.name, tool.mcp) && (!agent.readOnly || tool.readOnly));
         let assistantItem: Extract<ChatItem, { kind: 'assistant' }> | undefined;
         let thinkingItem: Extract<ChatItem, { kind: 'thinking' }> | undefined;
         this.activeThinking = undefined;
@@ -2242,12 +2247,18 @@ export class ChatController implements vscode.Disposable, ChatHistory {
 interface AvailableTool {
     info: vscode.LanguageModelToolInformation;
     readOnly: boolean;
-    /** Built-in tool; undefined for tools from other extensions (MCP). */
+    /** Nova's own tool; undefined for tools from other extensions (MCP). */
     nova?: NovaTool<never>;
+    /** An MCP tool: Nova's own client or VS Code's. */
+    mcp: boolean;
 }
 
-/** Nova's built-in tools plus MCP tools registered in VS Code, which can run without a chat request. */
-function availableTools(memory?: MemoryService, interaction?: InteractionHost, skills: readonly Skill[] = [], subagents?: SubagentHost): AvailableTool[] {
+/**
+ * Nova's built-in tools, the tools of Nova's own MCP servers, and MCP tools registered in
+ * VS Code, which can run without a chat request. A server both know is used through Nova's
+ * client, which honours its read-only hints and keeps its connection.
+ */
+function availableTools(memory?: MemoryService, interaction?: InteractionHost, skills: readonly Skill[] = [], subagents?: SubagentHost, mcpService?: McpService): AvailableTool[] {
     const webSearchEnabled = vscode.workspace.getConfiguration('nova.webSearch').get<boolean>('enabled', true);
     const novaTools = [
         ...BUILT_IN_TOOLS.filter((tool) => tool.name !== 'web_search' || webSearchEnabled),
@@ -2256,17 +2267,27 @@ function availableTools(memory?: MemoryService, interaction?: InteractionHost, s
         ...(memory?.isEnabled() ? createMemoryTools(memory) : []),
         ...(subagents ? [createSubagentTool(subagents)] : [])
     ];
-    const builtIn = novaTools.map((tool) => ({
+    const ownMcp = mcpService?.tools() ?? [];
+    const toAvailable = (tool: NovaTool<never>, mcp: boolean): AvailableTool => ({
         info: { name: tool.name, description: tool.description, inputSchema: tool.inputSchema, tags: [] } as vscode.LanguageModelToolInformation,
         readOnly: tool.readOnly,
-        nova: tool
-    }));
+        nova: tool,
+        mcp
+    });
+    const builtIn = [
+        ...novaTools.map((tool) => toAvailable(tool, false)),
+        ...ownMcp.map((entry) => toAvailable(createMcpTool(entry, mcpService!) as NovaTool<never>, true))
+    ];
 
+    // VS Code names MCP tools `mcp_<server>_<tool>`; skip those of servers Nova connects itself.
+    const ownServers = new Set(ownMcp.map((entry) => `mcp_${entry.server.replace(/[^a-zA-Z0-9_-]/g, '_')}_`));
     const includeMcp = vscode.workspace.getConfiguration('nova').get<boolean>('agent.includeMcpTools', true);
-    const mcp = includeMcp
-        ? vscode.lm.tools.filter((tool) => tool.name.startsWith('mcp_')).map((info) => ({ info, readOnly: false }))
+    const vscodeMcp = includeMcp
+        ? vscode.lm.tools
+            .filter((tool) => tool.name.startsWith('mcp_') && ![...ownServers].some((prefix) => tool.name.startsWith(prefix)))
+            .map((info) => ({ info, readOnly: false, mcp: true }))
         : [];
-    return [...builtIn, ...mcp];
+    return [...builtIn, ...vscodeMcp];
 }
 
 function toModelOption(model: LanguageModelInfo): ChatModelOption {

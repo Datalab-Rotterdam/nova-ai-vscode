@@ -11,6 +11,7 @@ import {
     COMMAND_CHAT_OPEN_IN_EDITOR,
     COMMAND_CHAT_RENAME,
     COMMAND_MANAGE_AGENTS,
+    COMMAND_MANAGE_MCP,
     COMMAND_MANAGE_SKILLS,
     COMMAND_SHOW_HELP,
     COMMAND_DEV_TEST_LINKS,
@@ -54,6 +55,8 @@ import {ChatHub} from './panel/ChatHub';
 import * as path from 'node:path';
 import {MemoryService, type MemoryScope} from './memory/MemoryService';
 import {PermissionService} from './permissions/PermissionService';
+import {McpService} from './mcp/McpService';
+import {manageMcpServers} from './mcp/mcpCommand';
 import {setScratchRoot} from './agent/tools/workspacePaths';
 import {currentWorkspace, ensureDir, NovaHome, pruneOlderThan, type ProjectPaths, workspaceKey} from './storage/NovaHome';
 
@@ -74,6 +77,26 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         undefined,
         () => nova.project.settings
     );
+
+    const workspaceRoot = () => vscode.workspace.workspaceFolders?.find((folder) => folder.uri.scheme === 'file')?.uri.fsPath;
+    const projectMcpConfig = () => {
+        const root = workspaceRoot();
+        return root ? path.join(root, '.nova-ai', 'mcp.json') : undefined;
+    };
+    const mcp = new McpService({
+        userFile: nova.home.mcpConfig,
+        projectFiles: () => {
+            const root = workspaceRoot();
+            return root ? [path.join(root, '.mcp.json'), path.join(root, '.nova-ai', 'mcp.json')] : [];
+        },
+        settingsFile: () => nova.project.settings,
+        trusted: () => vscode.workspace.isTrusted,
+        cwd: workspaceRoot,
+        secrets: context.secrets,
+        timeoutMs: () => vscode.workspace.getConfiguration('nova').get<number>('mcp.toolTimeoutSeconds', 60) * 1000,
+        log: (message, error) => diagnostics.error(message, error)
+    });
+    const mcpEnabled = () => vscode.workspace.getConfiguration('nova').get<boolean>('mcp.enabled', true);
 
     const proposedContent = new ProposedContentProvider();
     // Skill folders and settings (docs/NOVA_HOME.md, "Skills"), read fresh on every use.
@@ -110,7 +133,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                 memory,
                 permissions,
                 skillPaths,
-                agents: agentPaths
+                agents: agentPaths,
+                mcp: mcpEnabled() ? mcp : undefined
             },
             { ...options, hub: chatHub }
         );
@@ -161,6 +185,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         }),
         vscode.commands.registerCommand(COMMAND_MANAGE_SKILLS, async () => {
             await sidebarProvider.openSkills();
+        }),
+        mcp,
+        mcp.watch(),
+        vscode.commands.registerCommand(COMMAND_MANAGE_MCP, async () => {
+            await manageMcpServers(mcp, { user: nova.home.mcpConfig, project: projectMcpConfig() });
         }),
         vscode.commands.registerCommand(COMMAND_SHOW_HELP, async () => {
             await openHelp(context.extensionUri);

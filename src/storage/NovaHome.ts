@@ -54,6 +54,11 @@ export class NovaHome {
         }
     }
 
+    /** The user's MCP servers; a workspace adds its own in `.nova-ai/mcp.json`. */
+    public get mcpConfig(): string {
+        return path.join(this.root, 'mcp.json');
+    }
+
     public get projectsDir(): string {
         return path.join(this.root, 'projects');
     }
