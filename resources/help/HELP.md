@@ -50,7 +50,13 @@ Type `/` at the start of the input box for a menu: **↑/↓** to choose, **Tab*
 | `/pr [note]` (or `/mr`) | Push the branch and open a pull request. With the GitHub CLI (`gh`) or GitLab CLI (`glab`) Nova writes the title and description and creates the pull or merge request after you confirm; otherwise it opens your Git host's page for a new one. Self-hosted hosts use the CLI you are logged in to there. On the default branch it first asks for a new branch name. |
 | `/help` | Open this page. |
 
-Anything else that starts with `/` (for example a path such as `/etc/hosts`) is sent as an ordinary message.
+Besides these, the menu lists:
+
+- **Your own commands**: markdown files in `~/.nova-ai/commands/` (all projects) or `.nova-ai/commands/` in the repository (shared with your team). `/name` sends the file's text, with `$ARGUMENTS` replaced by what you type after the command (`$1`, `$2`, … for single words). A file in a subfolder becomes `/folder:name`. Frontmatter can set a `description`, an `argument-hint` and a `model` for that one answer. It is Claude Code's format: with `nova.skills.includeClaudeCodex` on, `.claude/commands` works too.
+- **Skills**: `/skill-name [request]` asks Nova to use that skill.
+- **MCP prompts**: prompts your MCP servers offer, as `/mcp__<server>__<prompt>`, with their arguments in order (the last one takes the rest of the line).
+
+A built-in command wins when a file, skill or prompt has the same name. Anything else that starts with `/` (for example a path such as `/etc/hosts`) is sent as an ordinary message.
 
 ### Context
 

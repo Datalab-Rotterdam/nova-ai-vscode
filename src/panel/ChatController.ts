@@ -52,7 +52,8 @@ import type {
 import { enabledSkills, type Skill, type SkillPaths } from '../skills/SkillService';
 import { buildSkillsPrompt, createLoadSkillTool } from '../skills/skillTools';
 import type { ChatHub } from './ChatHub';
-import { parseSlashCommand, type ParsedSlashCommand } from './slashCommands';
+import { parseSlashCommand, type ParsedSlashCommand, type SlashCommand, type SlashCommandName } from './slashCommands';
+import { expandCommand, findCommands, type CommandPaths } from '../commands/CommandService';
 import { runIdOf, setRunId, visibleChatItems } from './steps';
 import { classifyLink, confirmAndOpenExternal } from './links';
 import { toCsv, toXlsx } from './tableExport';
@@ -231,7 +232,7 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         private readonly proposedContent: ProposedContentProvider,
         private readonly diagnostics: Diagnostics,
         private post: (event: ChatEvent) => void,
-        private readonly services: { memory?: MemoryService; permissions?: PermissionService; skillPaths?: () => SkillPaths; agents?: () => AgentPaths; mcp?: McpService; hooks?: HookService; worktrees?: () => string | undefined } = {},
+        private readonly services: { memory?: MemoryService; permissions?: PermissionService; skillPaths?: () => SkillPaths; agents?: () => AgentPaths; mcp?: McpService; hooks?: HookService; worktrees?: () => string | undefined; commands?: () => CommandPaths; signInMcp?: (server: string) => Promise<void> } = {},
         private readonly options: ChatControllerOptions = {}
     ) {
         this.rememberLast = options.rememberLast ?? true;
@@ -247,6 +248,22 @@ export class ChatController implements vscode.Disposable, ChatHistory {
                 };
                 this.disposables.push(watcher, watcher.onDidCreate(changed), watcher.onDidChange(changed), watcher.onDidDelete(changed));
             }
+        }
+        // Command files and MCP prompts show in the slash menu as soon as they appear.
+        const commandPaths = this.services.commands?.();
+        for (const dir of commandPaths ? [nodePath.join(commandPaths.novaHome, 'commands'), ...commandPaths.workspaceRoots.map((root) => nodePath.join(root, '.nova-ai', 'commands'))] : []) {
+            const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(vscode.Uri.file(dir), '**/*.md'));
+            const changed = () => {
+                this.commandCache = undefined;
+                this.postState();
+            };
+            this.disposables.push(watcher, watcher.onDidCreate(changed), watcher.onDidChange(changed), watcher.onDidDelete(changed));
+        }
+        if (this.services.mcp) {
+            this.disposables.push(this.services.mcp.onDidChange(() => {
+                this.commandCache = undefined;
+                this.postState();
+            }));
         }
         if (options.hub) {
             this.disposables.push(options.hub.onDidChange(() => this.postSessions()));
@@ -398,6 +415,9 @@ export class ChatController implements vscode.Disposable, ChatHistory {
                 break;
             case 'chat/stopAgent':
                 this.stopSubagent(command.id);
+                break;
+            case 'chat/noticeAction':
+                await this.noticeAction(command.id);
                 break;
             case 'chat/agentBranch':
                 await this.agentBranch(command.id, command.action);
@@ -640,6 +660,7 @@ export class ChatController implements vscode.Disposable, ChatHistory {
             approvalMode: getApprovalMode(),
             agent: this.currentAgent().id,
             agents: this.agentOptions(),
+            commands: this.slashCommands(),
             queue: this.queueView(),
             todos: this.session.todos ?? [],
             changes: this.changesView(),
@@ -775,7 +796,7 @@ export class ChatController implements vscode.Disposable, ChatHistory {
             return;
         }
 
-        const slash = parseSlashCommand(prompt);
+        const slash = parseSlashCommand(prompt, this.slashCommands());
         if (slash) {
             await this.runSlashCommand(slash);
             return;
@@ -822,7 +843,11 @@ export class ChatController implements vscode.Disposable, ChatHistory {
 
     /** Runs a slash command typed in the composer (see slashCommands.ts). */
     private async runSlashCommand({ command, args }: ParsedSlashCommand): Promise<void> {
-        switch (command.name) {
+        if (command.source) {
+            await this.runCustomCommand(command, args);
+            return;
+        }
+        switch (command.name as SlashCommandName) {
             case 'clear':
                 await this.newChat();
                 break;
@@ -1044,13 +1069,18 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         if (!this.models.length) {
             await this.refreshModels();
         }
-        const info = this.models.find((candidate) => candidate.id === this.selectedModelId());
+        // A command file may name its own model for one answer; the chat keeps its model.
+        const override = this.oneRunModel;
+        this.oneRunModel = undefined;
+        const info = this.models.find((candidate) => candidate.id === (override ?? this.selectedModelId()));
         const model = info ? createDirectModel(this.modelProvider, info) : undefined;
         if (!model) {
             this.addItem({ kind: 'notice', id: randomUUID(), text: 'No Nova model is available. Connect Nova AI or refresh the models.', tone: 'error' });
             return;
         }
-        this.session.modelId = model.id;
+        if (!override) {
+            this.session.modelId = model.id;
+        }
         this.runModelName = info?.name ?? model.name;
 
         // Hooks may block the message or add context for the model; SessionStart only before the first message.
@@ -1105,6 +1135,7 @@ export class ChatController implements vscode.Disposable, ChatHistory {
             : undefined), ...this.messages];
         this.conversation = conversation;
         await this.services.mcp?.ensureStarted(MCP_START_WAIT_MS);
+        this.noticeMcpSignIns();
         const repo = subagentSettings.codingAgents && !agent.readOnly && agentAllowsTool(agent, START_CODING_AGENT_TOOL) && this.services.worktrees?.()
             ? await repoRoot(workspaceFolders()[0]?.uri.fsPath ?? '').catch(() => undefined)
             : undefined;
@@ -2311,6 +2342,122 @@ export class ChatController implements vscode.Disposable, ChatHistory {
             await this.openFileLink(link.path, link.line, link.column);
         } else {
             void vscode.window.showWarningMessage(link.reason);
+        }
+    }
+
+    private commandCache?: { at: number; commands: SlashCommand[] };
+    /** A model id for the next answer only (a command file's `model`). */
+    private oneRunModel?: string;
+    /** `<chat id>:<server>`: MCP servers this chat already asked the user to sign in to. */
+    private readonly signInNoticed = new Set<string>();
+
+    /** Commands besides the built-ins: command files, skills (`/skill-name`) and MCP prompts. */
+    private slashCommands(): SlashCommand[] {
+        if (this.commandCache && Date.now() - this.commandCache.at < 2_000) {
+            return this.commandCache.commands;
+        }
+        const paths = this.services.commands?.();
+        const files = paths ? findCommands(paths).map((command): SlashCommand => ({
+            name: command.name,
+            description: command.description,
+            ...(command.argumentHint ? { args: command.argumentHint } : {}),
+            source: 'file'
+        })) : [];
+        const skills = this.services.skillPaths ? enabledSkills(this.services.skillPaths())
+            .filter((skill) => /^[a-z0-9][\w:-]*$/i.test(skill.name))
+            .map((skill): SlashCommand => ({ name: skill.name, args: '[request]', description: skill.description, source: 'skill' })) : [];
+        const prompts = (this.services.mcp?.prompts() ?? []).map((entry): SlashCommand => ({
+            name: entry.name,
+            description: entry.prompt.description ?? entry.prompt.title ?? `Prompt ${entry.prompt.name} of ${entry.server}`,
+            ...(entry.prompt.arguments?.length ? { args: entry.prompt.arguments.map((arg) => arg.required ? `<${arg.name}>` : `[${arg.name}]`).join(' ') } : {}),
+            source: 'mcp'
+        }));
+        // A command file wins over a skill of the same name, both over an MCP prompt.
+        const seen = new Set<string>();
+        const commands = [...files, ...skills, ...prompts].filter((command) => !seen.has(command.name.toLowerCase()) && seen.add(command.name.toLowerCase()));
+        this.commandCache = { at: Date.now(), commands };
+        return commands;
+    }
+
+    /** Runs a command from a file, a skill or an MCP prompt as a normal message. */
+    private async runCustomCommand(command: SlashCommand, args: string): Promise<void> {
+        try {
+            if (command.source === 'file') {
+                const paths = this.services.commands?.();
+                const file = paths ? findCommands(paths).find((candidate) => candidate.name === command.name) : undefined;
+                if (!file) {
+                    throw new Error(`The command file of /${command.name} is gone.`);
+                }
+                const wanted = file.model?.toLowerCase();
+                const model = wanted ? this.models.find((candidate) => candidate.id.toLowerCase() === wanted || candidate.name.toLowerCase() === wanted) : undefined;
+                if (wanted && !model) {
+                    this.notice('warning', `/${command.name} asks for the model "${file.model}", which is not available; using the chat's model.`);
+                }
+                this.oneRunModel = model?.id;
+                await this.run(expandCommand(file, args), []);
+            } else if (command.source === 'skill') {
+                await this.run(`Use the ${command.name} skill.${args ? ` ${args}` : ''}`, []);
+            } else {
+                const entry = this.services.mcp?.prompts().find((candidate) => candidate.name === command.name);
+                if (!entry) {
+                    throw new Error(`The MCP prompt /${command.name} is not available.`);
+                }
+                // Arguments by position; the last one takes the rest of the line.
+                const names = entry.prompt.arguments?.map((arg) => arg.name) ?? [];
+                const words = args.split(/\s+/).filter(Boolean);
+                const values = Object.fromEntries(names.map((name, index) => [name, index === names.length - 1 ? words.slice(index).join(' ') : words[index] ?? '']).filter(([, value]) => value));
+                const missing = entry.prompt.arguments?.filter((arg) => arg.required && !values[arg.name]).map((arg) => arg.name) ?? [];
+                if (missing.length) {
+                    this.notice('warning', `/${command.name} needs: ${missing.join(', ')}.`);
+                    return;
+                }
+                const result = await this.services.mcp!.getPrompt(entry.server, entry.prompt.name, values);
+                const texts: string[] = [];
+                const attachments: Attachment[] = [];
+                for (const message of result.messages) {
+                    const content = message.content as { type: string; text?: string; data?: string; mimeType?: string; resource?: { uri?: string; text?: string } };
+                    if (content.type === 'text' && content.text) {
+                        texts.push(content.text);
+                    } else if (content.type === 'image' && content.data && content.mimeType) {
+                        attachments.push({ id: randomUUID(), label: `image ${attachments.length + 1}`, image: { mimeType: content.mimeType, data: content.data } });
+                    } else if (content.type === 'resource' && content.resource?.text) {
+                        texts.push(`<resource uri="${content.resource.uri ?? ''}">\n${content.resource.text}\n</resource>`);
+                    }
+                }
+                await this.run(texts.join('\n\n') || `/${command.name}`, attachments);
+            }
+        } catch (error) {
+            this.notice('error', error instanceof Error ? error.message : String(error));
+        }
+    }
+
+    /** One notice per chat for each MCP server that waits for the user to sign in. */
+    private noticeMcpSignIns(): void {
+        for (const server of this.services.mcp?.statuses() ?? []) {
+            const key = `${this.session.id}:${server.name}`;
+            if (server.status === 'needs-auth' && this.services.signInMcp && !this.signInNoticed.has(key)) {
+                this.signInNoticed.add(key);
+                this.addItem({
+                    kind: 'notice',
+                    id: randomUUID(),
+                    tone: 'warning',
+                    text: `MCP server "${server.name}" needs you to sign in before Nova can use its tools.`,
+                    action: { label: 'Sign in', id: `mcp-signin:${server.name}` }
+                });
+            }
+        }
+    }
+
+    private async noticeAction(id: string): Promise<void> {
+        const server = /^mcp-signin:(.+)$/.exec(id)?.[1];
+        if (!server || !this.services.signInMcp) {
+            return;
+        }
+        try {
+            await this.services.signInMcp(server);
+            this.notice('info', `Signed in to ${server}. Its tools are available from the next message on.`);
+        } catch (error) {
+            this.notice('error', `${server}: ${error instanceof Error ? error.message : String(error)}`);
         }
     }
 

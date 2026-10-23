@@ -601,6 +601,9 @@
                     class={`codicon codicon-${item.tone === "error" ? "error" : item.tone === "warning" ? "warning" : "info"}`}
                     aria-hidden="true"
                   ></span><span class="notice-text">{item.text}</span>
+                  {#if item.action}
+                    <button class="notice-action" onclick={() => post({ command: "chat/noticeAction", id: item.action!.id })}>{item.action.label}</button>
+                  {/if}
                 </p>
               {/if}
             {/each}
@@ -1043,6 +1046,20 @@
     /* /help and /model list one entry per line. */
     .notice-text {
       white-space: pre-line;
+    }
+
+    .notice-action {
+      flex: none;
+      align-self: flex-start;
+      padding: 0 2px;
+      border: none;
+      background: none;
+      color: var(--vscode-textLink-foreground);
+      cursor: pointer;
+
+      &:hover {
+        text-decoration: underline;
+      }
     }
 
     &.error .codicon {
