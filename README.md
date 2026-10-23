@@ -46,6 +46,7 @@ Stuck or curious? Run **Nova AI: Help** for a full guide inside VS Code.
 - **Search the web**: Nova looks up current information and cites its sources. No API key needed.
 - **Use your browser**: with the Nova AI Browser integration Nova can open pages and take screenshots in Chrome, Edge or Brave. Set it up with **Nova AI: Set Up Browser Integration** (it runs automatically on startup by default).
 - **Research in parallel**: for broad questions Nova can start up to a few research sub-agents. A strip above the input shows each one live; click an agent to watch what it does, or stop it.
+- **Git**: `/commit` writes the commit message for your staged changes in the style of your history (you confirm it first), `/review` reviews the branch against its base and reports findings by severity, and `/pr` pushes the branch and opens a pull request (written by Nova with the GitHub CLI `gh` or the GitLab CLI `glab`, or your Git host's page for a new pull or merge request).
 - **Plan multi-step work**: Nova keeps a task list above the input and asks you questions with options when it needs a decision.
 
 ### Modes and permissions
@@ -82,7 +83,7 @@ On an approval card choose **Allow**, **Always allow** (saves a rule), **Allow a
 - Edit and resend an earlier message, or regenerate an answer and keep both versions.
 - Replies render Markdown, code, links (checked before they open) and LaTeX math, with copy buttons.
 - Thinking and tool calls fold into short, readable steps.
-- Type **`/`** for quick commands: `/clear`, `/compact`, `/model`, `/rename`, `/help`.
+- Type **`/`** for quick commands: `/clear`, `/compact`, `/model`, `/rename`, `/commit`, `/review`, `/pr`, `/help`.
 - **Chats** (history button) lists every chat of the workspace with search, rename and delete. **Open Chat in Editor** moves a chat to its own tab, so several can run side by side.
 
 ### Make Nova yours

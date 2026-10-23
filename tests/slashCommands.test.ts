@@ -19,8 +19,8 @@ describe('slash commands', () => {
   });
 
   it('suggests commands while the first word is typed', () => {
-    expect(suggestSlashCommands('/').map((command) => command.name)).toEqual(['clear', 'compact', 'model', 'rename', 'help']);
-    expect(suggestSlashCommands('/c').map((command) => command.name)).toEqual(['clear', 'compact']);
+    expect(suggestSlashCommands('/').map((command) => command.name)).toEqual(['clear', 'compact', 'model', 'rename', 'commit', 'review', 'pr', 'help']);
+    expect(suggestSlashCommands('/c').map((command) => command.name)).toEqual(['clear', 'compact', 'commit']);
     expect(suggestSlashCommands('/ne').map((command) => command.name)).toEqual(['clear']);
     expect(suggestSlashCommands('/compact ')).toEqual([]);
     expect(suggestSlashCommands('/etc')).toEqual([]);
