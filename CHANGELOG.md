@@ -1,3 +1,11 @@
+# [1.0.0-alpha.26](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.25...v1.0.0-alpha.26) (2026-10-23)
+
+
+### Features
+
+* **git:** /commit, /review and /pr slash commands ([fcc0fd2](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/fcc0fd23cba22f446c7c98195a46ae44c4e5d716))
+* **git:** /pr creates GitLab merge requests with glab ([6cae088](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/6cae088874c9c50969733090162ab9213b4c5501))
+
 # [1.0.0-alpha.25](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.24...v1.0.0-alpha.25) (2026-10-23)
 
 
