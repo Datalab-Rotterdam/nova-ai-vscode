@@ -40,6 +40,7 @@ Stuck or curious? Run **Nova AI: Help** for a full guide inside VS Code.
 ### Work on your code
 
 - **Read, search and edit**: find files, check problems, edit and create files, run commands, fetch web pages and use MCP tools registered in VS Code.
+- **Connect MCP servers**: add servers to `~/.nova-ai/mcp.json` or the workspace's `.mcp.json` / `.nova-ai/mcp.json` (Claude's format; stdio, HTTP and SSE). **Nova AI: MCP Servers** shows their status and signs you in to servers that use OAuth. Allow a whole server with a rule such as `mcp__github__*`.
 - **Review every change**: edit cards show the changed lines. A strip above the input lists the files Nova touched, with **Keep** and **Undo** per file or for all.
 - **Stay in control**: choose how often Nova asks first with the permissions menu under the input (see [Modes](#modes-and-permissions)).
 - **Search the web**: Nova looks up current information and cites its sources. No API key needed.
@@ -107,6 +108,7 @@ Open the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`) and type **Nova AI**:
 | Chats / Search Chats | Find, open, rename or delete chats |
 | Add to Nova Chat | Send the editor selection (also in the editor context menu) |
 | Manage Skills / Manage Agents | Create and manage skills and agent modes |
+| MCP Servers | Status of your MCP servers; connect (sign in), reconnect, turn off |
 | Open Global Memory / Open Project Memory | Edit Nova's memory |
 | Set Up Browser Integration | Let Nova use your browser |
 | Account and Models / Manage Account / Refresh Models | Connection and model list |
@@ -124,7 +126,9 @@ Search for **Nova** in VS Code Settings. The ones you are most likely to want:
 | `nova.agent.approvalMode` | `autoReadOnly` | When Nova asks before running tools (`ask`, `autoReadOnly`, `autoAll`) |
 | `nova.agent.maxToolRounds` | 25 | Tool rounds per request before Nova pauses |
 | `nova.agent.commandTimeoutSeconds` | 120 | Time limit for commands Nova runs |
-| `nova.agent.includeMcpTools` | on | Offer MCP tools to the Nova chat |
+| `nova.mcp.enabled` | on | Connect the servers in `mcp.json` (workspace servers only when trusted) |
+| `nova.mcp.toolTimeoutSeconds` | 60 | Time limit for one MCP tool call |
+| `nova.agent.includeMcpTools` | on | Also offer MCP tools registered in VS Code |
 | `nova.agent.subagents.*` | on | Research sub-agents: on/off, model, and limits on how many run |
 | `nova.webSearch.*` | on | Web search providers (DuckDuckGo, You.com, your own SearXNG) |
 | `nova.browser.autoSetup` | on | Set up the browser integration on startup |
@@ -147,6 +151,7 @@ Nova keeps its data in `~/.nova-ai`, readable only by you:
   MEMORY.md                  global memory
   skills/  agents/           your global skills and agents
   settings.json              your own permission rules
+  mcp.json                   your MCP servers
   projects/<name>-<hash>/    per workspace: memory, chat history, scratch files
 ```
 

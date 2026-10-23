@@ -18,6 +18,7 @@ there), otherwise `~/.nova-ai`. Directories are created `0700`, files `0600`.
   skills/<name>/SKILL.md        global skills (see "Skills")
   agents/<name>.agent.md        global agents (see "Agents")
   settings.json                 user settings: permission rules, default mode
+  mcp.json                      user MCP servers (see "MCP servers")
   credentials.json              CLI only: API key + default model
   model-capabilities.json       CLI only: learned native tool-call support
   update-check.json             CLI only: npm's latest versions, asked at most daily
@@ -92,9 +93,43 @@ Sources, all merged:
   accepted), `bypassPermissions` (everything is accepted). `bypassPermissions`
   is never stored; it must be chosen in each session. `memory_write` is always
   confirmed unless an allow rule names it.
-- Trust also gates MCP servers the workspace declares (`.mcp.json`,
-  `mcpServers` in `.nova-ai/settings.json`): they are only started in a
-  trusted workspace.
+- Trust also gates MCP servers the workspace declares (see "MCP servers"):
+  they are only started in a trusted workspace.
+
+### MCP servers
+
+Claude's format, in these files (a later file replaces a server of the same
+name):
+
+| File | Scope |
+|---|---|
+| `~/.nova-ai/mcp.json` | the user's, every workspace |
+| `<workspace>/.mcp.json` | team, committed (also read by Claude Code) |
+| `<workspace>/.nova-ai/mcp.json` | team, committed (extension) |
+| `mcpServers` in `<workspace>/.nova-ai/settings.json` | team (CLI, ACP format) |
+
+```json
+{ "mcpServers": {
+    "files":  { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "."], "env": { "DEBUG": "1" } },
+    "github": { "type": "http", "url": "https://api.githubcopilot.com/mcp/", "headers": { "Authorization": "Bearer ${GITHUB_TOKEN}" } },
+    "remote": { "type": "http", "url": "https://mcp.example.com/mcp", "oauth": { "clientId": "…", "callbackPort": 33418 } } } }
+```
+
+- `type` is `stdio` (default when `command` is set), `http` (Streamable
+  HTTP, falling back to SSE; default when `url` is set) or `sse`.
+- `${VAR}` and `${VAR:-default}` expand from the environment in `command`,
+  `args`, `env`, `url` and `headers`.
+- OAuth: servers that answer 401 are signed in to from the extension's
+  **Nova AI: MCP Servers** command, through the browser with a loopback
+  redirect `http://127.0.0.1:<port>/callback`. Nova registers itself (dynamic
+  client registration) unless `oauth.clientId` is set; a client registered by
+  hand needs a fixed `oauth.callbackPort`. Tokens stay in the editor's secret
+  storage, never in these files.
+- `"disabledMcpServers": ["name"]` in `projects/<key>/settings.json` turns
+  servers off for that workspace.
+- Tools are named `mcp__<server>__<tool>` (outside `[A-Za-z0-9_-]` replaced by
+  `_`, at most 64 characters). A rule `mcp__<server>` or `mcp__<server>__*`
+  covers every tool of the server.
 
 ### Rules
 
@@ -109,6 +144,7 @@ literal). Subjects:
 | `read_file`, `write_file`, `create_file`, `edit_file`, `list_directory`, `list_dir`, `search_text` | the path, workspace-relative with `/` (absolute outside the workspace) |
 | `find_files` | the glob pattern |
 | `fetch_url` | the URL |
+| `mcp__<server>__<tool>` | none; `mcp__<server>` or `mcp__<server>__*` matches every tool of the server |
 | others | none: only the bare tool name matches |
 
 Command rules are checked per command: a command line is split at `;`, `&&`,
