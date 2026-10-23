@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { ToolInputError } from './types';
@@ -13,7 +14,28 @@ export function getScratchRoot(): string | undefined {
     return scratchRoot;
 }
 
+/**
+ * The folder tools work in instead of the workspace, for an agent in its own git worktree.
+ * ponytail: implicit (AsyncLocalStorage) rather than a root on every tool call, so path
+ * handling stays in this file; pass it explicitly if tools ever run outside the agent's call chain.
+ */
+const toolRootStorage = new AsyncLocalStorage<string>();
+
+/** Runs `work` with the tools rooted at `root`: paths resolve there and nothing outside it is reachable. */
+export function withToolRoot<T>(root: string, work: () => T): T {
+    return toolRootStorage.run(root, work);
+}
+
+/** The worktree the current tool call is rooted at, if any. */
+export function toolRoot(): string | undefined {
+    return toolRootStorage.getStore();
+}
+
 export function workspaceFolders(): readonly vscode.WorkspaceFolder[] {
+    const root = toolRoot();
+    if (root) {
+        return [{ uri: vscode.Uri.file(root), name: path.basename(root), index: 0 }];
+    }
     return vscode.workspace.workspaceFolders ?? [];
 }
 
@@ -71,6 +93,10 @@ export function isInside(root: string, candidate: string): boolean {
 }
 
 export function displayPath(uri: vscode.Uri): string {
+    const root = toolRoot();
+    if (root && isInside(root, uri.fsPath)) {
+        return path.relative(root, uri.fsPath).split(path.sep).join('/') || '.';
+    }
     if (scratchRoot && isInside(scratchRoot, uri.fsPath)) {
         const relative = path.relative(scratchRoot, uri.fsPath);
         return relative ? `scratch/${relative.split(path.sep).join('/')}` : 'scratch';

@@ -8,8 +8,8 @@ import { BUILT_IN_TOOLS, outputParts, ToolInputError, type NovaTool, type Propos
 import { diffLines } from './diff';
 import { createInteractionTools, type InteractionHost } from '../agent/tools/interactionTools';
 import { createMemoryTools } from '../agent/tools/memoryTools';
-import { createSubagentTool, SPAWN_AGENTS_TOOL, type SubagentHost, type SubagentOutcome, type SubagentTask } from '../agent/tools/subagentTool';
-import { displayPath, getScratchRoot, readText, resolveWorkspacePath, workspaceFolders } from '../agent/tools/workspacePaths';
+import { createCodingAgentTool, createSubagentTool, SPAWN_AGENTS_TOOL, START_CODING_AGENT_TOOL, type CodingAgentHost, type SubagentHost, type SubagentOutcome, type SubagentTask } from '../agent/tools/subagentTool';
+import { displayPath, getScratchRoot, readText, resolveWorkspacePath, withToolRoot, workspaceFolders } from '../agent/tools/workspacePaths';
 import { agentsFolder } from '../agents/AgentsController';
 import { agentAllowsTool, findAgent, listAgents, type AgentDefinition, type AgentPaths } from '../agents/AgentService';
 import type { HookEvent, HookOutcome, HookService } from '../hooks/HookService';
@@ -22,12 +22,14 @@ import { COMMAND_MANAGE_AGENTS, COMMAND_SHOW_HELP } from '../core/constants';
 import { buildTranscript, estimateMessagesTokens, summaryBlock, tokenCalibration } from '../agent/ContextManager';
 import { getCompactThreshold, getMaxToolRounds, getSubagentSettings, isAutoCompactEnabled } from '../core/config';
 import { Diagnostics } from '../core/diagnostics';
-import { createPanelPrompt, createSubagentPrompt } from '../core/prompts';
+import { createCodingAgentPrompt, createPanelPrompt, createSubagentPrompt } from '../core/prompts';
 import type { LanguageModelInfo } from '../core/types';
 import { toolResultText } from '../model/messages';
 import type { ModelProvider } from '../model/modelProvider';
 import { createDirectModel } from './directModel';
 import { commitChanges, openPullRequest, reviewRequest, type GitCommandHost } from '../git/gitCommands';
+import { repoRoot } from '../git/git';
+import { baseContent, changedFiles, commitWorktree, createWorktree, mergeWorktree, removeWorktree, type AgentWorktree } from '../git/worktrees';
 import type { ProposedContentProvider } from './ProposedContentProvider';
 import type {
     ApprovalDecision,
@@ -123,12 +125,23 @@ interface TrackedChange {
 const INTERACTION_TOOLS = new Set(['todo_write', 'ask_user']);
 /** What a research sub-agent may use: reading, searching, the web and commands; never edits. */
 const SUBAGENT_TOOLS = new Set(['read_file', 'list_dir', 'find_files', 'search_text', 'get_diagnostics', 'fetch_url', 'web_search', 'run_command']);
+/** What a coding agent may use in its worktree; diagnostics only cover the open workspace. */
+const CODING_AGENT_TOOLS = new Set(['read_file', 'list_dir', 'find_files', 'search_text', 'edit_file', 'create_file', 'run_command', 'fetch_url', 'web_search']);
 
 /** A sub-agent's view of a tool call: whose it is, and how the call moves the agent's status. */
 interface ToolScope {
     agentId: string;
+    /** A coding agent's worktree: its edits need no approval and stay out of the chat's changes. */
+    root?: string;
     onTitle(title: string): void;
     onWaiting(waiting: boolean): void;
+}
+
+interface CodingJob {
+    id: string;
+    task: SubagentTask;
+    agent: AgentDefinition;
+    worktree: AgentWorktree;
 }
 
 interface PendingApproval {
@@ -179,6 +192,15 @@ export class ChatController implements vscode.Disposable, ChatHistory {
     private readonly subagentRuns = new Map<string, vscode.CancellationTokenSource>();
     /** Sub-agents started while answering the current message, against the per-answer limit. */
     private subagentsStarted = 0;
+    /** Coding agents waiting for a free slot (see nova.agent.codingAgents.maxParallel). */
+    private codingQueue: CodingJob[] = [];
+    private codingRunning = 0;
+    /**
+     * Coding agents of this controller by id, with the chat they belong to. They outlive the
+     * answer, so the user may have opened another chat meanwhile; reopening it shows them live.
+     */
+    private readonly codingAgents = new Map<string, { state: SubagentState; sessionId: string }>();
+    private disposed = false;
     /** The spawn_agents call being run, so the agents it starts can be tied to its card. */
     private spawnCallId = '';
     private readonly edits = new Map<string, PendingEdit>();
@@ -208,7 +230,7 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         private readonly proposedContent: ProposedContentProvider,
         private readonly diagnostics: Diagnostics,
         private post: (event: ChatEvent) => void,
-        private readonly services: { memory?: MemoryService; permissions?: PermissionService; skillPaths?: () => SkillPaths; agents?: () => AgentPaths; mcp?: McpService; hooks?: HookService } = {},
+        private readonly services: { memory?: MemoryService; permissions?: PermissionService; skillPaths?: () => SkillPaths; agents?: () => AgentPaths; mcp?: McpService; hooks?: HookService; worktrees?: () => string | undefined } = {},
         private readonly options: ChatControllerOptions = {}
     ) {
         this.rememberLast = options.rememberLast ?? true;
@@ -234,6 +256,9 @@ export class ChatController implements vscode.Disposable, ChatHistory {
     }
 
     public dispose(): void {
+        // Coding agents stop with their chat; a reload shows them as interrupted, worktrees kept.
+        this.disposed = true;
+        this.subagentRuns.forEach((run) => run.cancel());
         this.running?.cancel();
         this.disposables.forEach((disposable) => disposable.dispose());
         this.options.hub?.remove(this);
@@ -372,6 +397,9 @@ export class ChatController implements vscode.Disposable, ChatHistory {
                 break;
             case 'chat/stopAgent':
                 this.stopSubagent(command.id);
+                break;
+            case 'chat/agentBranch':
+                await this.agentBranch(command.id, command.action);
                 break;
             case 'chat/dismissTodos':
                 this.session.todos = [];
@@ -1053,7 +1081,10 @@ export class ChatController implements vscode.Disposable, ChatHistory {
             : undefined), ...this.messages];
         this.conversation = conversation;
         await this.services.mcp?.ensureStarted(MCP_START_WAIT_MS);
-        const tools = availableTools(this.services.memory, this.interactionHost(), skills, subagentsOn ? this.subagentHost(agent) : undefined, this.services.mcp)
+        const repo = subagentSettings.codingAgents && !agent.readOnly && agentAllowsTool(agent, START_CODING_AGENT_TOOL) && this.services.worktrees?.()
+            ? await repoRoot(workspaceFolders()[0]?.uri.fsPath ?? '').catch(() => undefined)
+            : undefined;
+        const tools = availableTools(this.services.memory, this.interactionHost(), skills, subagentsOn ? this.subagentHost(agent) : undefined, this.services.mcp, repo ? this.codingAgentHost(agent, repo) : undefined)
             .filter((tool) => agentAllowsTool(agent, tool.info.name, tool.mcp) && (!agent.readOnly || tool.readOnly));
         let assistantItem: Extract<ChatItem, { kind: 'assistant' }> | undefined;
         let thinkingItem: Extract<ChatItem, { kind: 'thinking' }> | undefined;
@@ -1545,7 +1576,8 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         };
     }
 
-    private async runSubagent(id: string, task: SubagentTask, parent: vscode.CancellationToken, agent: AgentDefinition): Promise<SubagentOutcome> {
+    /** Runs a research agent, or with `worktree` a coding agent rooted in its own worktree. */
+    private async runSubagent(id: string, task: SubagentTask, parent: vscode.CancellationToken, agent: AgentDefinition, worktree?: AgentWorktree): Promise<SubagentOutcome> {
         const state = this.session.subagents?.find((candidate) => candidate.id === id);
         if (!state) {
             throw new Error('Unknown agent.');
@@ -1560,8 +1592,10 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         const model = createDirectModel(this.modelProvider, info);
         const settings = getSubagentSettings();
         // Same limits as the main agent's mode: a read-only mode gives read-only agents, and no mode lends an agent more than it has itself.
+        const allowed = worktree ? CODING_AGENT_TOOLS : SUBAGENT_TOOLS;
+        const maxRounds = worktree ? settings.codingRounds : settings.maxRounds;
         const tools = availableTools()
-            .filter((tool) => SUBAGENT_TOOLS.has(tool.info.name) && agentAllowsTool(agent, tool.info.name, false) && (!agent.readOnly || tool.readOnly));
+            .filter((tool) => allowed.has(tool.info.name) && agentAllowsTool(agent, tool.info.name, false) && (!agent.readOnly || tool.readOnly));
         const own = new vscode.CancellationTokenSource();
         this.subagentRuns.set(id, own);
         const link = parent.onCancellationRequested(() => own.cancel());
@@ -1572,12 +1606,14 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         state.model = info.name;
         touch();
 
-        const system = createSubagentPrompt({
-            folders: workspaceFolders().map((folder) => folder.name),
-            platform: process.platform,
-            shell: vscode.env.shell || undefined,
-            canRun: tools.some((tool) => tool.info.name === 'run_command')
-        });
+        const system = worktree
+            ? createCodingAgentPrompt({ branch: worktree.branch, platform: process.platform, shell: vscode.env.shell || undefined })
+            : createSubagentPrompt({
+                folders: workspaceFolders().map((folder) => folder.name),
+                platform: process.platform,
+                shell: vscode.env.shell || undefined,
+                canRun: tools.some((tool) => tool.info.name === 'run_command')
+            });
         const systemRole = getSystemRole();
         const messages = [
             systemRole !== undefined ? new vscode.LanguageModelChatMessage(systemRole, system) : vscode.LanguageModelChatMessage.User(system),
@@ -1585,6 +1621,7 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         ];
         const scope: ToolScope = {
             agentId: id,
+            root: worktree?.path,
             onTitle: (title) => {
                 state.currentTool = title;
                 touch();
@@ -1596,13 +1633,13 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         };
 
         try {
-            const result = await runAgentLoop({
+            const loop = () => runAgentLoop({
                 model,
                 messages,
                 pinned: 1,
                 tools: tools.map((tool) => tool.info),
                 invokeTool: (call, token) => this.invokeTool(tools, call, token, scope),
-                maxRounds: settings.maxRounds,
+                maxRounds,
                 autoCompact: isAutoCompactEnabled(),
                 compactThreshold: getCompactThreshold()
             }, {
@@ -1621,11 +1658,12 @@ export class ChatController implements vscode.Disposable, ChatHistory {
                     touch();
                 }
             }, own.token);
+            const result = await (worktree ? withToolRoot(worktree.path, loop) : loop());
             state.tokens = result.promptTokens + result.completionTokens || state.tokens;
             const stopped = own.token.isCancellationRequested;
             state.status = stopped ? 'stopped' : 'done';
             state.report = (result.finalText.trim() || (stopped ? 'Stopped before a report was written.' : '(no report)'))
-                + (result.hitRoundLimit && !stopped ? `\n\n(The agent hit its limit of ${settings.maxRounds} rounds; this report may be incomplete.)` : '');
+                + (result.hitRoundLimit && !stopped ? `\n\n(The agent hit its limit of ${maxRounds} rounds; this report may be incomplete.)` : '');
         } catch (error) {
             const stopped = own.token.isCancellationRequested;
             state.status = stopped ? 'stopped' : 'error';
@@ -1665,7 +1703,7 @@ export class ChatController implements vscode.Disposable, ChatHistory {
     private settleSubagents(): void {
         let changed = false;
         for (const state of this.session.subagents ?? []) {
-            if (state.status === 'queued' || state.status === 'running' || state.status === 'waiting-approval') {
+            if (!state.background && (state.status === 'queued' || state.status === 'running' || state.status === 'waiting-approval')) {
                 state.status = 'stopped';
                 state.endedAt = Date.now();
                 changed = true;
@@ -1674,6 +1712,208 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         if (changed) {
             this.postSubagents();
         }
+    }
+
+    /** start_coding_agent: each agent gets a branch and worktree, then runs (or queues) without blocking the answer. */
+    private codingAgentHost(agent: AgentDefinition, repo: string): CodingAgentHost {
+        const settings = getSubagentSettings();
+        return {
+            models: () => this.models
+                .filter((model) => settings.allowedModels.includes(model.id))
+                .map((model) => ({ id: model.id, name: model.name })),
+            start: async (task) => {
+                const dir = this.services.worktrees?.();
+                if (!dir) {
+                    throw new ToolInputError('Coding agents need an open folder.');
+                }
+                const id = randomUUID();
+                let worktree: AgentWorktree;
+                try {
+                    worktree = await createWorktree(repo, dir, task.name, id);
+                } catch (error) {
+                    throw new ToolInputError(`Could not create a worktree for the agent: ${error instanceof Error ? error.message : String(error)}`);
+                }
+                const state: SubagentState = {
+                    id,
+                    name: task.name,
+                    task: task.prompt,
+                    status: 'queued',
+                    model: this.resolveSubagentModel(task.model)?.name ?? '',
+                    toolCount: 0,
+                    rounds: 0,
+                    tokens: 0,
+                    callId: '',
+                    runId: this.currentRunUser?.id,
+                    background: { repo, worktree: worktree.path, branch: worktree.branch, base: worktree.base }
+                };
+                this.session.subagents = [...(this.session.subagents ?? []), state];
+                this.codingAgents.set(id, { state, sessionId: this.session.id });
+                this.postSubagents();
+                this.codingQueue.push({ id, task, agent, worktree });
+                const queued = this.codingRunning >= settings.maxBackground;
+                this.pumpCodingQueue();
+                return { branch: worktree.branch, queued };
+            }
+        };
+    }
+
+    /** Starts queued coding agents while there are free slots. */
+    private pumpCodingQueue(): void {
+        const max = getSubagentSettings().maxBackground;
+        while (!this.disposed && this.codingRunning < max && this.codingQueue.length) {
+            const job = this.codingQueue.shift()!;
+            this.codingRunning++;
+            void this.runCodingAgent(job).finally(() => {
+                this.codingRunning--;
+                this.pumpCodingQueue();
+            });
+        }
+    }
+
+    /** Runs one coding agent to the end, commits what it changed on its branch and tells the user. */
+    private async runCodingAgent(job: CodingJob): Promise<void> {
+        const state = this.codingAgents.get(job.id)?.state;
+        if (!state?.background || state.status === 'stopped') {
+            return;
+        }
+        // Not tied to the answer that started it: only its own Stop (or closing the chat) ends it.
+        await this.runSubagent(job.id, job.task, new vscode.CancellationTokenSource().token, job.agent, job.worktree)
+            .catch((error: unknown) => {
+                state.status = 'error';
+                state.report = error instanceof Error ? error.message : String(error);
+            });
+        if (this.disposed) {
+            state.status = 'interrupted';
+            return;
+        }
+        try {
+            await commitWorktree(job.worktree, `${state.name}\n\nWritten by a Nova coding agent.\n\n${state.task}`);
+            state.background.files = (await changedFiles(job.worktree)).length;
+        } catch (error) {
+            this.diagnostics.error('Committing a coding agent\'s work failed.', error);
+        }
+        const files = state.background.files ?? 0;
+        // runSubagent moved the status on; read it again rather than the narrowed value from above.
+        const status = (state as SubagentState).status;
+        const verb = status === 'done' ? 'finished' : status === 'stopped' ? 'was stopped' : 'failed';
+        const text = `Coding agent "${state.name}" ${verb} on ${state.background.branch}: ${files ? `${files} ${files === 1 ? 'file' : 'files'} changed` : 'no changes'}.`;
+        await this.saveCodingAgent(state, { tone: status === 'error' ? 'warning' : 'info', text });
+        const actions = files ? ['Review Changes', 'Merge', 'Discard'] : ['Discard'];
+        void vscode.window.showInformationMessage(text, ...actions).then((choice) => {
+            const action = choice === 'Review Changes' ? 'review' : choice === 'Merge' ? 'merge' : choice === 'Discard' ? 'discard' : undefined;
+            if (action) {
+                void this.agentBranch(job.id, action);
+            }
+        });
+    }
+
+    /** Review, merge, discard or open a coding agent's branch. */
+    private async agentBranch(id: string, action: 'review' | 'merge' | 'discard' | 'open'): Promise<void> {
+        const state = this.codingAgents.get(id)?.state ?? this.session.subagents?.find((candidate) => candidate.id === id);
+        const background = state?.background;
+        if (!state || !background || background.outcome) {
+            return;
+        }
+        const worktree: AgentWorktree = { repo: background.repo, path: background.worktree, branch: background.branch, base: background.base };
+        const live = state.status === 'queued' || state.status === 'running' || state.status === 'waiting-approval';
+        let done: string | undefined;
+        try {
+            switch (action) {
+                case 'open':
+                    await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(worktree.path), { forceNewWindow: true });
+                    return;
+                case 'review':
+                    await this.reviewAgentChanges(state.name, worktree);
+                    return;
+                case 'merge': {
+                    if (live) {
+                        this.notice('warning', `"${state.name}" is still working. Stop it or wait until it is done, then merge.`);
+                        return;
+                    }
+                    const confirmed = await vscode.window.showInformationMessage(`Merge ${worktree.branch} into your current branch?`, {
+                        modal: true,
+                        detail: 'The branch is merged with a merge commit; its worktree and branch are removed afterwards.'
+                    }, 'Merge');
+                    if (confirmed !== 'Merge') {
+                        return;
+                    }
+                    // An interrupted agent may have left changes that were never committed.
+                    await commitWorktree(worktree, `${state.name}\n\nWritten by a Nova coding agent.`);
+                    const merged = await mergeWorktree(worktree);
+                    if (!merged.ok) {
+                        this.notice('error', merged.reason);
+                        return;
+                    }
+                    await removeWorktree(worktree);
+                    background.outcome = 'merged';
+                    done = `Merged ${worktree.branch} into ${merged.into}.`;
+                    break;
+                }
+                case 'discard': {
+                    const confirmed = await vscode.window.showWarningMessage(`Discard the work of "${state.name}"?`, {
+                        modal: true,
+                        detail: `Deletes the branch ${worktree.branch} and its worktree. This cannot be undone.`
+                    }, 'Discard');
+                    if (confirmed !== 'Discard') {
+                        return;
+                    }
+                    if (live) {
+                        this.stopSubagent(id);
+                    }
+                    await removeWorktree(worktree);
+                    background.outcome = 'discarded';
+                    done = `Discarded ${worktree.branch}.`;
+                    break;
+                }
+            }
+        } catch (error) {
+            this.notice('error', error instanceof Error ? error.message : String(error));
+            return;
+        }
+        await this.saveCodingAgent(state, done ? { tone: 'info', text: done } : undefined);
+    }
+
+    /**
+     * Saves a coding agent's state, with an optional notice, in the chat it belongs to: this one
+     * when it is open, otherwise the saved copy on disk.
+     */
+    private async saveCodingAgent(state: SubagentState, notice?: { tone: 'info' | 'warning'; text: string }): Promise<void> {
+        const sessionId = this.codingAgents.get(state.id)?.sessionId ?? this.session.id;
+        if (sessionId === this.session.id) {
+            if (notice) {
+                this.notice(notice.tone, notice.text);
+            }
+            this.postSubagents();
+            await this.persist();
+            return;
+        }
+        const stored = await this.store.load(sessionId);
+        if (!stored) {
+            return;
+        }
+        stored.subagents = (stored.subagents ?? []).map((agent) => agent.id === state.id ? state : agent);
+        if (notice) {
+            stored.items.push({ kind: 'notice', id: randomUUID(), tone: notice.tone, text: notice.text });
+        }
+        await this.store.save(stored);
+    }
+
+    /** All files the agent changed, side by side with how they were when it started. */
+    private async reviewAgentChanges(name: string, worktree: AgentWorktree): Promise<void> {
+        const files = await changedFiles(worktree);
+        if (!files.length) {
+            this.notice('info', `${worktree.branch} has no changes.`);
+            return;
+        }
+        const resources = await Promise.all(files.map(async (file) => {
+            const key = `${worktree.branch}:${file.path}`;
+            const original = this.proposedContent.register(`${key}-base`, file.path, await baseContent(worktree, file.path));
+            const modified = file.status === 'D'
+                ? this.proposedContent.register(`${key}-deleted`, file.path, '')
+                : vscode.Uri.file(nodePath.join(worktree.path, file.path));
+            return [modified, original, modified] as const;
+        }));
+        await vscode.commands.executeCommand('vscode.changes', `${name} (${worktree.branch})`, resources);
     }
 
     private interactionHost(): InteractionHost {
@@ -1792,8 +2032,13 @@ export class ChatController implements vscode.Disposable, ChatHistory {
             this.stoppedByUser = true;
         }
         this.running?.cancel();
-        for (const approval of this.approvals.values()) {
-            approval.resolve('reject');
+        // Coding agents work on beyond the answer; their own Stop answers their approvals.
+        const coding = new Set([...this.codingAgents.keys()]);
+        for (const [itemId, approval] of this.approvals) {
+            const item = this.session.items.find((candidate) => candidate.id === itemId);
+            if (!(item?.kind === 'tool' && item.agentId && coding.has(item.agentId))) {
+                approval.resolve('reject');
+            }
         }
     }
 
@@ -1858,7 +2103,9 @@ export class ChatController implements vscode.Disposable, ChatHistory {
                 return textResult(`A hook blocked this tool call:\n${pre.block}`);
             }
 
-            if (rule !== 'allow' && !pre.allow && this.needsApproval(tool)) {
+            // A coding agent's edits land in its own worktree; the user reviews the branch instead.
+            const isolatedEdit = !!scope?.root && !!preparation.edit;
+            if (rule !== 'allow' && !pre.allow && !isolatedEdit && this.needsApproval(tool)) {
                 item.status = 'awaiting-approval';
                 if (this.services.permissions) {
                     item.allowRule = suggestRule(call.name, input, workspaceFolders()[0]?.uri.fsPath);
@@ -1900,7 +2147,9 @@ export class ChatController implements vscode.Disposable, ChatHistory {
             item.output = clip(output);
             if (preparation.edit && call.name !== 'memory_write') {
                 item.diff = diffLines(preparation.edit.original, preparation.edit.proposed, MAX_CARD_DIFF_LINES);
-                this.recordChange(preparation.edit);
+                if (!scope?.root) {
+                    this.recordChange(preparation.edit);
+                }
             }
             updateItem(item);
             return new vscode.LanguageModelToolResult(content);
@@ -2326,7 +2575,9 @@ export class ChatController implements vscode.Disposable, ChatHistory {
             items: session.items.map((item) => item.kind === 'tool' && (item.status === 'awaiting-approval' || item.status === 'running')
                 ? { ...item, status: 'rejected' }
                 : item.kind === 'question' && item.status === 'pending' ? { ...item, status: 'skipped' } : item),
-            subagents: session.subagents?.map((agent) => agent.status === 'done' || agent.status === 'error' || agent.status === 'stopped' ? agent : { ...agent, status: 'stopped' })
+            subagents: session.subagents?.map((agent) => this.codingAgents.get(agent.id)?.state ?? agent).map((agent) => agent.status === 'done' || agent.status === 'error' || agent.status === 'stopped' || agent.status === 'interrupted'
+                ? agent
+                : { ...agent, status: agent.background ? 'interrupted' : 'stopped' })
         };
         this.messages = fromStoredMessages(session.messages);
         this.attachments = [];
@@ -2392,14 +2643,15 @@ interface AvailableTool {
  * VS Code, which can run without a chat request. A server both know is used through Nova's
  * client, which honours its read-only hints and keeps its connection.
  */
-function availableTools(memory?: MemoryService, interaction?: InteractionHost, skills: readonly Skill[] = [], subagents?: SubagentHost, mcpService?: McpService): AvailableTool[] {
+function availableTools(memory?: MemoryService, interaction?: InteractionHost, skills: readonly Skill[] = [], subagents?: SubagentHost, mcpService?: McpService, codingAgents?: CodingAgentHost): AvailableTool[] {
     const webSearchEnabled = vscode.workspace.getConfiguration('nova.webSearch').get<boolean>('enabled', true);
     const novaTools = [
         ...BUILT_IN_TOOLS.filter((tool) => tool.name !== 'web_search' || webSearchEnabled),
         ...(skills.length ? [createLoadSkillTool(skills) as NovaTool<never>] : []),
         ...(interaction ? createInteractionTools(interaction) : []),
         ...(memory?.isEnabled() ? createMemoryTools(memory) : []),
-        ...(subagents ? [createSubagentTool(subagents)] : [])
+        ...(subagents ? [createSubagentTool(subagents)] : []),
+        ...(codingAgents ? [createCodingAgentTool(codingAgents)] : [])
     ];
     const ownMcp = mcpService?.tools() ?? [];
     const toAvailable = (tool: NovaTool<never>, mcp: boolean): AvailableTool => ({

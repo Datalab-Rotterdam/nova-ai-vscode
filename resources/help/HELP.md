@@ -96,6 +96,16 @@ On an approval card: **Allow** runs it once, **Always allow** saves a rule to `.
 
 For broad questions Nova can start research sub-agents that explore the project in parallel. A strip above the input shows each agent (state, tool calls, tokens, time). Click an agent to watch what it does, or stop it with its stop button. Turn them off or limit them with `nova.agent.subagents.*`.
 
+### Coding agents in the background
+
+Ask Nova to make a change "in the background", or several independent changes at once, and it starts coding agents (you approve each start). Every agent works on its own branch (`nova/<name>-…`) in a separate git worktree in `~/.nova-ai/projects/<project>/worktrees`, so your own checkout and the chat stay free while it works.
+
+- **While it works**: the agent strip shows it with its branch; click it to watch its steps, or stop it. Its file edits need no approval (they only touch its worktree); commands follow your permissions as usual.
+- **When it is done**: Nova commits its work on the branch and notifies you. **Review Changes** shows every changed file next to how it was; **Merge** merges the branch into your current branch (refused while you have uncommitted changes; a conflicting merge is undone so you can merge by hand); **Discard** deletes the branch and worktree. You can also open the worktree in a new window from the agent's details.
+- **Good to know**: a worktree has no installed dependencies, so the agent installs them when it needs to build or test. Closing the chat or reloading the window interrupts running agents; their branch and worktree stay, ready to review, merge or discard.
+
+Turn them off or tune them with `nova.agent.codingAgents.*` (default: two at a time, more wait in a queue).
+
 ### Web search and browser
 
 Nova can search the web without an API key (`nova.webSearch.*`; add your own SearXNG server if you like) and cites what it finds. With the Nova AI Browser integration (**Nova AI: Set Up Browser Integration**, on by default through `nova.browser.autoSetup`) it can also open pages and take screenshots in Chrome, Edge or Brave.
@@ -195,6 +205,7 @@ Everything lives in `~/.nova-ai` (change it with `nova.home` or `NOVA_AI_HOME`):
 | `nova.agent.commandTimeoutSeconds` | 120 | Time limit for commands the Nova chat runs |
 | `nova.agent.includeMcpTools` | on | Offer MCP tools to the Nova chat |
 | `nova.agent.subagents.*` | on | Research sub-agents: on/off, model and limits |
+| `nova.agent.codingAgents.*` | on | Background coding agents: on/off, how many at once, round limit |
 | `nova.webSearch.*` | on | Web search providers |
 | `nova.browser.autoSetup` | on | Set up the browser integration on startup |
 | `nova.context.autoCompact` | on | Compact long conversations automatically |

@@ -57,8 +57,9 @@ import {MemoryService, type MemoryScope} from './memory/MemoryService';
 import {PermissionService} from './permissions/PermissionService';
 import {McpService} from './mcp/McpService';
 import {HookService} from './hooks/HookService';
+import {git, repoRoot} from './git/git';
 import {manageMcpServers} from './mcp/mcpCommand';
-import {setScratchRoot} from './agent/tools/workspacePaths';
+import {setScratchRoot, toolRoot} from './agent/tools/workspacePaths';
 import {currentWorkspace, ensureDir, NovaHome, pruneOlderThan, type ProjectPaths, workspaceKey} from './storage/NovaHome';
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
@@ -98,7 +99,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         log: (message, error) => diagnostics.error(message, error)
     });
     // Hooks from the same settings files as the permission rules; workspace hooks only when trusted.
-    const hooks = new HookService(() => permissions.hooks(), workspaceRoot);
+    // A coding agent's hooks run in its worktree.
+    const hooks = new HookService(() => permissions.hooks(), () => toolRoot() ?? workspaceRoot());
+    // Forget worktrees whose folder is gone (a coding agent's, deleted by hand).
+    void (async () => {
+        const root = workspaceRoot();
+        const repo = root ? await repoRoot(root) : undefined;
+        if (repo) {
+            await git(['worktree', 'prune'], repo);
+        }
+    })();
     const mcpEnabled = () => vscode.workspace.getConfiguration('nova').get<boolean>('mcp.enabled', true);
 
     const proposedContent = new ProposedContentProvider();
@@ -138,7 +148,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                 skillPaths,
                 agents: agentPaths,
                 mcp: mcpEnabled() ? mcp : undefined,
-                hooks
+                hooks,
+                worktrees: () => workspaceRoot() ? path.join(nova.project.dir, 'worktrees') : undefined
             },
             { ...options, hub: chatHub }
         );

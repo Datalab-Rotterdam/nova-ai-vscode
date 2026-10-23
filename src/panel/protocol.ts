@@ -87,7 +87,8 @@ export interface SubagentState {
     name: string;
     /** The brief the agent got. */
     task: string;
-    status: 'queued' | 'running' | 'waiting-approval' | 'done' | 'error' | 'stopped';
+    /** `interrupted`: a coding agent cut off by a reload or a closed tab; its worktree is kept. */
+    status: 'queued' | 'running' | 'waiting-approval' | 'done' | 'error' | 'stopped' | 'interrupted';
     /** Name of the model the agent runs on. */
     model: string;
     /** Title of the tool it is using now. */
@@ -103,6 +104,18 @@ export interface SubagentState {
     callId: string;
     /** The user message whose answer it belongs to. */
     runId?: string;
+    /** A coding agent: its own branch in a worktree, which outlives the answer. */
+    background?: {
+        repo: string;
+        worktree: string;
+        branch: string;
+        /** Commit the branch started from. */
+        base: string;
+        /** Files it changed, once done. */
+        files?: number;
+        /** What the user did with the branch. */
+        outcome?: 'merged' | 'discarded';
+    };
 }
 
 export interface DiffLine {
@@ -272,6 +285,7 @@ export type ChatCommand =
     | { command: 'chat/skipQuestion'; itemId: string }
     | { command: 'chat/dismissTodos' }
     | { command: 'chat/stopAgent'; id: string }
+    | { command: 'chat/agentBranch'; id: string; action: 'review' | 'merge' | 'discard' | 'open' }
     | { command: 'chat/keepChange'; path?: string }
     | { command: 'chat/undoChange'; path?: string }
     | { command: 'chat/openChangeDiff'; path: string };

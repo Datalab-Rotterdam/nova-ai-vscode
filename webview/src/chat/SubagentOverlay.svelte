@@ -18,8 +18,11 @@
         'waiting-approval': 'Waiting for your OK',
         done: 'Done',
         error: 'Failed',
-        stopped: 'Stopped'
+        stopped: 'Stopped',
+        interrupted: 'Interrupted (the worktree is kept)'
     }[agent.status]);
+    const branchOpen = $derived(!!agent.background && !agent.background.outcome && !live);
+    const branchAction = (action: string) => post({command: 'chat/agentBranch', id: agent.id, action});
 
     let closeButton: HTMLButtonElement | undefined = $state();
     let body: HTMLDivElement | undefined = $state();
@@ -55,6 +58,19 @@
                 <div class="name">{agent.name}</div>
                 <div class="sub">{label}{agent.model ? ` · ${agent.model}` : ''} · {agent.toolCount} {agent.toolCount === 1 ? 'tool call' : 'tool calls'}</div>
             </div>
+            {#if branchOpen}
+                {#if agent.background?.files !== 0}
+                    <button class="nova-button secondary" onclick={() => branchAction('review')}>
+                        <span class="codicon codicon-diff-multiple" aria-hidden="true"></span> Review
+                    </button>
+                    <button class="nova-button secondary" onclick={() => branchAction('merge')}>
+                        <span class="codicon codicon-git-merge" aria-hidden="true"></span> Merge
+                    </button>
+                {/if}
+                <button class="nova-button secondary" onclick={() => branchAction('discard')}>
+                    <span class="codicon codicon-trash" aria-hidden="true"></span> Discard
+                </button>
+            {/if}
             {#if live}
                 <button class="nova-button secondary" onclick={() => post({command: 'chat/stopAgent', id: agent.id})}>
                     <span class="codicon codicon-debug-stop" aria-hidden="true"></span> Stop
@@ -64,6 +80,19 @@
         </header>
 
         <div class="body" bind:this={body}>
+            {#if agent.background}
+                <section>
+                    <div class="label">Branch</div>
+                    <p class="task">
+                        <span class="codicon codicon-git-branch" aria-hidden="true"></span> {agent.background.branch}
+                        {#if agent.background.outcome} · {agent.background.outcome === 'merged' ? 'merged' : 'discarded'}{:else if agent.background.files !== undefined} · {agent.background.files} {agent.background.files === 1 ? 'file' : 'files'} changed{/if}
+                        {#if !agent.background.outcome}
+                            · <button class="link" onclick={() => branchAction('open')}>Open the worktree in a new window</button>
+                        {/if}
+                    </p>
+                </section>
+            {/if}
+
             <section>
                 <div class="label">Task</div>
                 <p class="task">{agent.task}</p>
@@ -93,6 +122,18 @@
 </div>
 
 <style lang="scss">
+  .link {
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--vscode-textLink-foreground);
+    cursor: pointer;
+
+    &:hover {
+      text-decoration: underline;
+    }
+  }
+
   .backdrop {
     position: fixed;
     inset: 0;

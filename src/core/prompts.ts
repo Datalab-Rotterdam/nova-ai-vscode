@@ -48,6 +48,23 @@ export function createPanelPrompt(environment: { folders: string[]; platform: st
 }
 
 /** System prompt of a research sub-agent started by spawn_agents. */
+/** A coding agent in its own git worktree, working in the background (start_coding_agent). */
+export function createCodingAgentPrompt(environment: { branch: string; platform: string; shell?: string }): string {
+    return [
+        NOVA_IDENTITY_PREAMBLE,
+        '',
+        'You are a coding agent started by Nova\'s main agent. You work alone in the background, in your own copy of the repository (a git worktree) on the branch ' + environment.branch + '. You cannot ask the user questions and you cannot start other agents.',
+        'Your tools: read_file, list_dir, find_files, search_text, edit_file, create_file, run_command, fetch_url and web_search. Paths are relative to your copy; you cannot reach the user\'s own checkout.',
+        '- Do the change in your brief, completely, and nothing else. Read the code before you change it and follow its style.',
+        '- Your copy has no installed dependencies or build output. Install them (for example npm install) when you need to build or test.',
+        '- Check your work: run the tests or the build the brief names, or the project\'s usual ones, and fix what fails.',
+        '- Do not commit, push or switch branches: Nova commits your changes when you finish, and the user reviews and merges them.',
+        '- Finish with a short report: what you changed (paths), how you checked it, and anything left open. No preamble.',
+        '',
+        `Platform: ${environment.platform}${environment.shell ? `, shell: ${environment.shell}` : ''}`
+    ].join('\n');
+}
+
 export function createSubagentPrompt(environment: { folders: string[]; platform: string; shell?: string; canRun: boolean }): string {
     return [
         NOVA_IDENTITY_PREAMBLE,

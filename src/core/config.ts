@@ -51,6 +51,12 @@ export interface SubagentSettings {
   maxParallel: number;
   maxTotalPerRun: number;
   maxRounds: number;
+  /** Coding agents in their own worktree (start_coding_agent). */
+  codingAgents: boolean;
+  /** Coding agents working at the same time; more wait in a queue. */
+  maxBackground: number;
+  /** Tool rounds a coding agent may use. */
+  codingRounds: number;
   /** "inherit" (the chat's model) or a model id. */
   model: string;
   /** Model ids the main agent may choose per task. */
@@ -72,6 +78,9 @@ export function getSubagentSettings(): SubagentSettings {
     maxParallel: clampInt(config.get('agent.subagents.maxParallel'), 3, 1, 8),
     maxTotalPerRun: clampInt(config.get('agent.subagents.maxTotalPerRun'), 8, 1, 32),
     maxRounds: clampInt(config.get('agent.subagents.maxRounds'), 12, 1, 50),
+    codingAgents: config.get<boolean>('agent.codingAgents.enabled', true),
+    maxBackground: clampInt(config.get('agent.codingAgents.maxParallel'), 2, 1, 8),
+    codingRounds: clampInt(config.get('agent.codingAgents.maxRounds'), 60, 5, 500),
     model: typeof model === 'string' && model.trim() ? model.trim() : 'inherit',
     allowedModels: Array.isArray(models) ? models.filter((item): item is string => typeof item === 'string') : []
   };
