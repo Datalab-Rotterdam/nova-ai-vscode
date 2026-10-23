@@ -10,6 +10,7 @@ import { createInteractionTools, type InteractionHost } from '../agent/tools/int
 import { createMemoryTools } from '../agent/tools/memoryTools';
 import { createSubagentTool, SPAWN_AGENTS_TOOL, type SubagentHost, type SubagentOutcome, type SubagentTask } from '../agent/tools/subagentTool';
 import { displayPath, getScratchRoot, readText, resolveWorkspacePath, workspaceFolders } from '../agent/tools/workspacePaths';
+import { agentsFolder } from '../agents/AgentsController';
 import { agentAllowsTool, findAgent, listAgents, type AgentDefinition, type AgentPaths } from '../agents/AgentService';
 import type { MemoryService } from '../memory/MemoryService';
 import { type PermissionService, suggestRule } from '../permissions/PermissionService';
@@ -204,6 +205,18 @@ export class ChatController implements vscode.Disposable, ChatHistory {
     ) {
         this.rememberLast = options.rememberLast ?? true;
         this.disposables.push(this.modelProvider.onDidChangeLanguageModelChatInformation(() => void this.refreshModels().then(() => this.postState())));
+        // New and edited agents show in the mode menu at once, not on the next state update.
+        const agentPaths = this.services.agents?.();
+        for (const folder of agentPaths ? [agentsFolder(agentPaths, 'global'), agentsFolder(agentPaths, 'project')] : []) {
+            if (folder) {
+                const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(vscode.Uri.file(folder), '*.md'));
+                const changed = () => {
+                    this.agentCache = undefined;
+                    this.postState();
+                };
+                this.disposables.push(watcher, watcher.onDidCreate(changed), watcher.onDidChange(changed), watcher.onDidDelete(changed));
+            }
+        }
         if (options.hub) {
             this.disposables.push(options.hub.onDidChange(() => this.postSessions()));
         }

@@ -207,6 +207,12 @@ export const workspace = {
   workspaceFolders: undefined as Array<{ name: string; uri: Uri; index: number }> | undefined,
   workspaceFile: undefined as Uri | undefined,
   isTrusted: true,
+  createFileSystemWatcher: () => ({
+    onDidCreate: () => ({ dispose: () => undefined }),
+    onDidChange: () => ({ dispose: () => undefined }),
+    onDidDelete: () => ({ dispose: () => undefined }),
+    dispose: () => undefined
+  }),
   get fs(): unknown {
     return {
       readFile: async () => new Uint8Array(),
