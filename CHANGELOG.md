@@ -1,3 +1,17 @@
+# [1.0.0-alpha.24](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.23...v1.0.0-alpha.24) (2026-10-23)
+
+
+### Bug Fixes
+
+* **chat:** make mode and permission menus opaque ([5e7bad2](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/5e7bad2964215146d63bbe306053bf62400d9ab3))
+* **chat:** show new agents in the mode menu right away ([2d2b452](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/2d2b4521e728f99250feffcfb3ca13b71c62da6a))
+
+
+### Features
+
+* **chat:** reasoning effort slider and thinking switch in the model menu ([0132ed7](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/0132ed7a863131ae86ff6e4a58b0a7a4dbce047e))
+* **skills:** skip .claude and .codex skill folders by default ([bbf5bda](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/bbf5bda759419d648c24c44876a48e247b87ada8))
+
 # [1.0.0-alpha.23](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.22...v1.0.0-alpha.23) (2026-10-23)
 
 
