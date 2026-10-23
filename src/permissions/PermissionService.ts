@@ -54,32 +54,59 @@ export class PermissionService {
     }
 
     public async rules(): Promise<{ allow: string[]; deny: string[] }> {
+        const sources = await this.sources();
+        const trusted = this.isTrusted();
+        return {
+            allow: sources.filter((source) => !source.workspace || trusted).flatMap((source) => list(source.settings.permissions?.allow)),
+            deny: sources.flatMap((source) => list(source.settings.permissions?.deny))
+        };
+    }
+
+    /**
+     * Hooks of all settings files, per event (see HookService). Like allow rules, a
+     * workspace's hooks only count in a trusted workspace: a hook runs any command.
+     */
+    public async hooks(): Promise<Record<string, unknown[]>> {
+        const trusted = this.isTrusted();
+        const merged: Record<string, unknown[]> = {};
+        for (const source of await this.sources()) {
+            const hooks = source.settings.hooks;
+            if ((source.workspace && !trusted) || !hooks || typeof hooks !== 'object') {
+                continue;
+            }
+            for (const [event, matchers] of Object.entries(hooks)) {
+                if (Array.isArray(matchers)) {
+                    (merged[event] ??= []).push(...matchers);
+                }
+            }
+        }
+        return merged;
+    }
+
+    /** The settings files in order: the user's, the private project file, then the workspace's two. */
+    private async sources(): Promise<Array<{ settings: NovaSettings; workspace: boolean }>> {
         const root = this.workspaceRoot();
         const project = this.projectSettings();
-        const user = await readSettings(this.globalSettings);
-        const own = project ? await readSettings(project) : undefined;
-        const shared = root ? await readSettings(path.join(root, '.nova-ai', 'settings.json')) : undefined;
-        const local = root ? await readSettings(path.join(root, '.nova-ai', 'settings.local.json')) : undefined;
-        const trusted = this.isTrusted();
-
-        return {
-            allow: [
-                ...list(user?.permissions?.allow),
-                ...list(own?.permissions?.allow),
-                ...(trusted ? [...list(shared?.permissions?.allow), ...list(local?.permissions?.allow)] : [])
-            ],
-            deny: [
-                ...list(user?.permissions?.deny),
-                ...list(own?.permissions?.deny),
-                ...list(shared?.permissions?.deny),
-                ...list(local?.permissions?.deny)
-            ]
-        };
+        const files: Array<[string | undefined, boolean]> = [
+            [this.globalSettings, false],
+            [project, false],
+            [root && path.join(root, '.nova-ai', 'settings.json'), true],
+            [root && path.join(root, '.nova-ai', 'settings.local.json'), true]
+        ];
+        const sources: Array<{ settings: NovaSettings; workspace: boolean }> = [];
+        for (const [file, workspace] of files) {
+            const settings = file ? await readSettings(file) : undefined;
+            if (settings) {
+                sources.push({ settings, workspace });
+            }
+        }
+        return sources;
     }
 }
 
 interface NovaSettings {
     permissions?: { allow?: string[]; deny?: string[] };
+    hooks?: Record<string, unknown>;
     [key: string]: unknown;
 }
 

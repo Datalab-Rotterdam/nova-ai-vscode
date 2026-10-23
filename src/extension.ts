@@ -56,6 +56,7 @@ import * as path from 'node:path';
 import {MemoryService, type MemoryScope} from './memory/MemoryService';
 import {PermissionService} from './permissions/PermissionService';
 import {McpService} from './mcp/McpService';
+import {HookService} from './hooks/HookService';
 import {manageMcpServers} from './mcp/mcpCommand';
 import {setScratchRoot} from './agent/tools/workspacePaths';
 import {currentWorkspace, ensureDir, NovaHome, pruneOlderThan, type ProjectPaths, workspaceKey} from './storage/NovaHome';
@@ -96,6 +97,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         timeoutMs: () => vscode.workspace.getConfiguration('nova').get<number>('mcp.toolTimeoutSeconds', 60) * 1000,
         log: (message, error) => diagnostics.error(message, error)
     });
+    // Hooks from the same settings files as the permission rules; workspace hooks only when trusted.
+    const hooks = new HookService(() => permissions.hooks(), workspaceRoot);
     const mcpEnabled = () => vscode.workspace.getConfiguration('nova').get<boolean>('mcp.enabled', true);
 
     const proposedContent = new ProposedContentProvider();
@@ -134,7 +137,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                 permissions,
                 skillPaths,
                 agents: agentPaths,
-                mcp: mcpEnabled() ? mcp : undefined
+                mcp: mcpEnabled() ? mcp : undefined,
+                hooks
             },
             { ...options, hub: chatHub }
         );

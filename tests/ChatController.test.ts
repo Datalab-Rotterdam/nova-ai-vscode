@@ -312,6 +312,45 @@ describe('ChatController', () => {
     expect(permissions.allow).toHaveBeenCalledWith('run_command(echo always)');
   });
 
+  it('runs hooks: PreToolUse blocks a call, PostToolUse feedback reaches the model, a Stop hook sends it back to work', async () => {
+    const stops: string[] = ['tests still fail'];
+    const hooks = {
+      run: vi.fn(async (event: string, payload: Record<string, unknown>) => {
+        if (event === 'PreToolUse' && (payload.tool_input as { command?: string }).command === 'rm -rf /') {
+          return { block: 'dangerous', warnings: [] };
+        }
+        if (event === 'PostToolUse') {
+          return { context: 'formatted', warnings: [] };
+        }
+        if (event === 'Stop') {
+          const reason = stops.shift();
+          return reason ? { block: reason, warnings: [] } : { warnings: [] };
+        }
+        return { warnings: [] };
+      })
+    };
+    const { controller, events, model } = setup([
+      [
+        new vscode.LanguageModelToolCallPart('c1', 'run_command', { command: 'rm -rf /' }),
+        new vscode.LanguageModelToolCallPart('c2', 'list_dir', { path: '.' })
+      ],
+      [new vscode.LanguageModelTextPart('Done.')],
+      [new vscode.LanguageModelTextPart('Fixed the tests.')]
+    ], 'autoAll', { hooks });
+
+    await controller.handle({ command: 'chat/send', text: 'go' });
+
+    const final = (callId: string) => toolItems(events).filter((item) => item.callId === callId).pop()!;
+    expect(final('c1')).toMatchObject({ status: 'rejected', output: 'Blocked by a hook: dangerous' });
+    expect(final('c2').output).toContain('Hook feedback:\nformatted');
+    const secondRequest = model.sendRequest.mock.calls[1][0] as vscode.LanguageModelChatMessage[];
+    expect(JSON.stringify(secondRequest)).toContain('A hook blocked this tool call');
+    expect(model.sendRequest).toHaveBeenCalledTimes(3);
+    const lastRequest = model.sendRequest.mock.calls[2][0] as vscode.LanguageModelChatMessage[];
+    expect(JSON.stringify(lastRequest)).toContain('A Stop hook did not let you finish yet:\\ntests still fail');
+    expect(hooks.run.mock.calls.map((call) => call[0])).toEqual(['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PreToolUse', 'PostToolUse', 'Stop', 'Stop']);
+  });
+
   it('edits an earlier message: drops what followed and resends with the selected model', async () => {
     const { controller, model } = setup([
       [new vscode.LanguageModelTextPart('Answer one.')],
