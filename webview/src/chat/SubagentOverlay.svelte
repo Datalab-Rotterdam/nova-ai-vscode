@@ -230,14 +230,18 @@
     flex: 1;
     min-height: 0;
     display: grid;
+    /* One column as wide as the panel: an implicit column grows to its widest step (a long command, a code block). */
+    grid-template-columns: minmax(0, 1fr);
     align-content: start;
     gap: 14px;
     padding: 12px;
+    overflow-x: hidden;
     overflow-y: auto;
   }
 
   section {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: 4px;
     min-width: 0;
   }
@@ -261,6 +265,7 @@
 
   .steps {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: 4px;
   }
 
