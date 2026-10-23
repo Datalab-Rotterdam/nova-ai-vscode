@@ -17,6 +17,7 @@
   import ToolCard from "./ToolCard.svelte";
   import {
     groupItems,
+    isStepActive,
     thoughtFor,
     visibleChatItems,
   } from "../../../src/panel/steps";
@@ -360,7 +361,7 @@
               </div>
             {/if}
 
-            {#each entries as entry, entryIndex (entry.kind === "group" ? entry.id : entry.item.id)}
+            {#each entries as entry (entry.kind === "group" ? entry.id : entry.item.id)}
               {@const at = entry.kind === "group" ? entry.first : entry.index}
               {@const item =
                 entry.kind === "group"
@@ -385,10 +386,10 @@
                 </div>
               {/if}
               {#if entry.kind === "group"}
-                <!-- Only the group still being worked on spins; earlier ones are done. -->
+                <!-- A group spins only while one of its steps is active (e.g. a background task). -->
                 <StepGroup
                   group={entry}
-                  running={chat.running && entryIndex === entries.length - 1}
+                  running={chat.running && entry.steps.some(isStepActive)}
                   {post}
                 />
               {:else if item.kind === "user"}

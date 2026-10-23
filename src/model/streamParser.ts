@@ -16,6 +16,8 @@ const REASONING_FORMATS: ReadonlyArray<{ open: string; close: string; label?: Re
 /** End-of-turn and channel markers that should never be shown. */
 const STRAY_TOKENS = [
     '<|start|>assistant<|channel|>final<|message|>', '<|channel|>final<|message|>', '<|return|>', '<|end|>',
+    // Closing tags without an opening one: chat templates that open the reasoning block in the prompt.
+    '</think>', '<channel|>',
     '<turn|>', '<|turn>model', '<end_of_turn>', '<|im_end|>', '<|eot_id|>', '<|endoftext|>'
 ];
 
