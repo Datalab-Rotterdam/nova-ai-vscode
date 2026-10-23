@@ -26,7 +26,7 @@
 </script>
 
 <!-- Above the composer: one segment per agent gives the overview at a glance; the list opens below it. -->
-<section class="subagents" aria-label="Research agents">
+<section class="subagents" aria-label="Agents">
     <button class="bar" onclick={() => chosen = !open} aria-expanded={open} title={open ? 'Hide agents' : 'Show agents'}>
         <span class={`codicon codicon-${active ? 'loading codicon-modifier-spin' : failed ? 'warning' : 'pass-filled'} lead`} class:done={!active && !failed} aria-hidden="true"></span>
         <span class="summary">{summary}</span>

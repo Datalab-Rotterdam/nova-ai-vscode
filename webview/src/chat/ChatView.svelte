@@ -219,10 +219,10 @@
     // A sub-agent's own tool calls show inside the agent (see SubagentList), not in the chat.
     visibleChatItems(chat.items).filter((item) => !(item.kind === "tool" && item.agentId)),
   );
-  /** The agents of the latest answer; earlier ones stay on the spawn_agents card. */
+  /** The agents of the latest answer (earlier ones stay on the spawn_agents card), plus coding agents whose branch is not merged or discarded yet. */
   const latestAgents = $derived.by(() => {
     const lastUser = chat.items.findLast((item) => item.kind === "user");
-    return (chat.subagents ?? []).filter((agent) => agent.runId === lastUser?.id);
+    return (chat.subagents ?? []).filter((agent) => agent.runId === lastUser?.id || (agent.background && !agent.background.outcome));
   });
   setContext("nova.subagents", () => chat.subagents ?? []);
   const entries = $derived(groupItems(scoped));

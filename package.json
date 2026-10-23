@@ -591,6 +591,25 @@
             "maximum": 8,
             "markdownDescription": "Maximum number of sub-agents running at the same time; the rest wait."
           },
+          "nova.agent.codingAgents.enabled": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Let Nova start coding agents that work in the background on their own branch, in a separate git worktree (`~/.nova-ai/projects/<key>/worktrees`). You review, merge or discard each branch when the agent is done."
+          },
+          "nova.agent.codingAgents.maxParallel": {
+            "type": "integer",
+            "default": 2,
+            "minimum": 1,
+            "maximum": 8,
+            "markdownDescription": "Coding agents that work at the same time; more wait in a queue."
+          },
+          "nova.agent.codingAgents.maxRounds": {
+            "type": "integer",
+            "default": 60,
+            "minimum": 5,
+            "maximum": 500,
+            "markdownDescription": "Tool rounds a coding agent may use before it stops."
+          },
           "nova.agent.subagents.maxTotalPerRun": {
             "type": "integer",
             "default": 8,

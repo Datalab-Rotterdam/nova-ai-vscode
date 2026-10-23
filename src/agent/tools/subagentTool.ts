@@ -159,3 +159,64 @@ function formatReports(tasks: readonly SubagentTask[], outcomes: readonly Subage
         ...blocks
     ].join('\n\n');
 }
+
+export const START_CODING_AGENT_TOOL = 'start_coding_agent';
+
+/** What the chat panel provides to start a coding agent in its own git worktree. */
+export interface CodingAgentHost {
+    models(): SubagentModelChoice[];
+    /** Creates the agent's branch and worktree and starts (or queues) it without waiting for it. */
+    start(task: SubagentTask): Promise<{ branch: string; queued: boolean }>;
+}
+
+interface CodingAgentInput { name?: string; prompt?: string; model?: string }
+
+/**
+ * The start_coding_agent tool: a coding agent that works on its own branch in a separate
+ * worktree, in the background, while the conversation goes on. The user reviews and merges.
+ */
+export function createCodingAgentTool(host: CodingAgentHost): NovaTool<never> {
+    const models = host.models();
+    const tool: NovaTool<CodingAgentInput> = {
+        name: START_CODING_AGENT_TOOL,
+        description:
+            'Start a coding agent that implements a self-contained change on its own git branch, in a separate copy of the repository (a worktree), in the background. ' +
+            'It returns at once; the agent keeps working after your answer, and the user reviews, merges or discards its branch when it is done. ' +
+            'Use it when the user asks for work to happen in the background or in parallel, or for several independent changes at once (one agent each). ' +
+            'Do NOT use it for small edits you can make yourself, or for changes that depend on each other. ' +
+            'The agent cannot see this conversation: the brief must say what to change, where, and how to check it (tests, build). ' +
+            'Its copy has no installed dependencies or build output; say so in the brief if it needs them (for example run npm install first).',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                name: { type: 'string', description: 'Label of two to four words, shown to the user and used in the branch name.' },
+                prompt: { type: 'string', description: 'Self-contained brief: the change, the files involved, constraints, and how to verify it.' },
+                ...(models.length
+                    ? { model: { type: 'string', enum: models.map((model) => model.id), description: `Optional model. Models: ${models.map((model) => `${model.id} (${model.name})`).join(', ')}.` } }
+                    : {})
+            },
+            required: ['name', 'prompt']
+        },
+        // It creates a branch and a worktree: the user approves that like other changes.
+        readOnly: false,
+        async prepare(input) {
+            return { title: `Start coding agent: ${typeof input.name === 'string' && input.name.trim() ? input.name.trim() : 'agent'}`, detail: typeof input.prompt === 'string' ? input.prompt.slice(0, 2_000) : undefined };
+        },
+        async invoke(input) {
+            const prompt = typeof input.prompt === 'string' ? input.prompt.trim() : '';
+            if (!prompt) {
+                throw new ToolInputError('A "prompt" is required.');
+            }
+            const name = typeof input.name === 'string' && input.name.trim() ? input.name.trim().slice(0, 60) : 'Coding agent';
+            const allowed = new Set(host.models().map((model) => model.id));
+            const { branch, queued } = await host.start({
+                name,
+                prompt: prompt.slice(0, MAX_BRIEF_CHARS),
+                ...(input.model && allowed.has(input.model) ? { model: input.model } : {})
+            });
+            return `${queued ? 'Queued' : 'Started'} coding agent "${name}" on branch ${branch}. It works in the background in its own worktree; ` +
+                'the user is notified when it is done and reviews, merges or discards the branch. Do not wait for it or check on it; continue with the conversation.';
+        }
+    };
+    return tool as unknown as NovaTool<never>;
+}

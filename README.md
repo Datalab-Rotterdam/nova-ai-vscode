@@ -46,6 +46,7 @@ Stuck or curious? Run **Nova AI: Help** for a full guide inside VS Code.
 - **Search the web**: Nova looks up current information and cites its sources. No API key needed.
 - **Use your browser**: with the Nova AI Browser integration Nova can open pages and take screenshots in Chrome, Edge or Brave. Set it up with **Nova AI: Set Up Browser Integration** (it runs automatically on startup by default).
 - **Research in parallel**: for broad questions Nova can start up to a few research sub-agents. A strip above the input shows each one live; click an agent to watch what it does, or stop it.
+- **Code in the background**: ask Nova to do something in the background, or several independent changes at once, and it starts coding agents. Each works on its own branch in a separate git worktree, so your checkout is untouched and the chat stays free. When an agent is done you get a notification: **Review Changes** (all files side by side), **Merge** into your current branch, or **Discard**. Edits inside the worktree need no approval; commands still follow your permissions.
 - **Git**: `/commit` writes the commit message for your staged changes in the style of your history (you confirm it first), `/review` reviews the branch against its base and reports findings by severity, and `/pr` pushes the branch and opens a pull request (written by Nova with the GitHub CLI `gh` or the GitLab CLI `glab`, or your Git host's page for a new pull or merge request).
 - **Plan multi-step work**: Nova keeps a task list above the input and asks you questions with options when it needs a decision.
 
@@ -138,6 +139,7 @@ Search for **Nova** in VS Code Settings. The ones you are most likely to want:
 | `nova.mcp.toolTimeoutSeconds` | 60 | Time limit for one MCP tool call |
 | `nova.agent.includeMcpTools` | on | Also offer MCP tools registered in VS Code |
 | `nova.agent.subagents.*` | on | Research sub-agents: on/off, model, and limits on how many run |
+| `nova.agent.codingAgents.*` | on, 2 at a time | Background coding agents in their own worktree: on/off, how many work at once, round limit |
 | `nova.webSearch.*` | on | Web search providers (DuckDuckGo, You.com, your own SearXNG) |
 | `nova.browser.autoSetup` | on | Set up the browser integration on startup |
 | `nova.context.autoCompact` | on | Compact long conversations automatically |
@@ -160,7 +162,7 @@ Nova keeps its data in `~/.nova-ai`, readable only by you:
   skills/  agents/           your global skills and agents
   settings.json              your own permission rules
   mcp.json                   your MCP servers
-  projects/<name>-<hash>/    per workspace: memory, chat history, scratch files
+  projects/<name>-<hash>/    per workspace: memory, chat history, scratch files, coding agents' worktrees
 ```
 
 A repository can also hold a `.nova-ai/` folder (rules, skills, agents) and a `NOVA.md` / `AGENTS.md` with team instructions. The `nova-ai` terminal app shares this folder, so memory, skills and chats carry over. The layout is documented in [docs/NOVA_HOME.md](docs/NOVA_HOME.md).
@@ -170,6 +172,8 @@ A repository can also hold a `.nova-ai/` folder (rules, skills, agents) and a `N
 - **No models**: check the connection in the Nova AI view, then run **Nova AI: Refresh Models**.
 - **"Stopped after 25 tool rounds"**: send `continue`, or raise `nova.agent.maxToolRounds`.
 - **Conversation no longer fits**: use `/compact`, pick a model with a larger context window, or start over with `/clear`.
+- **An MCP server shows a key or an error**: run **Nova AI: MCP Servers**, choose the server and **Connect (sign in)**, or **Show error** for what it reported. Workspace servers only start in a trusted workspace.
+- **A hook blocks or warns**: the message names the hook. Hooks come from the settings files (see Make Nova yours); run the command yourself to see what it does.
 - **Something else**: turn on `nova.enableDiagnostics` and read the **Nova AI** output channel.
 
 ## Privacy & security

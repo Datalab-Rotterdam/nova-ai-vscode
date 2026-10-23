@@ -18,8 +18,11 @@
         'waiting-approval': 'Waiting for your OK',
         done: 'Done',
         error: 'Failed',
-        stopped: 'Stopped'
+        stopped: 'Stopped',
+        interrupted: 'Interrupted (the worktree is kept)'
     }[agent.status]);
+    const branchOpen = $derived(!!agent.background && !agent.background.outcome && !live);
+    const branchAction = (action: string) => post({command: 'chat/agentBranch', id: agent.id, action});
 
     let closeButton: HTMLButtonElement | undefined = $state();
     let body: HTMLDivElement | undefined = $state();
@@ -35,6 +38,16 @@
         }
     });
 
+    /**
+     * Shows the overlay as a child of <body>. Where the strip lives, an ancestor keeps a transform
+     * (the composer's entry animation), and a transformed ancestor captures `position: fixed`:
+     * the overlay would size to it, not the window, and the chat behind it would scroll.
+     */
+    function portal(node: HTMLElement) {
+        document.body.appendChild(node);
+        return {destroy: () => node.remove()};
+    }
+
     function onKey(event: KeyboardEvent) {
         if (event.key === 'Escape') {
             event.preventDefault();
@@ -47,7 +60,7 @@
 <svelte:window onkeydowncapture={onKey}/>
 
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-<div class="backdrop" onclick={(event) => event.target === event.currentTarget && onClose()}>
+<div class="backdrop" use:portal onclick={(event) => event.target === event.currentTarget && onClose()}>
     <div class="panel" role="dialog" aria-modal="true" aria-label={`Agent ${agent.name}`}>
         <header>
             <span class={`dot ${agent.status}`} aria-hidden="true"></span>
@@ -55,6 +68,22 @@
                 <div class="name">{agent.name}</div>
                 <div class="sub">{label}{agent.model ? ` · ${agent.model}` : ''} · {agent.toolCount} {agent.toolCount === 1 ? 'tool call' : 'tool calls'}</div>
             </div>
+            {#if branchOpen}
+                <!-- Next to the name when the panel is wide; below it, wrapping, when narrow (see .actions). -->
+                <div class="actions">
+                    {#if agent.background?.files !== 0}
+                        <button class="nova-button secondary" onclick={() => branchAction('review')}>
+                            <span class="codicon codicon-diff-multiple" aria-hidden="true"></span> Review
+                        </button>
+                        <button class="nova-button secondary" onclick={() => branchAction('merge')}>
+                            <span class="codicon codicon-git-merge" aria-hidden="true"></span> Merge
+                        </button>
+                    {/if}
+                    <button class="nova-button secondary" onclick={() => branchAction('discard')}>
+                        <span class="codicon codicon-trash" aria-hidden="true"></span> Discard
+                    </button>
+                </div>
+            {/if}
             {#if live}
                 <button class="nova-button secondary" onclick={() => post({command: 'chat/stopAgent', id: agent.id})}>
                     <span class="codicon codicon-debug-stop" aria-hidden="true"></span> Stop
@@ -64,6 +93,19 @@
         </header>
 
         <div class="body" bind:this={body}>
+            {#if agent.background}
+                <section>
+                    <div class="label">Branch</div>
+                    <p class="task">
+                        <span class="codicon codicon-git-branch" aria-hidden="true"></span> {agent.background.branch}
+                        {#if agent.background.outcome} · {agent.background.outcome === 'merged' ? 'merged' : 'discarded'}{:else if agent.background.files !== undefined} · {agent.background.files} {agent.background.files === 1 ? 'file' : 'files'} changed{/if}
+                        {#if !agent.background.outcome}
+                            · <button class="link" onclick={() => branchAction('open')}>Open the worktree in a new window</button>
+                        {/if}
+                    </p>
+                </section>
+            {/if}
+
             <section>
                 <div class="label">Task</div>
                 <p class="task">{agent.task}</p>
@@ -93,6 +135,18 @@
 </div>
 
 <style lang="scss">
+  .link {
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--vscode-textLink-foreground);
+    cursor: pointer;
+
+    &:hover {
+      text-decoration: underline;
+    }
+  }
+
   .backdrop {
     position: fixed;
     inset: 0;
@@ -106,6 +160,7 @@
   }
 
   .panel {
+    container: agent-panel / inline-size;
     width: min(720px, 100%);
     max-height: 100%;
     display: flex;
@@ -120,6 +175,7 @@
   header {
     flex: none;
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 10px;
     padding: 10px 12px;
@@ -189,14 +245,37 @@
     flex: 1;
     min-height: 0;
     display: grid;
+    /* One column as wide as the panel: an implicit column grows to its widest step (a long command, a code block). */
+    grid-template-columns: minmax(0, 1fr);
     align-content: start;
     gap: 14px;
     padding: 12px;
+    overflow-x: hidden;
     overflow-y: auto;
+    /* Scrolling past the end does not move the chat behind the overlay. */
+    overscroll-behavior: contain;
+  }
+
+  /* Narrow: a row of its own under the name (last, full width). Wide: in the title row, before close. */
+  .actions {
+    order: 1;
+    flex-basis: 100%;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  @container agent-panel (min-width: 460px) {
+    .actions {
+      order: 0;
+      flex-basis: auto;
+      flex-wrap: nowrap;
+    }
   }
 
   section {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: 4px;
     min-width: 0;
   }
@@ -220,6 +299,7 @@
 
   .steps {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: 4px;
   }
 

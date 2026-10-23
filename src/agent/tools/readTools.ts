@@ -2,7 +2,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { NovaTool, ToolInputError, type ToolOutput } from './types';
-import { displayPath, readText, resolveWorkspacePath, truncateMiddle, workspaceFolders } from './workspacePaths';
+import { displayPath, readText, resolveWorkspacePath, toolRoot, truncateMiddle, workspaceFolders } from './workspacePaths';
 
 const MAX_READ_LINES = 2_000;
 const MAX_READ_CHARS = 100_000;
@@ -10,6 +10,12 @@ const MAX_FIND_RESULTS = 200;
 const MAX_SEARCH_FILES = 3_000;
 const MAX_SEARCH_MATCHES = 100;
 const DEFAULT_EXCLUDE = '{**/node_modules/**,**/.git/**,**/dist/**,**/out/**,**/build/**,**/.next/**,**/coverage/**}';
+
+/** A search pattern over the workspace, or over the agent's worktree when the tools are rooted there. */
+function rooted(pattern: string): vscode.GlobPattern {
+    const root = toolRoot();
+    return root ? new vscode.RelativePattern(vscode.Uri.file(root), pattern) : pattern;
+}
 
 interface ReadFileInput { path: string; startLine?: number; endLine?: number }
 
@@ -153,7 +159,7 @@ export const findFilesTool: NovaTool<FindFilesInput> = {
         if (typeof input.pattern !== 'string' || !input.pattern.trim()) {
             throw new ToolInputError('A glob "pattern" is required.');
         }
-        const files = await vscode.workspace.findFiles(input.pattern.trim(), DEFAULT_EXCLUDE, MAX_FIND_RESULTS + 1, context.token);
+        const files = await vscode.workspace.findFiles(rooted(input.pattern.trim()), DEFAULT_EXCLUDE, MAX_FIND_RESULTS + 1, context.token);
         const listed = files.slice(0, MAX_FIND_RESULTS).map(displayPath).sort();
         const more = files.length > MAX_FIND_RESULTS ? `\n[More than ${MAX_FIND_RESULTS} results; use a narrower pattern.]` : '';
         return listed.length ? `${listed.join('\n')}${more}` : 'No files found.';
@@ -190,7 +196,7 @@ export const searchTextTool: NovaTool<SearchTextInput> = {
             throw new ToolInputError(`Invalid regular expression: ${error instanceof Error ? error.message : String(error)}`);
         }
 
-        const files = await vscode.workspace.findFiles(input.include?.trim() || '**/*', DEFAULT_EXCLUDE, MAX_SEARCH_FILES, context.token);
+        const files = await vscode.workspace.findFiles(rooted(input.include?.trim() || '**/*'), DEFAULT_EXCLUDE, MAX_SEARCH_FILES, context.token);
         const matches: string[] = [];
         for (const file of files) {
             if (context.token.isCancellationRequested || matches.length >= MAX_SEARCH_MATCHES) {

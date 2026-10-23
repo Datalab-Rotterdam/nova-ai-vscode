@@ -351,6 +351,77 @@ describe('ChatController', () => {
     expect(hooks.run.mock.calls.map((call) => call[0])).toEqual(['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PreToolUse', 'PostToolUse', 'Stop', 'Stop']);
   });
 
+  it('runs a coding agent in its own worktree in the background, then merges its branch', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const { existsSync } = await import('node:fs');
+    const root = mkdtempSync(join(tmpdir(), 'nova-coding-'));
+    const repo = join(root, 'repo');
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' });
+    execFileSync('git', ['init', '-q', '-b', 'main', repo]);
+    git('config', 'user.email', 'test@example.com');
+    git('config', 'user.name', 'Test');
+    git('config', 'commit.gpgsign', 'false');
+    writeFileSync(join(repo, 'a.txt'), 'one\n');
+    git('add', '-A');
+    git('commit', '-q', '-m', 'first');
+
+    // Real files, so the agent's edit lands in its worktree and git can commit it.
+    const nodeFs = await import('node:fs/promises');
+    vi.spyOn(vscode.workspace, 'fs', 'get').mockReturnValue({
+      stat: async (uri: vscode.Uri) => nodeFs.stat(uri.fsPath),
+      readFile: async (uri: vscode.Uri) => nodeFs.readFile(uri.fsPath),
+      writeFile: async (uri: vscode.Uri, data: Uint8Array) => {
+        await nodeFs.mkdir(path.dirname(uri.fsPath), { recursive: true });
+        await nodeFs.writeFile(uri.fsPath, data);
+      }
+    } as never);
+    // Merge confirmations say yes; the completion toast is left unanswered.
+    vi.spyOn(vscode.window, 'showInformationMessage').mockImplementation((async (_text: string, options?: unknown) =>
+      options && typeof options === 'object' && 'modal' in options ? 'Merge' : undefined) as never);
+
+    const { controller, events, model } = setup([], 'autoReadOnly', { worktrees: () => join(root, 'worktrees') });
+    (vscode.workspace as unknown as { workspaceFolders: unknown }).workspaceFolders = [{ name: 'repo', uri: vscode.Uri.file(repo), index: 0 }];
+    // The main agent and the coding agent share the model; answer each from its own script.
+    const main: Part[][] = [
+      [new vscode.LanguageModelToolCallPart('c1', 'start_coding_agent', { name: 'Add b', prompt: 'Create b.txt containing hi.' })],
+      [new vscode.LanguageModelTextPart('Started an agent.')]
+    ];
+    const agent: Part[][] = [
+      [new vscode.LanguageModelToolCallPart('a1', 'create_file', { path: 'b.txt', content: 'hi\n' })],
+      [new vscode.LanguageModelTextPart('Created b.txt.')]
+    ];
+    model.sendRequest.mockImplementation(async (messages: vscode.LanguageModelChatMessage[]) => {
+      const system = JSON.stringify(messages[0]);
+      const response = (system.includes('You are a coding agent') ? agent : main).shift() ?? [new vscode.LanguageModelTextPart('…')];
+      return { stream: (async function* () { yield* response; })() };
+    });
+
+    const sending = controller.handle({ command: 'chat/send', text: 'add b in the background' });
+    await until(() => toolItems(events).some((item) => item.status === 'awaiting-approval'));
+    const approval = toolItems(events).find((item) => item.status === 'awaiting-approval')!;
+    expect(approval.title).toBe('Start coding agent: Add b');
+    await controller.handle({ command: 'chat/approval', itemId: approval.id, decision: 'approve' });
+    await sending;
+
+    const agentState = () => controller.getState().subagents.find((candidate) => candidate.background)!;
+    await until(() => agentState()?.background?.files === 1);
+    const state = agentState();
+    expect(state.status).toBe('done');
+    expect(state.background!.branch).toMatch(/^nova\/add-b-/);
+    // The edit needed no approval card, went to the worktree only and was committed there.
+    expect(toolItems(events).filter((item) => item.status === 'awaiting-approval')).toHaveLength(1);
+    expect(existsSync(join(repo, 'b.txt'))).toBe(false);
+    expect(execFileSync('git', ['log', '-1', '--format=%s', state.background!.branch], { cwd: repo, encoding: 'utf8' }).trim()).toBe('Add b');
+    expect(controller.getState().changes).toEqual([]);
+    expect(controller.getState().items.some((item) => item.kind === 'notice' && /Coding agent "Add b" finished on nova\/add-b-\w+: 1 file changed/.test(item.text))).toBe(true);
+
+    await controller.handle({ command: 'chat/agentBranch', id: state.id, action: 'merge' });
+    expect(readFileSync(join(repo, 'b.txt'), 'utf8')).toBe('hi\n');
+    expect(agentState().background!.outcome).toBe('merged');
+    expect(existsSync(state.background!.worktree)).toBe(false);
+    rmSync(root, { recursive: true, force: true });
+  });
+
   it('edits an earlier message: drops what followed and resends with the selected model', async () => {
     const { controller, model } = setup([
       [new vscode.LanguageModelTextPart('Answer one.')],
@@ -492,6 +563,17 @@ describe('ChatController', () => {
     store.load.mockResolvedValue({ id: 'saved', title: 'Saved chat', createdAt: 1, updatedAt: 1, items: [{ kind: 'user', id: 'u1', text: 'hi', attachments: [] }], messages: [] });
     await controller.handle({ command: 'chat/open', sessionId: 'saved' });
     expect(controller.getState()).toMatchObject({ sessionId: 'saved', title: 'Saved chat' });
+  });
+
+  it('shows agents cut off by a reload as stopped, and coding agents as interrupted with their branch kept', async () => {
+    const { controller, store } = setup([]);
+    const agent = (id: string, background?: object) => ({ id, name: id, task: 't', status: 'running', model: '', toolCount: 0, rounds: 0, tokens: 0, callId: '', ...(background ? { background } : {}) });
+    store.load.mockResolvedValue({
+      id: 'saved', title: 'Saved', createdAt: 1, updatedAt: 1, items: [], messages: [],
+      subagents: [agent('research'), agent('coding', { repo: '/r', worktree: '/w', branch: 'nova/x-1', base: 'abc' })]
+    });
+    await controller.handle({ command: 'chat/open', sessionId: 'saved' });
+    expect(controller.getState().subagents.map((state) => [state.id, state.status])).toEqual([['research', 'stopped'], ['coding', 'interrupted']]);
   });
 
   it('opens links from replies: web links after confirmation, paths in the workspace, other schemes never', async () => {

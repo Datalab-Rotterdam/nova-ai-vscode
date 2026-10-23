@@ -28,8 +28,13 @@
         'waiting-approval': 'shield',
         done: 'check',
         error: 'error',
-        stopped: 'debug-stop'
+        stopped: 'debug-stop',
+        interrupted: 'debug-pause'
     }[status]);
+
+    /** A coding agent's branch can be reviewed and merged or discarded once it stopped working. */
+    const branchOpen = (agent: SubagentState) => !!agent.background && !agent.background.outcome && !live(agent);
+    const branchAction = (agent: SubagentState, action: string) => post({command: 'chat/agentBranch', id: agent.id, action});
 
     function elapsed(agent: SubagentState): string {
         if (!agent.startedAt) {
@@ -57,6 +62,7 @@
                         {:else if agent.status === 'running'}{agent.currentTool ?? 'Thinking'}
                         {:else if agent.status === 'stopped'}Stopped
                         {:else if agent.status === 'error'}Failed
+                        {:else if agent.status === 'interrupted'}Interrupted
                         {:else}Done{/if}
                     </span>
                     <span class="stats">
@@ -71,11 +77,63 @@
                             onclick={() => post({command: 'chat/stopAgent', id: agent.id})}></button>
                 {/if}
             </div>
+            {#if agent.background}
+                <div class="branch">
+                    <span class="codicon codicon-git-branch" aria-hidden="true"></span>
+                    <span class="branch-name" title={agent.background.worktree}>{agent.background.branch}</span>
+                    {#if agent.background.outcome}
+                        <span class="outcome">{agent.background.outcome === 'merged' ? 'Merged' : 'Discarded'}</span>
+                    {:else if branchOpen(agent)}
+                        {#if agent.background.files !== 0}
+                            <button class="link" onclick={() => branchAction(agent, 'review')}>Review</button>
+                            <button class="link" onclick={() => branchAction(agent, 'merge')}>Merge</button>
+                        {/if}
+                        <button class="link" onclick={() => branchAction(agent, 'discard')}>Discard</button>
+                    {/if}
+                </div>
+            {/if}
         </li>
     {/each}
 </ul>
 
 <style lang="scss">
+  .branch {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 8px 6px 30px;
+    font-size: 0.92em;
+    color: var(--nova-muted);
+  }
+
+  .branch-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: var(--vscode-editor-font-family);
+  }
+
+  .outcome {
+    margin-left: auto;
+  }
+
+  .link {
+    padding: 0 2px;
+    border: none;
+    background: none;
+    color: var(--vscode-textLink-foreground);
+    cursor: pointer;
+
+    &:first-of-type {
+      margin-left: auto;
+    }
+
+    &:hover {
+      text-decoration: underline;
+    }
+  }
+
   .agents {
     margin: 0;
     padding: 0;
