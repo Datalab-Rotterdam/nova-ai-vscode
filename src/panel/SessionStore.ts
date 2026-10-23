@@ -21,6 +21,8 @@ export interface StoredSession {
     createdAt: number;
     updatedAt: number;
     modelId?: string;
+    /** Reasoning effort chosen for the chat. */
+    effort?: string;
     /** The agent (mode) of the chat, e.g. "plan"; interactive when unset. */
     agentId?: string;
     /** What the panel shows. */

@@ -2,6 +2,7 @@
   import type { ChatState } from "../../../src/panel/protocol";
   import { nextAgentId } from "../../../src/panel/agentModes";
   import ModeMenu from "./ModeMenu.svelte";
+  import ModelMenu from "./ModelMenu.svelte";
   import { fileIcon } from "./fileIcon";
   import PermissionPrompt from "./PermissionPrompt.svelte";
   import {
@@ -621,20 +622,7 @@
         onclick={() => post({ command: "chat/addSelection" })}
       ></button>
 
-      <select
-        class="select"
-        aria-label="Model"
-        value={chat.modelId}
-        onchange={(event) =>
-          post({
-            command: "chat/selectModel",
-            modelId: event.currentTarget.value,
-          })}
-      >
-        {#each chat.models as model (model.id)}
-          <option value={model.id}>{model.name}</option>
-        {/each}
-      </select>
+      <ModelMenu {chat} {post} />
 
       <span class="spacer"></span>
 
@@ -1095,33 +1083,6 @@
     &:hover {
       background: var(--vscode-toolbar-hoverBackground, var(--nova-hover));
       color: var(--nova-fg);
-    }
-  }
-
-  /* Size each dropdown to its selected option, not its longest one. */
-  .select {
-    field-sizing: content;
-    flex: 0 1 auto;
-    min-width: 0;
-    max-width: 45%;
-    padding: 1px 2px;
-    border: 1px solid transparent;
-    border-radius: var(--nova-radius);
-    background: transparent;
-    color: var(--nova-muted);
-    font: inherit;
-    font-size: 0.9em;
-    text-overflow: ellipsis;
-    cursor: pointer;
-
-    &:hover {
-      color: var(--nova-fg);
-      background: var(--vscode-toolbar-hoverBackground, var(--nova-hover));
-    }
-
-    option {
-      background: var(--vscode-dropdown-background, var(--nova-input-bg));
-      color: var(--vscode-dropdown-foreground, var(--nova-fg));
     }
   }
 

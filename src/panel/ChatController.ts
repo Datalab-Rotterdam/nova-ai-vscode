@@ -272,6 +272,11 @@ export class ChatController implements vscode.Disposable, ChatHistory {
             case 'chat/delete':
                 await confirmAndDeleteChats(this, command.sessionIds);
                 break;
+            case 'chat/setEffort':
+                this.session.effort = command.effort;
+                void this.persist();
+                this.postState();
+                break;
             case 'chat/selectModel':
                 this.selectModel(command.modelId);
                 break;
@@ -576,6 +581,7 @@ export class ChatController implements vscode.Disposable, ChatHistory {
             running: Boolean(this.running),
             models: this.models.map(toModelOption),
             modelId: this.selectedModelId(),
+            effort: this.currentEffort(),
             attachments: this.attachments,
             usage: this.usage,
             sessions: this.store.list(),
@@ -653,6 +659,22 @@ export class ChatController implements vscode.Disposable, ChatHistory {
      * context window may no longer hold the conversation: the usage meter shows the new
      * share at once, and the user is told whether the next request compacts it first.
      */
+    /** The chat's effort when the selected model accepts it, else "none" for a model that thinks only on request, else its middle level. */
+    private currentEffort(): string | undefined {
+        const model = this.models.find((candidate) => candidate.id === this.selectedModelId());
+        const efforts = effortsOf(model);
+        if (!efforts.length) {
+            return undefined;
+        }
+        if (efforts.includes(this.session.effort ?? '')) {
+            return this.session.effort;
+        }
+        if (efforts.includes('none') && model?.raw?.reasoning_default === 'off') {
+            return 'none';
+        }
+        return efforts.includes('medium') ? 'medium' : efforts[Math.floor((efforts.length - 1) / 2)];
+    }
+
     private selectModel(modelId: string): void {
         const previous = this.models.find((model) => model.id === this.selectedModelId());
         this.session.modelId = modelId;
@@ -922,9 +944,11 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         this.activeAssistants = [];
 
         try {
+            const effort = this.currentEffort();
             const result = await runAgentLoop({
                 model,
                 messages: conversation,
+                modelOptions: effort ? { reasoning_effort: effort } : undefined,
                 pinned: 1,
                 tools: tools.map((tool) => tool.info),
                 invokeTool: (call, token) => this.invokeTool(tools, call, token),
@@ -2233,7 +2257,16 @@ function availableTools(memory?: MemoryService, interaction?: InteractionHost, s
 }
 
 function toModelOption(model: LanguageModelInfo): ChatModelOption {
-    return { id: model.id, name: model.name, maxInputTokens: model.maxInputTokens };
+    const efforts = effortsOf(model);
+    const description = typeof model.raw?.description === 'string' ? model.raw.description.trim() : '';
+    const thinkingSwitch = efforts.length > 0 && !model.raw?.reasoning_efforts?.length;
+    return { id: model.id, name: model.name, maxInputTokens: model.maxInputTokens, ...(efforts.length ? { efforts } : {}), ...(thinkingSwitch ? { thinkingSwitch } : {}), ...(description ? { description } : {}) };
+}
+
+/** Levels the gateway lists in `reasoning_efforts`; a model that can think but lists none gets an Off / On switch ("medium" stands for any level other than "none"). */
+function effortsOf(model: LanguageModelInfo | undefined): string[] {
+    const listed = model?.raw?.reasoning_efforts ?? [];
+    return !listed.length && model?.raw?.capabilities?.includes('reasoning') ? ['none', 'medium'] : listed;
 }
 
 function getApprovalMode(): ApprovalMode {

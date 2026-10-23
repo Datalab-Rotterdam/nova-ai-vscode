@@ -125,6 +125,11 @@ export interface ChatModelOption {
     id: string;
     name: string;
     maxInputTokens: number;
+    /** Levels the model accepts for `reasoning_effort`, lowest first; absent when it has none. */
+    efforts?: string[];
+    /** The model has no levels, only thinking on or off: `efforts` is then ["none", "medium"]. */
+    thinkingSwitch?: boolean;
+    description?: string;
 }
 
 export interface Attachment {
@@ -166,6 +171,8 @@ export interface ChatState {
     running: boolean;
     models: ChatModelOption[];
     modelId?: string;
+    /** The reasoning effort sent with requests; only set when the selected model has efforts. */
+    effort?: string;
     attachments: Attachment[];
     /** Prompt tokens of the last request and the model's input budget. */
     usage?: { used: number; total: number };
@@ -227,6 +234,7 @@ export type ChatCommand =
     | { command: 'chat/rename'; sessionId: string; title: string }
     | { command: 'chat/delete'; sessionIds: string[] }
     | { command: 'chat/selectModel'; modelId: string }
+    | { command: 'chat/setEffort'; effort: string }
     | { command: 'chat/addFile' }
     /** Attaches a file from the composer's `@` list. */
     | { command: 'chat/attachFile'; path: string }

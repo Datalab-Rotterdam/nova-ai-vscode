@@ -27,6 +27,8 @@ export interface AgentLoopRequest {
     tools: readonly vscode.LanguageModelToolInformation[];
     /** Tool the user referenced explicitly; it is required in the first round. */
     forcedTool?: string;
+    /** Extra request options for the model, e.g. `reasoning_effort`. */
+    modelOptions?: Record<string, unknown>;
     invokeTool(call: vscode.LanguageModelToolCallPart, token: vscode.CancellationToken): Thenable<vscode.LanguageModelToolResult>;
     maxRounds: number;
     autoCompact: boolean;
@@ -83,9 +85,12 @@ export async function runAgentLoop(
         }
 
         const forced = round === 0 && request.forcedTool ? tools.filter((tool) => tool.name === request.forcedTool) : [];
-        const options: vscode.LanguageModelChatRequestOptions = forced.length
-            ? { tools: forced, toolMode: vscode.LanguageModelChatToolMode.Required }
-            : tools.length ? { tools, toolMode: vscode.LanguageModelChatToolMode.Auto } : {};
+        const options: vscode.LanguageModelChatRequestOptions = {
+            ...(forced.length
+                ? { tools: forced, toolMode: vscode.LanguageModelChatToolMode.Required }
+                : tools.length ? { tools, toolMode: vscode.LanguageModelChatToolMode.Auto } : {}),
+            ...(request.modelOptions ? { modelOptions: request.modelOptions } : {})
+        };
 
         if (round > 0 && request.takeSteering) {
             messages.push(...await request.takeSteering());
