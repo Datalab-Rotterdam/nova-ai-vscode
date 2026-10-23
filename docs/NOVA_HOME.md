@@ -96,6 +96,43 @@ Sources, all merged:
 - Trust also gates MCP servers the workspace declares (see "MCP servers"):
   they are only started in a trusted workspace.
 
+### Hooks
+
+Claude Code's format, under `hooks` in any of the settings files above
+(merged; the workspace's two only in a trusted workspace, as a hook runs any
+command). Read by the extension; nova-ai-cli keeps the key.
+
+```json
+{ "hooks": {
+    "PreToolUse":  [{ "matcher": "run_command|Bash", "hooks": [{ "type": "command", "command": "./scripts/check-command.sh", "timeout": 30 }] }],
+    "PostToolUse": [{ "matcher": "Edit|Write", "hooks": [{ "type": "command", "command": "npx prettier --write \"$(jq -r .tool_input.file_path)\"" }] }],
+    "Stop":        [{ "hooks": [{ "type": "command", "command": "npm test --silent >/dev/null 2>&1 || { echo 'Tests fail' >&2; exit 2; }" }] }] } }
+```
+
+- Events: `PreToolUse` (before the approval card), `PostToolUse` (after the
+  tool ran), `UserPromptSubmit`, `SessionStart` (before a chat's first
+  message), `Stop` (the agent wants to finish).
+- `matcher` (tool events only) is a regular expression over the whole tool
+  name; it also matches Claude Code's names (`Bash`, `Read`, `Edit`, `Write`,
+  `Glob`, `Grep`, `LS`, `WebFetch`, `WebSearch`, `TodoWrite`). Empty or `*`
+  matches every tool.
+- The hook runs in the workspace root with the event as JSON on stdin:
+  `session_id`, `hook_event_name`, `cwd`, and `tool_name`, `tool_input`
+  (with an absolute `file_path` when the tool has a `path`),
+  `tool_response`, `prompt` or `stop_hook_active`. `NOVA_PROJECT_DIR` and
+  `CLAUDE_PROJECT_DIR` hold the workspace root. Default timeout 60 seconds.
+- Exit code 2 blocks: the tool call (stderr goes to the model), the message
+  (stderr is shown), or stopping (stderr goes to the model, which continues;
+  at most three times per answer). After a tool ran, stderr is feedback for
+  the model.
+- Exit code 0 may print JSON: `{"decision": "block", "reason": "…"}`,
+  `{"decision": "approve"}`, `{"continue": false, "stopReason": "…"}`, or
+  `hookSpecificOutput` with `permissionDecision` (`allow`/`deny`),
+  `permissionDecisionReason` and `additionalContext`. Plain stdout of
+  `UserPromptSubmit` and `SessionStart` hooks is added to the message as
+  context. A PreToolUse `allow` skips the approval card; deny rules still win.
+- Any other exit code is a warning in the chat; the call goes on.
+
 ### MCP servers
 
 Claude's format, in these files (a later file replaces a server of the same

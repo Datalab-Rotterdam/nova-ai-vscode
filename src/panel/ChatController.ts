@@ -3,7 +3,7 @@ import { promises as nodeFs } from 'node:fs';
 import * as nodeOs from 'node:os';
 import * as nodePath from 'node:path';
 import * as vscode from 'vscode';
-import { runAgentLoop, summarize } from '../agent/AgentLoop';
+import { runAgentLoop, summarize, type AgentLoopHost, type AgentLoopRequest } from '../agent/AgentLoop';
 import { BUILT_IN_TOOLS, outputParts, ToolInputError, type NovaTool, type ProposedEdit, type ToolPreparation } from '../agent/tools';
 import { diffLines } from './diff';
 import { createInteractionTools, type InteractionHost } from '../agent/tools/interactionTools';
@@ -12,6 +12,7 @@ import { createSubagentTool, SPAWN_AGENTS_TOOL, type SubagentHost, type Subagent
 import { displayPath, getScratchRoot, readText, resolveWorkspacePath, workspaceFolders } from '../agent/tools/workspacePaths';
 import { agentsFolder } from '../agents/AgentsController';
 import { agentAllowsTool, findAgent, listAgents, type AgentDefinition, type AgentPaths } from '../agents/AgentService';
+import type { HookEvent, HookOutcome, HookService } from '../hooks/HookService';
 import type { McpService } from '../mcp/McpService';
 import { createMcpTool } from '../mcp/tools';
 import type { MemoryService } from '../memory/MemoryService';
@@ -89,6 +90,8 @@ const IMAGE_MIME = new Map([
 const MAX_CARD_OUTPUT_CHARS = 4_000;
 /** How long a request waits for MCP servers that are still starting; slower ones join the next request. */
 const MCP_START_WAIT_MS = 10_000;
+/** How often Stop hooks may send the agent back to work in one answer. */
+const MAX_STOP_HOOK_ROUNDS = 3;
 const LAST_SESSION_KEY = 'nova.chat.lastSession';
 
 export interface ChatControllerOptions {
@@ -204,7 +207,7 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         private readonly proposedContent: ProposedContentProvider,
         private readonly diagnostics: Diagnostics,
         private post: (event: ChatEvent) => void,
-        private readonly services: { memory?: MemoryService; permissions?: PermissionService; skillPaths?: () => SkillPaths; agents?: () => AgentPaths; mcp?: McpService } = {},
+        private readonly services: { memory?: MemoryService; permissions?: PermissionService; skillPaths?: () => SkillPaths; agents?: () => AgentPaths; mcp?: McpService; hooks?: HookService } = {},
         private readonly options: ChatControllerOptions = {}
     ) {
         this.rememberLast = options.rememberLast ?? true;
@@ -913,6 +916,17 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         this.session.modelId = model.id;
         this.runModelName = info?.name ?? model.name;
 
+        // Hooks may block the message or add context for the model; SessionStart only before the first message.
+        const hookToken = new vscode.CancellationTokenSource();
+        const started = this.messages.length ? undefined : await this.runHooks('SessionStart', { source: 'startup' }, hookToken.token);
+        const submitted = await this.runHooks('UserPromptSubmit', { prompt }, hookToken.token);
+        hookToken.dispose();
+        if (submitted.block) {
+            this.addItem({ kind: 'notice', id: randomUUID(), tone: 'warning', text: `A hook blocked this message: ${submitted.block}` });
+            return;
+        }
+        const hookContext = [started?.context, submitted.context].filter(Boolean).join('\n');
+
         // The answer of this run: a new user item (or the branch item that owns the run,
         // which stays where it is so its version keeps its place in the chat).
         let runUser: Extract<ChatItem, { kind: 'user' }>;
@@ -938,7 +952,7 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         this.currentRunUser = runUser;
         this.subagentsStarted = 0;
 
-        this.messages.push(vscode.LanguageModelChatMessage.User(await buildPrompt(prompt, this.fitImages(attachments))));
+        this.messages.push(vscode.LanguageModelChatMessage.User(await buildPrompt(hookContext ? `${prompt}\n\n${hookContext}` : prompt, this.fitImages(attachments))));
 
         const running = new vscode.CancellationTokenSource();
         this.running = running;
@@ -963,7 +977,7 @@ export class ChatController implements vscode.Disposable, ChatHistory {
 
         try {
             const effort = this.currentEffort();
-            const result = await runAgentLoop({
+            const loopRequest: AgentLoopRequest = {
                 model,
                 messages: conversation,
                 modelOptions: effort ? { reasoning_effort: effort } : undefined,
@@ -974,7 +988,8 @@ export class ChatController implements vscode.Disposable, ChatHistory {
                 autoCompact: isAutoCompactEnabled(),
                 compactThreshold: getCompactThreshold(),
                 takeSteering: () => this.takeSteering()
-            }, {
+            };
+            const loopHost: AgentLoopHost = {
                 text: (delta) => {
                     if (!assistantItem || this.session.items[this.session.items.length - 1] !== assistantItem) {
                         if (assistantItem) {
@@ -1011,7 +1026,18 @@ export class ChatController implements vscode.Disposable, ChatHistory {
                     this.usage = { used: promptTokens, total: model.maxInputTokens };
                     this.post({ type: 'chat/usage', usage: this.usage });
                 }
-            }, running.token);
+            };
+            let result = await runAgentLoop(loopRequest, loopHost, running.token);
+            // A Stop hook can send the agent back to work (for example until the tests pass), a few times at most.
+            for (let round = 0; round < MAX_STOP_HOOK_ROUNDS && !result.hitRoundLimit && !running.token.isCancellationRequested; round++) {
+                const stop = await this.runHooks('Stop', { stop_hook_active: round > 0 }, running.token);
+                if (!stop.block || running.token.isCancellationRequested) {
+                    break;
+                }
+                this.addItem({ kind: 'notice', id: randomUUID(), tone: 'info', text: `A Stop hook asked Nova to continue: ${stop.block}` });
+                conversation.push(vscode.LanguageModelChatMessage.User(`A Stop hook did not let you finish yet:\n${stop.block}\nContinue the task.`));
+                result = await runAgentLoop(loopRequest, loopHost, running.token);
+            }
 
             if (result.hitRoundLimit && !agent.autopilot) {
                 this.addItem({
@@ -1739,7 +1765,15 @@ export class ChatController implements vscode.Disposable, ChatHistory {
                 return textResult('This tool call is blocked by a deny rule in the user\'s .nova-ai settings. Do not retry it; use another approach or ask the user.');
             }
 
-            if (rule !== 'allow' && this.needsApproval(tool)) {
+            const pre = await this.runHooks('PreToolUse', { tool_name: call.name, tool_input: input }, token);
+            if (pre.block) {
+                item.status = 'rejected';
+                item.output = `Blocked by a hook: ${pre.block}`;
+                updateItem(item);
+                return textResult(`A hook blocked this tool call:\n${pre.block}`);
+            }
+
+            if (rule !== 'allow' && !pre.allow && this.needsApproval(tool)) {
                 item.status = 'awaiting-approval';
                 if (this.services.permissions) {
                     item.allowRule = suggestRule(call.name, input, workspaceFolders()[0]?.uri.fsPath);
@@ -1766,10 +1800,16 @@ export class ChatController implements vscode.Disposable, ChatHistory {
 
             // Images (a screenshot, an image read with read_file) stay in the result, so a model
             // that reads images gets them; the card shows the text.
-            const content = tool.nova
+            let content = tool.nova
                 ? outputParts(await tool.nova.invoke(input as never, { token }, preparation))
                 : (await vscode.lm.invokeTool(call.name, { input, toolInvocationToken: undefined }, token)).content;
-            const output = toolResultText(content);
+            let output = toolResultText(content);
+            const post = await this.runHooks('PostToolUse', { tool_name: call.name, tool_input: input, tool_response: output }, token);
+            const feedback = [post.block, post.context].filter(Boolean).join('\n');
+            if (feedback) {
+                content = [...content, new vscode.LanguageModelTextPart(`Hook feedback:\n${feedback}`)];
+                output += `\n\nHook feedback:\n${feedback}`;
+            }
 
             item.status = 'done';
             item.output = clip(output);
@@ -1785,6 +1825,15 @@ export class ChatController implements vscode.Disposable, ChatHistory {
             updateItem(item);
             throw error;
         }
+    }
+
+    /** Runs the event's hooks for this chat; failed hooks show as warnings. */
+    private async runHooks(event: HookEvent, payload: Record<string, unknown>, token: vscode.CancellationToken): Promise<HookOutcome> {
+        const outcome = await this.services.hooks?.run(event, { session_id: this.session.id, ...payload }, token) ?? { warnings: [] };
+        for (const warning of outcome.warnings) {
+            this.addItem({ kind: 'notice', id: randomUUID(), tone: 'warning', text: warning });
+        }
+        return outcome;
     }
 
     private needsApproval(tool: AvailableTool): boolean {

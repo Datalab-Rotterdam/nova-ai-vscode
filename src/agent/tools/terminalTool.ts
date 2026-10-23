@@ -46,14 +46,23 @@ export const runCommandTool: NovaTool<RunCommandInput> = {
     }
 };
 
-interface ShellResult {
+export interface ShellResult {
     exitCode: number | null;
+    /** stdout and stderr as they came. */
     output: string;
+    stdout: string;
+    stderr: string;
     timedOut: boolean;
     cancelled: boolean;
 }
 
-export function runShell(command: string, cwd: string, timeoutMs: number, token: vscode.CancellationToken): Promise<ShellResult> {
+export interface ShellOptions {
+    /** Written to the command's stdin (hooks get their event as JSON); stdin is closed either way. */
+    stdin?: string;
+    env?: Record<string, string>;
+}
+
+export function runShell(command: string, cwd: string, timeoutMs: number, token: vscode.CancellationToken, options: ShellOptions = {}): Promise<ShellResult> {
     return new Promise((resolve) => {
         // Own process group on POSIX, so a timeout or stop also ends the command's children
         // (the shell may not exec the command itself, e.g. dash on Linux, and npm spawns node).
@@ -61,23 +70,28 @@ export function runShell(command: string, cwd: string, timeoutMs: number, token:
             cwd,
             shell: true,
             detached: process.platform !== 'win32',
-            env: { ...process.env, CI: '1', NO_COLOR: '1', FORCE_COLOR: '0' }
+            env: { ...process.env, CI: '1', NO_COLOR: '1', FORCE_COLOR: '0', ...options.env }
         });
         let output = '';
+        let stdout = '';
+        let stderr = '';
         let timedOut = false;
         let cancelled = false;
         let settled = false;
         let forceTimer: NodeJS.Timeout | undefined;
-        const append = (chunk: Buffer) => {
-            output += chunk.toString();
-            if (output.length > MAX_OUTPUT_CHARS * 4) {
-                output = output.slice(output.length - MAX_OUTPUT_CHARS * 2);
-            }
-        };
+        const keepTail = (text: string) => text.length > MAX_OUTPUT_CHARS * 4 ? text.slice(text.length - MAX_OUTPUT_CHARS * 2) : text;
 
-        child.stdout.on('data', append);
-        child.stderr.on('data', append);
-        child.stdin.end();
+        child.stdout.on('data', (chunk: Buffer) => {
+            output = keepTail(output + chunk.toString());
+            stdout = keepTail(stdout + chunk.toString());
+        });
+        child.stderr.on('data', (chunk: Buffer) => {
+            output = keepTail(output + chunk.toString());
+            stderr = keepTail(stderr + chunk.toString());
+        });
+        // A command that exits without reading its stdin must not fail the run.
+        child.stdin.on('error', () => undefined);
+        child.stdin.end(options.stdin);
 
         const stop = () => {
             killTree(child, 'SIGTERM');
@@ -107,10 +121,11 @@ export function runShell(command: string, cwd: string, timeoutMs: number, token:
             subscription.dispose();
             child.stdout.destroy();
             child.stderr.destroy();
-            resolve({ exitCode, output: output.trimEnd(), timedOut, cancelled });
+            resolve({ exitCode, output: output.trimEnd(), stdout: stdout.trimEnd(), stderr: stderr.trimEnd(), timedOut, cancelled });
         }
         child.on('error', (error) => {
             output += `\n${error.message}`;
+            stderr += `\n${error.message}`;
             finish(null);
         });
         child.on('close', (code) => finish(code));

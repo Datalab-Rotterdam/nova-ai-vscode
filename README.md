@@ -97,6 +97,13 @@ On an approval card choose **Allow**, **Always allow** (saves a rule), **Allow a
   ```
 
   A rule is a tool name, optionally with a `*` pattern. Deny always wins. Rules from a repository apply only in a trusted workspace.
+- **Hooks**: run your own commands before or after a tool, when you send a message or when Nova wants to stop, in Claude Code's format (hooks copied from `.claude/settings.json` work, matchers such as `Bash` or `Edit|Write` included). Exit code 2 blocks with a reason for Nova; a `Stop` hook can keep Nova working until your tests pass:
+
+  ```json
+  { "hooks": { "Stop": [{ "hooks": [{ "type": "command", "command": "npm test --silent || exit 2" }] }] } }
+  ```
+
+  Hooks go in the same settings files as the rules; a repository's hooks run only in a trusted workspace. Details in [docs/NOVA_HOME.md](docs/NOVA_HOME.md#hooks).
 
 ## Commands
 
