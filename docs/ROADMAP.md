@@ -18,41 +18,42 @@ lands.
 | **Inline editing** | #23 | **Edit Selection with Nova** (diff, then Apply). Tab completions are opt-in (`nova.inline.tabEnabled`). |
 | **Semantic code search** | #24 | `semantic_search` with the gateway's embedding model. The index lives in `projects/<key>/index` and updates incrementally. |
 | **Nova Settings page** | #24 | All settings in grouped sections, models picked from a list, User or Workspace scope. Also adds **Nova AI: Choose Models**. |
+| **CLI reads `mcp.json`** | nova-ai-cli | `~/.nova-ai/mcp.json` in every workspace, `.nova-ai/mcp.json` in a trusted one, same merge order as the extension. `${VAR}` expands in the CLI too. |
+| **Exporting chats** | | **Export as Markdown…** in a chat's menu on the Chats page. The file is named after the chat, with its details in YAML front matter. The versions the chat follows, one line per tool call; thinking and sub-agent steps are left out. No share link yet. |
 | **CLI parity, partly** | nova-ai-cli | The CLI reads command files and supports autopilot and hooks. Its `rules.ts` understands `mcp__server__*`. |
 
 ## Still to do
 
-Ordered by value for the effort it takes.
+In three phases. Each item ships as its own PR into `alpha`.
 
-### 1. CLI: read `mcp.json` (nova-ai-cli)
-- **What:** `packages/agent/src/core/workspace-mcp.ts` should also read `~/.nova-ai/mcp.json` (the user's) and `<cwd>/.nova-ai/mcp.json` (only in a trusted workspace). The merge order matches the extension's `src/mcp/config.ts`.
-- **Why:** both tools share `~/.nova-ai`. Today a server added in the extension does not exist in the CLI, which goes against the contract in `docs/NOVA_HOME.md`.
+### Phase 1: close the gap, quick wins
 
-### 2. CI integration (nova-ai-cli)
-- **What:**
-  - A composite GitHub Action (`action.yml`) and an includable GitLab template.
-  - Both run `nova-ai -p "…" --output-format json` with `NOVA_API_KEY`.
-  - Default `--permission-mode read-only`, and optionally post the result as a PR/MR comment (`gh pr comment` / `glab mr note`).
-  - Document the exit codes 0/1/2/3, and the risk of fork PRs and secrets.
-- **Why:** Codex and Claude Code review PRs and fix pipelines in CI. Headless mode already exists; only the packaging and docs are missing.
-
-### 3. Voice input (extension)
-- **What:** a microphone button in the composer, sending audio through `audio.transcriptions.create` (already in the SDK and gateway).
-- **Why:** small effort, and both competitors have it.
-
-### 4. File watcher for the search index (extension)
+#### 1. File watcher for the search index (extension)
 - **What:**
   - Mark changed files from a `FileSystemWatcher` instead of checking every file's modification time on each search.
   - Show progress during the first index build.
 - **Why:** each search now checks up to 5,000 files, and the first build shows only a spinner. That is noticeable in large repositories.
 
-### 5. Exporting and sharing chats (extension)
-- **What:** export a chat as Markdown, with an optional share link.
-- **Why:** handing a chat to a colleague or attaching it to an issue.
+### Phase 2: CI
 
-### 6. Syncing skills, agents and commands
-- **What:** sync `~/.nova-ai/{skills,agents,commands}` across machines, for example through Settings Sync or an account store on the gateway.
-- **Why:** VS Code settings sync; Nova's own folders do not.
+#### 2. CI integration (nova-ai-cli)
+- **What:**
+  - A composite GitHub Action (`action.yml`) and an includable GitLab template.
+  - Both run `nova-ai -p "…" --output-format json` with `NOVA_API_KEY`.
+  - Default `--permission-mode read-only`, and optionally post the result as a PR/MR comment (`gh pr comment` / `glab mr note`).
+  - Document the exit codes 0/1/2/3, and the risk of fork PRs and secrets.
+  - Verify `/pr` against a real GitHub and GitLab repository in the same pass.
+- **Why:** Codex and Claude Code review PRs and fix pipelines in CI. Headless mode already exists; only the packaging and docs are missing.
+
+### Phase 3: only on demand
+
+#### 3. Voice input (extension)
+- **What:** a microphone button in the composer, sending audio through `audio.transcriptions.create` (already in the SDK and gateway).
+- **Why:** both competitors have it, but it is a nice-to-have in an IDE. Spike the webview's microphone permission first.
+
+#### 4. Syncing skills, agents and commands
+- **What:** sync `~/.nova-ai/{skills,agents,commands}` across machines.
+- **Why not yet:** Settings Sync cannot sync arbitrary folders, so this needs storage on the gateway. Until users ask, `docs/NOVA_HOME.md` can suggest keeping `~/.nova-ai` in a dotfiles repository.
 
 ### Needs work outside this repo
 - **Cloud background agents:** coding agents run on your own machine and stop when the window closes. Codex runs tasks in the cloud. This needs an agent runtime service; the gateway has none (`nova-ai-next`, `PLAN.md`: agent orchestration belongs to the applications).

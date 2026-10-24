@@ -32,6 +32,7 @@ export const COMMAND_DEV_TEST_LINKS = 'nova.dev.testLinks';
 export const COMMAND_CHAT_OPEN_IN_EDITOR = 'nova.chats.openInEditor';
 export const COMMAND_CHAT_RENAME = 'nova.chats.rename';
 export const COMMAND_CHAT_DELETE = 'nova.chats.delete';
+export const COMMAND_CHAT_EXPORT = 'nova.chats.export';
 export const COMMAND_SHOW_ACCOUNT = 'nova.showAccount';
 export const CONTEXT_SIGNED_IN = 'nova.signedIn';
 

@@ -8,6 +8,7 @@ import {
     COMMAND_REVEAL_HOME,
     COMMAND_SHOW_ACCOUNT,
     COMMAND_CHAT_DELETE,
+    COMMAND_CHAT_EXPORT,
     COMMAND_CHAT_OPEN_IN_EDITOR,
     COMMAND_CHAT_RENAME,
     COMMAND_MANAGE_AGENTS,
@@ -281,6 +282,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             const chat = chatFromMenu(context);
             if (chat) {
                 await promptRenameChat(sidebarProvider.sidebar, chat);
+            }
+        }),
+        vscode.commands.registerCommand(COMMAND_CHAT_EXPORT, async (context?: { sessionId?: unknown }) => {
+            const chat = chatFromMenu(context);
+            if (chat) {
+                await sidebarProvider.sidebar.exportSession(chat.id);
             }
         }),
         vscode.commands.registerCommand(COMMAND_CHAT_DELETE, async (context?: { sessionId?: unknown }) => {
