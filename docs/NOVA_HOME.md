@@ -16,7 +16,8 @@ there), otherwise `~/.nova-ai`. Directories are created `0700`, files `0600`.
   MEMORY.md                     global memory index (always in the prompt)
   memory/<name>.md              global memory notes
   skills/<name>/SKILL.md        global skills (see "Skills")
-  agents/<name>.agent.md        extension: global agents (see "Agents")
+  agents/<name>.agent.md        global agents (see "Agents")
+  commands/<name>.md            extension: global slash commands (see "Commands"; subfolders: ns:name)
   settings.json                 user settings: permission rules, default mode
   mcp.json                      extension: user MCP servers (see "MCP servers")
   credentials.json              CLI only: API key + default model and thinking level
@@ -35,9 +36,11 @@ there), otherwise `~/.nova-ai`. Directories are created `0700`, files `0600`.
     cli-sessions/extension-import.json  CLI: panel chats already imported (see "Sessions")
     scratch/                    extension: scratch files (pruned after 7 days)
     worktrees/<id6>/            extension: git worktrees of coding agents (branch nova/<name>-<id6>)
+    index/                      extension: semantic search index (chunks.json + vectors.f32, rebuilt when the embedding model changes)
 <workspace>/.nova-ai/settings.json        team settings, committed
 <workspace>/.nova-ai/settings.local.json  personal settings, git-ignored
 <workspace>/.nova-ai/skills/<name>/SKILL.md  project skills, committed
+<workspace>/.nova-ai/commands/<name>.md       extension: project slash commands, committed
 <workspace>/NOVA.md             team instructions, committed, read-only for Nova
 <workspace>/AGENTS.md           team instructions, committed, read-only for Nova
 ```
@@ -97,6 +100,9 @@ Sources, all merged:
   confirmed unless an allow rule names it.
 - Trust also gates MCP servers the workspace declares (see "MCP servers"):
   they are only started in a trusted workspace.
+- `webSearch.searxngUrl` in `~/.nova-ai/settings.json` (an http(s) URL) is the
+  SearXNG server nova-ai-cli's `web_search` tries first; a client that sets
+  its own (VS Code's `nova.webSearch.searxng`) overrides it.
 
 ### Hooks
 
@@ -349,9 +355,12 @@ file, only files inside the skill's folder).
 
 ### Bundled skills
 
-A Nova app may ship a skill and keep it up to date: a *bundled* skill. Example:
-`nova-browser`, installed by the Nova AI Browser host that Nova AI for VS Code and
-nova-ai-cli carry. Its folder holds `.nova-bundled.json`:
+A Nova app may ship a skill and keep it up to date: a *bundled* skill. Examples:
+`nova-docx`, `nova-xlsx`, `nova-pptx` and `nova-pdf` from
+[nova-ai-skills](https://github.com/Datalab-Rotterdam/nova-ai-skills)
+(`"bundledBy": "Nova AI Skills"`), which both Nova AI for VS Code and
+nova-ai-cli's agent install at start-up, and `nova-browser`, installed by the
+Nova AI Browser host they carry. Its folder holds `.nova-bundled.json`:
 
 ```json
 { "bundledBy": "Nova AI Browser", "version": "0.1.0", "hash": "<sha256 over the files>" }
@@ -364,13 +373,41 @@ nova-ai-cli carry. Its folder holds `.nova-bundled.json`:
   the version or the content hash no longer matches (an update, or a local edit).
   The `disabled` setting is kept, so a switched-off skill stays off after updates.
 - An installer never touches a skill folder without its own marker.
-- nova-ai-cli does not mark or protect bundled skills yet: it lists them as
-  ordinary skills.
+- Several apps carry nova-ai-skills, so its installer only replaces a copy from
+  an older version (or an edited one) and leaves a newer one to the app that
+  carries the newer package.
+- nova-ai-cli's agent reports `bundledBy` in `_nova/skills/list` (`/skills`
+  shows "bundled with …"), and its `write_file` and `edit_file` refuse the
+  skill's files. It installs nova-ai-skills when a client connects.
+
+## Commands
+
+Slash commands as markdown files, in Claude Code's format: the file's text is the
+prompt, sent as the user's message when they run `/<name> [arguments]`.
+Extension only: nova-ai-cli does not read command files yet.
+
+```markdown
+---
+description: Write tests for a file      # shown in the slash menu
+argument-hint: <file>                    # shown after the name
+model: <model id>                        # optional: that model for this answer only
+---
+Write unit tests for $ARGUMENTS in the style of the existing tests.
+```
+
+- Folders, a later one replacing a command of the same name:
+  `~/.claude/commands` (only with the extension's `nova.skills.includeClaudeCodex`),
+  `~/.nova-ai/commands`, then per workspace `.claude/commands` (same setting) and
+  `.nova-ai/commands`.
+- The name is the file name without `.md`, lower-cased; a file in a subfolder is
+  `<folder>:<name>`. Names start with a letter or digit and use `[a-z0-9_:-]`.
+- `$ARGUMENTS` is everything after the name, `$1`…`$9` single words; a file
+  without placeholders gets the arguments appended after a blank line.
+- `allowed-tools` is read by Claude Code; Nova ignores it for now.
+- Built-in commands win a name clash. The extension also offers enabled skills as
+  `/<skill-name>` and MCP prompts as `/mcp__<server>__<prompt>`.
 
 ## Agents
-
-Extension only: nova-ai-cli does not read agent files yet (its `/agent`
-command starts a background agent, which is something else).
 
 An agent is a markdown file whose body is added to Nova's system prompt. The chat's
 mode menu (and Shift+Tab) switches between the built-in agents (Interactive, Plan,
@@ -392,3 +429,14 @@ Instructions for the agent.
 
 Tool groups: `read`, `search`, `edit`, `run`, `web`, `memory`, `ask`, `todo`, `skills`,
 and `mcp` for MCP tools; or list tool names such as `read_file`.
+
+nova-ai-cli's agent reads the same files and offers each one as a session mode
+after its built-in `agent`, `ask` and `plan` (Shift+Tab and `/mode <id>` in the
+CLI; the id is the file name, `Code Review.agent.md` → `code-review`). A file
+named after a built-in mode is ignored. Differences from the extension:
+- `icon` and `autopilot` are not used.
+- The groups map to the agent's own tools (`edit` is `edit_file` and
+  `write_file`, `todo` is `update_plan`, `run` includes the background
+  commands); the extension's tool names (`list_dir`, `create_file`,
+  `todo_write`, `spawn_agents`) are accepted too.
+- The CLI's `/agent` command starts a background agent, which is something else.

@@ -3,6 +3,8 @@
  * Type-only: the webview bundle imports this file, so it must not import `vscode`.
  */
 
+import type { SlashCommand } from './slashCommands';
+
 export type ChatItem =
     | {
         kind: 'user';
@@ -27,7 +29,7 @@ export type ChatItem =
     | { kind: 'thinking'; id: string; text: string; startedAt?: number; durationMs?: number; runId?: string }
     | ToolItem
     | QuestionItem
-    | { kind: 'notice'; id: string; text: string; tone: 'info' | 'warning' | 'error' };
+    | { kind: 'notice'; id: string; text: string; tone: 'info' | 'warning' | 'error'; action?: { label: string; id: string } };
 
 /** A question Nova asked with the ask_user tool. */
 export interface QuestionItem {
@@ -82,6 +84,16 @@ export interface ToolItem {
 }
 
 /** A research agent started with the spawn_agents tool. */
+/** Tokens a chat (or an agent) used, and their cost from the models' prices when they list one. */
+export interface UsageTotals {
+    promptTokens: number;
+    completionTokens: number;
+    /** Part of the prompt tokens the provider served from its cache (charged as input here, hence "about"). */
+    cachedTokens: number;
+    cost?: number;
+    currency?: string;
+}
+
 export interface SubagentState {
     id: string;
     name: string;
@@ -104,6 +116,8 @@ export interface SubagentState {
     callId: string;
     /** The user message whose answer it belongs to. */
     runId?: string;
+    /** Cost of the agent's requests, when its model lists a price. */
+    cost?: { amount: number; currency: string };
     /** A coding agent: its own branch in a worktree, which outlives the answer. */
     background?: {
         repo: string;
@@ -189,6 +203,8 @@ export interface ChatState {
     attachments: Attachment[];
     /** Prompt tokens of the last request and the model's input budget. */
     usage?: { used: number; total: number };
+    /** Everything this chat used so far, with its agents. */
+    totals?: UsageTotals;
     /** Saved chats of the workspace, newest first (for the Chats page). */
     sessions: SessionSummary[];
     /** Chats open in another place (the sidebar or another editor tab). */
@@ -197,6 +213,12 @@ export interface ChatState {
     /** The agent (mode) of this chat and the ones to choose from. */
     agent: string;
     agents: AgentOption[];
+    /** Text the input box should show (a rewound message); set by the webview from `chat/draft`. */
+    draft?: { text: string; at: number };
+    /** Hunks of changed files the user expanded; set by the webview from `chat/changeHunks`. */
+    hunks?: Record<string, DiffLine[][]>;
+    /** Slash commands besides the built-ins: command files, skills and MCP prompts. */
+    commands: SlashCommand[];
     queue: QueuedMessage[];
     /** Nova's task list for the current work; empty when there is none or it was closed. */
     todos: TodoItem[];
@@ -230,10 +252,13 @@ export type ChatEvent =
     | { type: 'chat/textDelta'; itemId: string; delta: string }
     | { type: 'chat/running'; running: boolean }
     | { type: 'chat/usage'; usage: { used: number; total: number } }
+    | { type: 'chat/totals'; totals: UsageTotals }
     | { type: 'chat/attachments'; attachments: Attachment[] }
     | { type: 'chat/queue'; queue: QueuedMessage[] }
     | { type: 'chat/todos'; todos: TodoItem[] }
     | { type: 'chat/changes'; changes: FileChange[] }
+    | { type: 'chat/changeHunks'; path: string; hunks: DiffLine[][] }
+    | { type: 'chat/draft'; text: string }
     | { type: 'chat/subagents'; subagents: SubagentState[] };
 
 /** Webview → extension. */
@@ -285,6 +310,11 @@ export type ChatCommand =
     | { command: 'chat/skipQuestion'; itemId: string }
     | { command: 'chat/dismissTodos' }
     | { command: 'chat/stopAgent'; id: string }
+    | { command: 'chat/noticeAction'; id: string }
+    | { command: 'chat/changeHunks'; path: string }
+    | { command: 'chat/keepHunk'; path: string; index: number }
+    | { command: 'chat/undoHunk'; path: string; index: number }
+    | { command: 'chat/rewind'; itemId: string }
     | { command: 'chat/agentBranch'; id: string; action: 'review' | 'merge' | 'discard' | 'open' }
     | { command: 'chat/keepChange'; path?: string }
     | { command: 'chat/undoChange'; path?: string }

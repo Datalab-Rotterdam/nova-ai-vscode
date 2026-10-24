@@ -72,7 +72,8 @@ export class NovaHome {
             settings: path.join(dir, 'settings.json'),
             memory: path.join(dir, 'MEMORY.md'),
             sessions: path.join(dir, 'sessions'),
-            scratch: path.join(dir, 'scratch')
+            scratch: path.join(dir, 'scratch'),
+            index: path.join(dir, 'index')
         };
     }
 
@@ -118,6 +119,8 @@ export interface ProjectPaths {
     memory: string;
     sessions: string;
     scratch: string;
+    /** Semantic search index (extension): chunks.json and vectors.f32. */
+    index: string;
 }
 
 export interface WorkspaceIdentity {

@@ -23,6 +23,8 @@ export const COMMAND_SEARCH_CHATS = 'nova.chats.search';
 export const COMMAND_MANAGE_SKILLS = 'nova.manageSkills';
 export const COMMAND_MANAGE_AGENTS = 'nova.manageAgents';
 export const COMMAND_MANAGE_MCP = 'nova.manageMcpServers';
+export const COMMAND_INLINE_EDIT = 'nova.inlineEdit';
+export const COMMAND_CHOOSE_MODEL = 'nova.chooseModel';
 export const COMMAND_SHOW_HELP = 'nova.showHelp';
 /** Development host only: posts a sample reply with every kind of link. */
 export const COMMAND_DEV_TEST_LINKS = 'nova.dev.testLinks';

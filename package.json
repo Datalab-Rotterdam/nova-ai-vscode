@@ -2,7 +2,7 @@
   "name": "nova-ai-vscode",
   "displayName": "Nova AI",
   "description": "Use Nova AI models as native chat models in Visual Studio Code.",
-  "version": "1.0.27",
+  "version": "1.0.32",
   "publisher": "datalabrotterdam",
   "icon": "resources/icons/icon-512-rounded.png",
   "license": "Apache-2.0",
@@ -48,6 +48,7 @@
     "onWebviewPanel:nova.chatPanel",
     "onWebviewPanel:nova.skills",
     "onWebviewPanel:nova.agents",
+    "onWebviewPanel:nova.settings",
     "onCommand:nova.showHistory",
     "onCommand:nova.showAccount",
     "onCommand:nova.showHelp"
@@ -267,6 +268,16 @@
         "category": "Nova AI"
       },
       {
+        "command": "nova.inlineEdit",
+        "title": "Edit Selection with Nova",
+        "category": "Nova AI"
+      },
+      {
+        "command": "nova.chooseModel",
+        "title": "Nova AI: Choose Models",
+        "category": "Nova AI"
+      },
+      {
         "command": "nova.openChatInEditor",
         "title": "Nova AI: Open Chat in Editor",
         "category": "Nova AI",
@@ -361,6 +372,14 @@
         "category": "Nova AI"
       }
     ],
+    "keybindings": [
+      {
+        "command": "nova.inlineEdit",
+        "key": "ctrl+i",
+        "mac": "cmd+i",
+        "when": "editorTextFocus && !editorReadonly && config.nova.inline.model"
+      }
+    ],
     "menus": {
       "view/title": [
         {
@@ -439,6 +458,11 @@
           "command": "nova.addSelectionToChat",
           "when": "nova.signedIn && resourceScheme == file",
           "group": "nova@1"
+        },
+        {
+          "command": "nova.inlineEdit",
+          "when": "nova.signedIn && !editorReadonly",
+          "group": "nova@2"
         }
       ],
       "commandPalette": [
@@ -522,20 +546,15 @@
             "type": "string",
             "default": "",
             "scope": "machine",
-            "markdownDescription": "Folder for Nova's memory, chats and scratch files. Empty uses `~/.nova-ai` (or the `NOVA_AI_HOME` environment variable)."
+            "markdownDescription": "Folder for Nova's memory, chats and scratch files. Empty uses `~/.nova-ai` (or the `NOVA_AI_HOME` environment variable).",
+            "order": 1
           }
         }
       },
       {
-        "id": "nova.chat",
-        "title": "Chat",
-        "order": 2,
-        "properties": {}
-      },
-      {
         "id": "nova.chat.agent",
         "title": "Chat › Agent",
-        "order": 3,
+        "order": 2,
         "properties": {
           "nova.agent.approvalMode": {
             "type": "string",
@@ -550,24 +569,43 @@
               "Assisted (experimental): run read-only tools and calls matching an allow rule automatically; ask before edits and commands.",
               "Allow all: run all tools without asking."
             ],
-            "markdownDescription": "When the Nova chat asks for approval before running a tool. Switch it from the permissions menu under the message box."
+            "markdownDescription": "When the Nova chat asks for approval before running a tool. Switch it from the permissions menu under the message box.",
+            "order": 1
           },
           "nova.agent.maxToolRounds": {
             "type": "integer",
             "default": 25,
             "minimum": 1,
             "maximum": 200,
-            "markdownDescription": "Maximum number of model ↔ tool rounds `@nova` runs for one request."
+            "markdownDescription": "Maximum number of model ↔ tool rounds `@nova` runs for one request.",
+            "order": 2
           },
+          "nova.agent.commandTimeoutSeconds": {
+            "type": "integer",
+            "default": 120,
+            "minimum": 5,
+            "maximum": 3600,
+            "markdownDescription": "Time limit for commands the Nova chat runs.",
+            "order": 3
+          }
+        }
+      },
+      {
+        "id": "nova.chat.subagents",
+        "title": "Chat › Sub-agents",
+        "order": 3,
+        "properties": {
           "nova.agent.subagents.enabled": {
             "type": "boolean",
             "default": true,
-            "markdownDescription": "Let Nova start research sub-agents (the `spawn_agents` tool) that explore the project in parallel."
+            "markdownDescription": "Let Nova start research sub-agents (the `spawn_agents` tool) that explore the project in parallel.",
+            "order": 1
           },
           "nova.agent.subagents.model": {
             "type": "string",
             "default": "inherit",
-            "markdownDescription": "Model sub-agents use. `inherit` uses the model selected in the chat; otherwise a model id (see the Agents page)."
+            "markdownDescription": "Model sub-agents use. `inherit` uses the model selected in the chat; otherwise a model id. [Choose from your models](command:nova.chooseModel?%5B%22agent.subagents.model%22%5D)",
+            "order": 2
           },
           "nova.agent.subagents.allowedModels": {
             "type": "array",
@@ -575,178 +613,239 @@
               "type": "string"
             },
             "default": [],
-            "markdownDescription": "Model ids Nova may pick for a single sub-agent (for example a cheaper model for simple lookups). Empty: every sub-agent uses the model above."
+            "markdownDescription": "Model ids Nova may pick for a single sub-agent (for example a cheaper model for simple lookups). Empty: every sub-agent uses the model above. [Choose from your models](command:nova.chooseModel?%5B%22agent.subagents.allowedModels%22%5D)",
+            "order": 3
           },
           "nova.agent.subagents.maxPerCall": {
             "type": "integer",
             "default": 4,
             "minimum": 1,
             "maximum": 8,
-            "markdownDescription": "Maximum number of sub-agents in one `spawn_agents` call."
+            "markdownDescription": "Maximum number of sub-agents in one `spawn_agents` call.",
+            "order": 4
           },
           "nova.agent.subagents.maxParallel": {
             "type": "integer",
             "default": 3,
             "minimum": 1,
             "maximum": 8,
-            "markdownDescription": "Maximum number of sub-agents running at the same time; the rest wait."
-          },
-          "nova.agent.codingAgents.enabled": {
-            "type": "boolean",
-            "default": true,
-            "markdownDescription": "Let Nova start coding agents that work in the background on their own branch, in a separate git worktree (`~/.nova-ai/projects/<key>/worktrees`). You review, merge or discard each branch when the agent is done."
-          },
-          "nova.agent.codingAgents.maxParallel": {
-            "type": "integer",
-            "default": 2,
-            "minimum": 1,
-            "maximum": 8,
-            "markdownDescription": "Coding agents that work at the same time; more wait in a queue."
-          },
-          "nova.agent.codingAgents.maxRounds": {
-            "type": "integer",
-            "default": 60,
-            "minimum": 5,
-            "maximum": 500,
-            "markdownDescription": "Tool rounds a coding agent may use before it stops."
+            "markdownDescription": "Maximum number of sub-agents running at the same time; the rest wait.",
+            "order": 5
           },
           "nova.agent.subagents.maxTotalPerRun": {
             "type": "integer",
             "default": 8,
             "minimum": 1,
             "maximum": 32,
-            "markdownDescription": "Maximum number of sub-agents Nova may start while answering one message."
+            "markdownDescription": "Maximum number of sub-agents Nova may start while answering one message.",
+            "order": 6
           },
           "nova.agent.subagents.maxRounds": {
             "type": "integer",
             "default": 12,
             "minimum": 1,
             "maximum": 50,
-            "markdownDescription": "Maximum number of model ↔ tool rounds one sub-agent runs."
+            "markdownDescription": "Maximum number of model ↔ tool rounds one sub-agent runs.",
+            "order": 7
+          }
+        }
+      },
+      {
+        "id": "nova.chat.codingAgents",
+        "title": "Chat › Coding Agents",
+        "order": 4,
+        "properties": {
+          "nova.agent.codingAgents.enabled": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Let Nova start coding agents that work in the background on their own branch, in a separate git worktree (`~/.nova-ai/projects/<key>/worktrees`). You review, merge or discard each branch when the agent is done.",
+            "order": 1
           },
-          "nova.agent.commandTimeoutSeconds": {
+          "nova.agent.codingAgents.maxParallel": {
             "type": "integer",
-            "default": 120,
+            "default": 2,
+            "minimum": 1,
+            "maximum": 8,
+            "markdownDescription": "Coding agents that work at the same time; more wait in a queue.",
+            "order": 2
+          },
+          "nova.agent.codingAgents.maxRounds": {
+            "type": "integer",
+            "default": 60,
             "minimum": 5,
-            "maximum": 3600,
-            "markdownDescription": "Time limit for commands the Nova chat runs."
+            "maximum": 500,
+            "markdownDescription": "Tool rounds a coding agent may use before it stops.",
+            "order": 3
           }
         }
       },
       {
         "id": "nova.chat.context",
         "title": "Chat › Context",
-        "order": 4,
+        "order": 5,
         "properties": {
           "nova.context.autoCompact": {
             "type": "boolean",
             "default": true,
-            "markdownDescription": "Automatically compact long conversations so they fit the model's context window. `@nova` summarizes older turns; requests from VS Code Chat are trimmed only when they would overflow."
+            "markdownDescription": "Automatically compact long conversations so they fit the model's context window. `@nova` summarizes older turns; requests from VS Code Chat are trimmed only when they would overflow.",
+            "order": 1
           },
           "nova.context.compactThreshold": {
             "type": "number",
             "default": 0.8,
             "minimum": 0.3,
             "maximum": 0.95,
-            "markdownDescription": "Share of the model's input budget at which `@nova` compacts the conversation."
+            "markdownDescription": "Share of the model's input budget at which `@nova` compacts the conversation.",
+            "order": 2
           },
           "nova.context.defaultContextWindow": {
             "type": "integer",
             "default": 32768,
             "minimum": 1024,
-            "markdownDescription": "Context window (in tokens) assumed for Nova models that do not advertise one."
+            "markdownDescription": "Context window (in tokens) assumed for Nova models that do not advertise one.",
+            "order": 3
           }
         }
       },
       {
         "id": "nova.chat.memory",
         "title": "Chat › Memory",
-        "order": 5,
+        "order": 6,
         "properties": {
           "nova.memory.enabled": {
             "type": "boolean",
             "default": true,
-            "markdownDescription": "Include Nova's memory (`~/.nova-ai/MEMORY.md`, the project's `MEMORY.md`, and the repository's `NOVA.md` / `AGENTS.md`) in Nova chats, and let Nova save new memories (with your approval)."
+            "markdownDescription": "Include Nova's memory (`~/.nova-ai/MEMORY.md`, the project's `MEMORY.md`, and the repository's `NOVA.md` / `AGENTS.md`) in Nova chats, and let Nova save new memories (with your approval).",
+            "order": 1
+          }
+        }
+      },
+      {
+        "id": "nova.editor",
+        "title": "Editor",
+        "order": 7,
+        "properties": {
+          "nova.inline.model": {
+            "type": "string",
+            "default": "",
+            "markdownDescription": "Model for **Edit Selection with Nova** (Cmd/Ctrl+I once set) and Tab completions. Empty turns both off; a fast model works best. The code around the cursor or selection is sent to Nova. [Choose from your models](command:nova.chooseModel?%5B%22inline.model%22%5D)",
+            "order": 1
+          },
+          "nova.inline.tabEnabled": {
+            "type": "boolean",
+            "default": false,
+            "markdownDescription": "Show Nova's completions as ghost text while you type (accept with Tab). Needs `nova.inline.model`. Each pause in typing sends the code around the cursor to Nova, which costs tokens; Nova's API has no fill-in-the-middle endpoint, so completions come from a chat model and are slower than dedicated completion engines.",
+            "order": 2
+          },
+          "nova.inline.debounceMs": {
+            "type": "number",
+            "default": 300,
+            "minimum": 100,
+            "maximum": 2000,
+            "markdownDescription": "How long typing must pause before Nova suggests a completion, in milliseconds.",
+            "order": 3
+          }
+        }
+      },
+      {
+        "id": "nova.search.code",
+        "title": "Search › Code",
+        "order": 8,
+        "properties": {
+          "nova.index.enabled": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Offer Nova semantic code search (`semantic_search`): find code by meaning. Only when the gateway lists an embedding model (or `nova.index.model` is set). The first search builds an index in `~/.nova-ai/projects/<project>/index`; your code is sent to Nova's embedding model for it, like code Nova reads in a chat.",
+            "order": 1
+          },
+          "nova.index.model": {
+            "type": "string",
+            "default": "",
+            "markdownDescription": "Embedding model for semantic search. Empty: the first model with the `embedding` capability. [Choose from your models](command:nova.chooseModel?%5B%22index.model%22%5D)",
+            "order": 2
+          }
+        }
+      },
+      {
+        "id": "nova.search.web",
+        "title": "Search › Web",
+        "order": 9,
+        "properties": {
+          "nova.webSearch.enabled": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Let the Nova chat search the web (`web_search`) for current or external information, with keyless providers, and open the top result pages to cite passages.",
+            "order": 1
+          },
+          "nova.webSearch.duckduckgo": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Use DuckDuckGo's keyless HTML search as a web search provider. Tries are cancelled when another provider already returned results.",
+            "order": 2
+          },
+          "nova.webSearch.you": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Use You.com's keyless free-tier search API as a web search provider.",
+            "order": 3
+          },
+          "nova.webSearch.searxng": {
+            "type": "string",
+            "default": "",
+            "markdownDescription": "Address of a SearXNG server to use for web search first, e.g. `https://search.example.org`. The server must allow the JSON format (`search.formats` in `settings.yml`). Empty uses only the keyless providers.",
+            "order": 4
           }
         }
       },
       {
         "id": "nova.tools",
-        "title": "Tools & Integrations",
-        "order": 6,
+        "title": "MCP & Tools",
+        "order": 10,
         "properties": {
-          "nova.skills.includeClaudeCodex": {
-            "type": "boolean",
-            "default": false,
-            "markdownDescription": "Also load skills from the `.claude/skills` and `.codex/skills` folders (in your home folder and in workspaces). `.agents` and Nova's own skills folders are always loaded."
-          },
-          "nova.agent.includeMcpTools": {
-            "type": "boolean",
-            "default": true,
-            "markdownDescription": "Offer MCP server tools registered in VS Code to the Nova chat."
-          },
           "nova.mcp.enabled": {
             "type": "boolean",
             "default": true,
-            "markdownDescription": "Connect the MCP servers in `~/.nova-ai/mcp.json` and the workspace's `.nova-ai/mcp.json` (trusted workspaces only). Manage them with **Nova AI: MCP Servers**. Takes effect in new chats."
+            "markdownDescription": "Connect the MCP servers in `~/.nova-ai/mcp.json` and the workspace's `.nova-ai/mcp.json` (trusted workspaces only). Manage them with **Nova AI: MCP Servers**. Takes effect in new chats.",
+            "order": 1
           },
           "nova.mcp.toolTimeoutSeconds": {
             "type": "number",
             "default": 60,
             "minimum": 5,
             "maximum": 3600,
-            "markdownDescription": "Time limit for one MCP tool call."
-          }
-        }
-      },
-      {
-        "id": "nova.tools.webSearch",
-        "title": "Tools & Integrations › Web Search",
-        "order": 7,
-        "properties": {
-          "nova.webSearch.enabled": {
+            "markdownDescription": "Time limit for one MCP tool call.",
+            "order": 2
+          },
+          "nova.agent.includeMcpTools": {
             "type": "boolean",
             "default": true,
-            "markdownDescription": "Let the Nova chat search the web (`web_search`) for current or external information, with keyless providers, and open the top result pages to cite passages."
+            "markdownDescription": "Offer MCP server tools registered in VS Code to the Nova chat.",
+            "order": 3
           },
-          "nova.webSearch.duckduckgo": {
+          "nova.skills.includeClaudeCodex": {
             "type": "boolean",
-            "default": true,
-            "markdownDescription": "Use DuckDuckGo's keyless HTML search as a web search provider. Tries are cancelled when another provider already returned results."
+            "default": false,
+            "markdownDescription": "Also load skills from the `.claude/skills` and `.codex/skills` folders (in your home folder and in workspaces). `.agents` and Nova's own skills folders are always loaded.",
+            "order": 4
           },
-          "nova.webSearch.you": {
-            "type": "boolean",
-            "default": true,
-            "markdownDescription": "Use You.com's keyless free-tier search API as a web search provider."
-          },
-          "nova.webSearch.searxng": {
-            "type": "string",
-            "default": "",
-            "markdownDescription": "Address of a SearXNG server to use for web search first, e.g. `https://search.example.org`. The server must allow the JSON format (`search.formats` in `settings.yml`). Empty uses only the keyless providers."
-          }
-        }
-      },
-      {
-        "id": "nova.tools.browser",
-        "title": "Tools & Integrations › Browser",
-        "order": 8,
-        "properties": {
           "nova.browser.autoSetup": {
             "type": "boolean",
             "default": true,
-            "markdownDescription": "Set up the Nova AI browser integration on startup: registers the Nova AI Browser host with your Chromium-based browsers (Chrome, Edge, Brave, …) and installs the `nova-browser` skill, so Nova can use your browser through the Nova AI browser extension. Nothing changes when it is already current. Run **Nova AI: Set Up Browser Integration** to do it by hand."
+            "markdownDescription": "Set up the Nova AI browser integration on startup: registers the Nova AI Browser host with your Chromium-based browsers (Chrome, Edge, Brave, …) and installs the `nova-browser` skill, so Nova can use your browser through the Nova AI browser extension. Nothing changes when it is already current. Run **Nova AI: Set Up Browser Integration** to do it by hand.",
+            "order": 5
           }
         }
       },
       {
         "id": "nova.developer",
-        "title": "Developer Settings",
-        "order": 9,
+        "title": "Developer",
+        "order": 11,
         "properties": {
           "nova.chat.rewriteAssistantIdentity": {
             "type": "boolean",
             "default": true,
-            "markdownDescription": "When a Nova model is used from VS Code Chat or agent mode, replace the built-in assistant identity (\"GitHub Copilot\") in the system prompt with Nova's. Tool and workspace instructions are kept."
+            "markdownDescription": "When a Nova model is used from VS Code Chat or agent mode, replace the built-in assistant identity (\"GitHub Copilot\") in the system prompt with Nova's. Tool and workspace instructions are kept.",
+            "order": 1
           },
           "nova.models.editTools": {
             "type": "array",
@@ -770,17 +869,20 @@
               "find-replace",
               "multi-find-replace"
             ],
-            "markdownDescription": "Edit tools VS Code agent mode offers to Nova models. Most open models edit more reliably with find/replace than with `apply-patch`. Requires a VS Code version with the language model provider edit-tools hint."
+            "markdownDescription": "Edit tools VS Code agent mode offers to Nova models. Most open models edit more reliably with find/replace than with `apply-patch`. Requires a VS Code version with the language model provider edit-tools hint.",
+            "order": 2
           },
           "nova.developer.parseModelCapabilities": {
             "type": "boolean",
             "default": true,
-            "description": "Parse model capabilities returned by Nova AI into VS Code native model capability flags."
+            "description": "Parse model capabilities returned by Nova AI into VS Code native model capability flags.",
+            "order": 3
           },
           "nova.enableDiagnostics": {
             "type": "boolean",
             "default": false,
-            "description": "Enable verbose Nova AI diagnostics logging in the output panel."
+            "description": "Enable verbose Nova AI diagnostics logging in the output panel.",
+            "order": 4
           }
         }
       }
@@ -788,7 +890,8 @@
   },
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('out', { recursive: true, force: true })\"",
-    "compile": "npm run clean && npm run build:webview && npm run typecheck && npm run build:extension",
+    "compile": "npm run clean && npm run build:webview && npm run typecheck && npm run build:extension && npm run build:skills",
+    "build:skills": "node -e \"require('node:fs').cpSync('node_modules/@datalabrotterdam/nova-ai-skills', 'out/nova-ai-skills', { recursive: true })\"",
     "build:extension": "esbuild src/extension.ts --bundle --platform=node --format=cjs --target=node22 --external:vscode --outfile=out/extension.js --sourcemap",
     "build:webview": "vite build --config vite.webview.config.mts",
     "dev:webview": "vite build --watch --config vite.webview.config.mts",
@@ -802,6 +905,7 @@
     "pretest": "npm run compile"
   },
   "dependencies": {
+    "@datalabrotterdam/nova-ai-skills": "1.0.0-alpha.2",
     "@datalabrotterdam/nova-sdk": "1.4.0-k8s.3",
     "@modelcontextprotocol/sdk": "^1.32.2"
   },

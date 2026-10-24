@@ -1,3 +1,45 @@
+# [1.0.0-alpha.32](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.31...v1.0.0-alpha.32) (2026-10-24)
+
+
+### Features
+
+* **agent:** semantic code search with the gateway's embedding model ([efe14f2](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/efe14f2dc49d06de7731faae372098640310bbde))
+* **settings:** Nova Settings page with grouped sections and model lists ([235c77d](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/235c77d8bf304749e3f9ab50fc94afb6f34a8014))
+* **settings:** pick model settings from the model list ([a4ffa14](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/a4ffa14d11d8170bfe8e892f4af3d5fed2b6f667))
+
+# [1.0.0-alpha.31](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.30...v1.0.0-alpha.31) (2026-10-24)
+
+
+### Features
+
+* **editor:** Edit Selection with Nova and opt-in Tab completions ([5abfdeb](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/5abfdeb6f7c9f41d63fb74f24bd00a6f2e0fdbc8))
+
+# [1.0.0-alpha.30](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.29...v1.0.0-alpha.30) (2026-10-24)
+
+
+### Features
+
+* **chat:** rewind to a message, keep or undo single hunks, changes survive a reload ([4dde503](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/4dde503ed8b177bb9e4591a22718feb24f0f10db))
+
+# [1.0.0-alpha.29](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.28...v1.0.0-alpha.29) (2026-10-24)
+
+
+### Features
+
+* **chat:** slash commands from markdown files, skills and MCP prompts ([7c2a369](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/7c2a36922970f08c945513bd21fc25212ed034e0))
+
+# [1.0.0-alpha.28](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.27...v1.0.0-alpha.28) (2026-10-24)
+
+
+### Bug Fixes
+
+* **chat:** opaque context popover ([4d5a078](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/4d5a0782c6869aad9ac7b6e09bd73ecefed0e468))
+
+
+### Features
+
+* **chat:** tokens and cost per chat; show model prices again ([51ca672](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/51ca6726b8380541e077d3236c6457cdf5b9570f))
+
 # [1.0.0-alpha.27](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.26...v1.0.0-alpha.27) (2026-10-23)
 
 

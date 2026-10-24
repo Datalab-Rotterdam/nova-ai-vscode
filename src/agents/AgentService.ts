@@ -117,10 +117,14 @@ export function agentAllowsTool(agent: AgentDefinition, toolName: string, isMcp 
     return isMcp ? agent.tools.includes('mcp') : agent.tools.includes(toolName) || ALWAYS_TOOLS.includes(toolName);
 }
 
-export function parseAgent(content: string, fileName: string, source: AgentSource, filePath?: string): AgentDefinition | undefined {
+/** A markdown file's `---` frontmatter and the text after it (agents, slash commands). */
+export function splitFrontmatter(content: string): { frontmatter: string; body: string } {
     const match = /^---\s*\r?\n([\s\S]*?)\r?\n---\s*\r?\n?([\s\S]*)$/.exec(content);
-    const frontmatter = match?.[1] ?? '';
-    const prompt = (match ? match[2] : content).trim();
+    return { frontmatter: match?.[1] ?? '', body: (match ? match[2] : content).trim() };
+}
+
+export function parseAgent(content: string, fileName: string, source: AgentSource, filePath?: string): AgentDefinition | undefined {
+    const { frontmatter, body: prompt } = splitFrontmatter(content);
     const id = agentIdOf(fileName);
     if (!id) {
         return undefined;
@@ -145,7 +149,8 @@ function expandTools(entries: readonly string[]): string[] {
     return [...new Set(entries.flatMap((entry) => TOOL_GROUPS[entry] ?? [entry]))];
 }
 
-function scalar(frontmatter: string, key: string): string {
+/** One `key: value` of a frontmatter, without quotes. */
+export function scalar(frontmatter: string, key: string): string {
     const raw = new RegExp(`^${key}:[ \\t]*(.*)$`, 'm').exec(frontmatter)?.[1]?.trim() ?? '';
     if ((raw.startsWith('"') && raw.endsWith('"')) || (raw.startsWith("'") && raw.endsWith("'"))) {
         return raw.slice(1, -1).replace(/\\"/g, '"');

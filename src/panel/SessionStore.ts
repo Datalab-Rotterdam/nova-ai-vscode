@@ -2,7 +2,7 @@ import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { ensureDir, writePrivateFile } from '../storage/NovaHome';
-import type { ChatItem, SessionSummary, SubagentState, TodoItem } from './protocol';
+import type { ChatItem, SessionSummary, SubagentState, TodoItem, UsageTotals } from './protocol';
 
 /** Model conversation in a JSON-safe form. */
 export type StoredPart =
@@ -33,6 +33,30 @@ export interface StoredSession {
     todos?: TodoItem[];
     /** Sub-agents started in the chat. */
     subagents?: SubagentState[];
+    /** Tokens and cost of the chat so far. */
+    usageTotals?: UsageTotals;
+    /** Files Nova changed in the chat that wait for Keep or Undo. */
+    changes?: StoredChange[];
+    /** Per user message: each file as it was before that answer first changed it (rewind). */
+    checkpoints?: Record<string, CheckpointFile[]>;
+    /** Per user message: the commands its answer ran; rewind cannot undo those. */
+    commandsRan?: Record<string, string[]>;
+}
+
+export interface StoredChange {
+    path: string;
+    /** Absolute path. */
+    file: string;
+    baseline: string;
+    current: string;
+    created: boolean;
+}
+
+export interface CheckpointFile {
+    path: string;
+    file: string;
+    /** Content before the answer's first edit; null when the answer created the file; undefined when too large to keep. */
+    before?: string | null;
 }
 
 const INDEX_FILE = 'index.json';

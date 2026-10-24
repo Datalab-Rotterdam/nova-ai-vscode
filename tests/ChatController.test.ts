@@ -1,5 +1,5 @@
 import * as path from 'node:path';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -9,6 +9,7 @@ let currentModel: unknown;
 vi.mock('../src/panel/directModel', () => ({ createDirectModel: () => currentModel }));
 
 import { setScratchRoot } from '../src/agent/tools/workspacePaths';
+import { NOVA_USAGE_MIME_TYPE } from '../src/core/constants';
 import { Diagnostics } from '../src/core/diagnostics';
 import { ChatController } from '../src/panel/ChatController';
 import type { ChatEvent, ToolItem } from '../src/panel/protocol';
@@ -556,6 +557,157 @@ describe('ChatController', () => {
     await controller.handle({ command: 'chat/delete', sessionIds: ['a', 'unknown'] });
     expect(confirm).toHaveBeenLastCalledWith('Delete the chat "Alpha"?', expect.anything(), 'Delete');
     expect(store.delete.mock.calls).toEqual([['a']]);
+  });
+
+  it('adds up tokens and cost per chat from the model\'s price, and saves them with the chat', async () => {
+    const usage = (promptTokens: number, completionTokens: number, cachedTokens = 0) =>
+      vscode.LanguageModelDataPart.json({ promptTokens, completionTokens, cachedTokens }, NOVA_USAGE_MIME_TYPE);
+    const { controller, events, store } = setup([
+      [new vscode.LanguageModelTextPart('One.'), usage(1_000, 100, 400)],
+      [new vscode.LanguageModelTextPart('Two.'), usage(2_000, 200)]
+    ]);
+    // The model lists €2 per 1M input and €10 per 1M output tokens.
+    const models = await (controller as unknown as { modelProvider: { listModels(): Promise<Array<Record<string, unknown>>> } }).modelProvider.listModels();
+    (controller as unknown as { modelProvider: { listModels(): Promise<unknown> } }).modelProvider.listModels = async () =>
+      models.map((model) => ({ ...model, raw: { id: model.id, inputCostPer1M: 2, outputCostPer1M: 10, currency: 'EUR' } }));
+
+    await controller.handle({ command: 'chat/send', text: 'first' });
+    await controller.handle({ command: 'chat/send', text: 'second' });
+
+    const tokens = { promptTokens: 3_000, completionTokens: 300, cachedTokens: 400, currency: 'EUR' };
+    const totals = controller.getState().totals!;
+    expect(totals).toMatchObject(tokens);
+    expect(totals.cost).toBeCloseTo((3_000 * 2 + 300 * 10) / 1_000_000, 10);
+    expect(events.filter((event) => event.type === 'chat/totals').at(-1)).toEqual({ type: 'chat/totals', totals });
+    expect(store.save.mock.calls.at(-1)?.[0].usageTotals).toEqual(totals);
+  });
+
+  it('runs commands from files and MCP prompts as messages, and offers to sign in to MCP servers that need it', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'nova-cmd-'));
+    mkdirSync(join(root, 'nova', 'commands'), { recursive: true });
+    writeFileSync(join(root, 'nova', 'commands', 'explain.md'), '---\ndescription: Explain a file\nargument-hint: <file>\n---\nExplain $ARGUMENTS in two sentences.');
+    const mcp = {
+      ensureStarted: vi.fn(async () => undefined),
+      tools: () => [],
+      prompts: () => [{ server: 'docs', name: 'mcp__docs__summary', prompt: { name: 'summary', description: 'Summarize a topic', arguments: [{ name: 'topic', required: true }] } }],
+      getPrompt: vi.fn(async (_server: string, _name: string, args: Record<string, string>) => ({ messages: [{ role: 'user', content: { type: 'text', text: `Summarize ${args.topic}.` } }] })),
+      statuses: () => [{ name: 'linear', scope: 'user', type: 'http', status: 'needs-auth', tools: 0 }],
+      onDidChange: () => ({ dispose: () => undefined })
+    };
+    const signInMcp = vi.fn(async () => undefined);
+    const { controller, model } = setup([
+      [new vscode.LanguageModelTextPart('It explains.')],
+      [new vscode.LanguageModelTextPart('A summary.')]
+    ], 'autoReadOnly', {
+      mcp,
+      signInMcp,
+      commands: () => ({ home: root, novaHome: join(root, 'nova'), workspaceRoots: [], includeClaude: false })
+    });
+
+    expect(controller.getState().commands.map((command) => [command.name, command.source, command.args])).toEqual([
+      ['explain', 'file', '<file>'],
+      ['mcp__docs__summary', 'mcp', '<topic>']
+    ]);
+
+    await controller.handle({ command: 'chat/send', text: '/explain src/app.ts' });
+    await controller.handle({ command: 'chat/send', text: '/mcp__docs__summary release notes' });
+
+    const userTexts = controller.getState().items.filter((item) => item.kind === 'user').map((item) => item.text);
+    expect(userTexts).toEqual(['Explain src/app.ts in two sentences.', 'Summarize release notes.']);
+    expect(mcp.getPrompt).toHaveBeenCalledWith('docs', 'summary', { topic: 'release notes' });
+    expect(model.sendRequest).toHaveBeenCalledTimes(2);
+
+    // One sign-in notice for the chat, not one per message.
+    const notices = controller.getState().items.filter((item) => item.kind === 'notice' && item.action);
+    expect(notices).toHaveLength(1);
+    const notice = notices[0] as Extract<(typeof notices)[number], { kind: 'notice' }>;
+    expect(notice.action).toEqual({ label: 'Sign in', id: 'mcp-signin:linear' });
+    await controller.handle({ command: 'chat/noticeAction', id: notice.action!.id });
+    expect(signInMcp).toHaveBeenCalledWith('linear');
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('rewinds code, chat or both to before a message, and says which commands it cannot undo', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'nova-rewind-'));
+    const nodeFs = await import('node:fs/promises');
+    vi.spyOn(vscode.workspace, 'fs', 'get').mockReturnValue({
+      stat: async (uri: vscode.Uri) => nodeFs.stat(uri.fsPath),
+      readFile: async (uri: vscode.Uri) => nodeFs.readFile(uri.fsPath),
+      writeFile: async (uri: vscode.Uri, data: Uint8Array) => nodeFs.writeFile(uri.fsPath, data),
+      delete: async (uri: vscode.Uri) => nodeFs.rm(uri.fsPath)
+    } as never);
+    writeFileSync(join(root, 'app.txt'), 'v0\n');
+    const { controller, events } = setup([
+      [new vscode.LanguageModelToolCallPart('e1', 'edit_file', { path: 'app.txt', old_string: 'v0', new_string: 'v1' }), new vscode.LanguageModelToolCallPart('c1', 'create_file', { path: 'new.txt', content: 'new\n' })],
+      [new vscode.LanguageModelTextPart('First done.')],
+      [new vscode.LanguageModelToolCallPart('e2', 'edit_file', { path: 'app.txt', old_string: 'v1', new_string: 'v2' }), new vscode.LanguageModelToolCallPart('r1', 'run_command', { command: 'echo hi' })],
+      [new vscode.LanguageModelTextPart('Second done.')]
+    ], 'autoAll');
+    (vscode.workspace as unknown as { workspaceFolders: unknown }).workspaceFolders = [{ name: 'repo', uri: vscode.Uri.file(root), index: 0 }];
+    const pick = vi.spyOn(vscode.window, 'showQuickPick');
+
+    await controller.handle({ command: 'chat/send', text: 'first' });
+    await controller.handle({ command: 'chat/send', text: 'second' });
+    expect(readFileSync(join(root, 'app.txt'), 'utf8')).toBe('v2\n');
+    const [first, second] = controller.getState().items.filter((item) => item.kind === 'user');
+
+    // Code only, from the second message: app.txt goes back to v1, the chat stays.
+    pick.mockImplementationOnce((async (choices: Array<{ mode: string }>, options: { placeHolder?: string }) => {
+      expect(options.placeHolder).toContain('Not undone: 1 command that ran (echo hi)');
+      return choices.find((choice) => choice.mode === 'code');
+    }) as never);
+    await controller.handle({ command: 'chat/rewind', itemId: second.id });
+    expect(readFileSync(join(root, 'app.txt'), 'utf8')).toBe('v1\n');
+    expect(controller.getState().items.filter((item) => item.kind === 'user')).toHaveLength(2);
+    expect(controller.getState().changes.map((change) => change.path).sort()).toEqual(['app.txt', 'new.txt']);
+
+    // Code and chat, from the first message: back to v0, new.txt gone, the message back in the input box.
+    pick.mockImplementationOnce((async (choices: Array<{ mode: string }>) => choices.find((choice) => choice.mode === 'both')) as never);
+    await controller.handle({ command: 'chat/rewind', itemId: first.id });
+    expect(readFileSync(join(root, 'app.txt'), 'utf8')).toBe('v0\n');
+    expect(existsSync(join(root, 'new.txt'))).toBe(false);
+    expect(controller.getState().items.filter((item) => item.kind === 'user')).toHaveLength(0);
+    expect(controller.getState().changes).toEqual([]);
+    expect(events).toContainEqual({ type: 'chat/draft', text: 'first' });
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('keeps or undoes single hunks of a changed file, and keeps changes across a reload', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'nova-hunks-'));
+    const nodeFs = await import('node:fs/promises');
+    vi.spyOn(vscode.workspace, 'fs', 'get').mockReturnValue({
+      stat: async (uri: vscode.Uri) => nodeFs.stat(uri.fsPath),
+      readFile: async (uri: vscode.Uri) => nodeFs.readFile(uri.fsPath),
+      writeFile: async (uri: vscode.Uri, data: Uint8Array) => nodeFs.writeFile(uri.fsPath, data)
+    } as never);
+    writeFileSync(join(root, 'a.txt'), 'one\ntwo\nthree\nfour\nfive\n');
+    const { controller, events, store } = setup([
+      [new vscode.LanguageModelToolCallPart('c1', 'create_file', { path: 'a.txt', content: 'ONE\ntwo\nthree\nfour\nFIVE\n' })],
+      [new vscode.LanguageModelTextPart('Done.')]
+    ], 'autoAll');
+    (vscode.workspace as unknown as { workspaceFolders: unknown }).workspaceFolders = [{ name: 'repo', uri: vscode.Uri.file(root), index: 0 }];
+    await controller.handle({ command: 'chat/send', text: 'shout' });
+
+    await controller.handle({ command: 'chat/changeHunks', path: 'a.txt' });
+    const hunks = () => (events.filter((event) => event.type === 'chat/changeHunks').at(-1) as { hunks: unknown[] }).hunks;
+    expect(hunks()).toHaveLength(2);
+
+    await controller.handle({ command: 'chat/undoHunk', path: 'a.txt', index: 1 });
+    expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('ONE\ntwo\nthree\nfour\nfive\n');
+    expect(hunks()).toHaveLength(1);
+    expect(controller.getState().changes).toEqual([{ path: 'a.txt', added: 1, removed: 1, created: false }]);
+
+    // Saved with the chat, so it is still there after a reload.
+    const saved = store.save.mock.calls.at(-1)![0];
+    expect(saved.changes).toMatchObject([{ path: 'a.txt', baseline: 'one\ntwo\nthree\nfour\nfive\n', current: 'ONE\ntwo\nthree\nfour\nfive\n' }]);
+    const reloaded = setup([]);
+    reloaded.store.load.mockResolvedValue({ ...saved, id: 'saved' });
+    await reloaded.controller.handle({ command: 'chat/open', sessionId: 'saved' });
+    expect(reloaded.controller.getState().changes).toEqual([{ path: 'a.txt', added: 1, removed: 1, created: false }]);
+
+    await controller.handle({ command: 'chat/keepHunk', path: 'a.txt', index: 0 });
+    expect(controller.getState().changes).toEqual([]);
+    rmSync(root, { recursive: true, force: true });
   });
 
   it('opens a saved chat', async () => {

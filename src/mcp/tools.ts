@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import type * as vscode from 'vscode';
-import type { Tool } from '@modelcontextprotocol/sdk/types.js';
+import type { Prompt, Tool } from '@modelcontextprotocol/sdk/types.js';
 import { ToolInputError, type NovaTool, type ToolImage, type ToolOutput } from '../agent/tools/types';
 
 /** Model APIs accept function names of this charset and length. */
@@ -28,6 +28,14 @@ export function mcpToolName(server: string, tool: string): string {
     }
     const hash = createHash('sha1').update(`${server}\0${tool}`).digest('hex').slice(0, 6);
     return `${name.slice(0, MAX_NAME_LENGTH - 7)}_${hash}`;
+}
+
+/** A prompt of a connected server, offered as the slash command `/mcp__<server>__<prompt>`. */
+export interface McpPromptEntry {
+    server: string;
+    /** Named like the server's tools (see {@link mcpToolName}). */
+    name: string;
+    prompt: Prompt;
 }
 
 /** The server of an `mcp__<server>__<tool>` name. */

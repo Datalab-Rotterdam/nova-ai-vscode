@@ -169,6 +169,8 @@ describe('McpService', () => {
                 const server = new McpServer({ name: 'echo', version: '1.0.0' });
                 server.registerTool('echo', { description: 'Echoes', inputSchema: { text: z.string() }, annotations: { readOnlyHint: true } },
                     async ({ text }) => ({ content: [{ type: 'text', text: `echo: ${text}` }] }));
+                server.registerPrompt('greet', { description: 'Greets someone', argsSchema: { name: z.string() } },
+                    ({ name }) => ({ messages: [{ role: 'user', content: { type: 'text', text: `Say hello to ${name}.` } }] }));
                 const [client, serverSide] = InMemoryTransport.createLinkedPair();
                 void server.connect(serverSide);
                 return [client];
@@ -183,6 +185,15 @@ describe('McpService', () => {
         expect(mcp.tools().map((entry) => entry.name)).toEqual(['mcp__echo__echo']);
         const result = await mcp.callTool('echo', 'echo', { text: 'hi' }, new CancellationTokenSource().token);
         expect(result.content).toEqual([{ type: 'text', text: 'echo: hi' }]);
+        mcp.dispose();
+    });
+
+    it('lists the prompts of servers that have them and fills one in', async () => {
+        const mcp = await service();
+        await mcp.ensureStarted(5_000);
+        expect(mcp.prompts()).toMatchObject([{ server: 'echo', name: 'mcp__echo__greet', prompt: { name: 'greet', description: 'Greets someone', arguments: [{ name: 'name', required: true }] } }]);
+        const result = await mcp.getPrompt('echo', 'greet', { name: 'Ada' });
+        expect(result.messages).toEqual([{ role: 'user', content: { type: 'text', text: 'Say hello to Ada.' } }]);
         mcp.dispose();
     });
 

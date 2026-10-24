@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { compactTokens, formatCost } from "./usage";
   import type { ChatState } from "../../../src/panel/protocol";
   import { nextAgentId } from "../../../src/panel/agentModes";
   import ModeMenu from "./ModeMenu.svelte";
@@ -25,6 +26,16 @@
     $props();
 
   let text = $state("");
+  // A rewound message comes back here to edit and send again.
+  $effect(() => {
+    if (chat.draft) {
+      text = chat.draft.text;
+      queueMicrotask(() => {
+        textarea?.focus();
+        resize();
+      });
+    }
+  });
   let textarea: HTMLTextAreaElement | undefined = $state();
   let draggingImage = $state(false);
   let contextOpen = $state(false);
@@ -73,7 +84,7 @@
   // Slash commands (/clear, /model, …) also work without a model.
   const canSend = $derived(
     Boolean(text.trim() || chat.attachments.length) &&
-      (Boolean(chat.modelId) || Boolean(parseSlashCommand(text))),
+      (Boolean(chat.modelId) || Boolean(parseSlashCommand(text, chat.commands))),
   );
 
   /*
@@ -86,7 +97,7 @@
   let mentionStart = $state(-1);
   /** The user arrowed through the file list: Enter then inserts, not sends. */
   let mentionNavigated = $state(false);
-  const suggestions = $derived(menuDismissed ? [] : suggestSlashCommands(text));
+  const suggestions = $derived(menuDismissed ? [] : suggestSlashCommands(text, chat.commands));
   const mentionOptions = $derived(
     mentionStart < 0 || menuDismissed
       ? []
@@ -507,6 +518,7 @@
                 >{/if}</span
             >
             <span class="compose-description">{command.description}</span>
+            {#if command.source}<span class="compose-source">{command.source === "file" ? "command" : command.source === "skill" ? "skill" : "MCP"}</span>{/if}
           </li>
         {/each}
       </ul>
@@ -664,6 +676,17 @@
                 {chat.usage.used.toLocaleString()} / {chat.usage.total.toLocaleString()}
                 tokens
               </p>
+              {#if chat.totals}
+                <div class="cp-head cp-session">
+                  <span>This chat</span>
+                  {#if chat.totals.cost !== undefined}
+                    <span class="cp-pct" title="Computed from the models' prices per 1M tokens; cached tokens are counted as input">≈ {formatCost(chat.totals.cost, chat.totals.currency)}</span>
+                  {/if}
+                </div>
+                <p class="cp-text">
+                  {compactTokens(chat.totals.promptTokens)} in · {compactTokens(chat.totals.completionTokens)} out{#if chat.totals.cachedTokens} · {compactTokens(chat.totals.cachedTokens)} cached{/if}
+                </p>
+              {/if}
               <button
                 class="cp-compact"
                 type="button"
@@ -909,6 +932,16 @@
     color: var(--nova-muted);
   }
 
+  .compose-source {
+    flex: none;
+    margin-left: auto;
+    padding: 0 5px;
+    border: 1px solid var(--nova-subtle-border);
+    border-radius: 999px;
+    color: var(--nova-muted);
+    font-size: 0.8em;
+  }
+
   .compose-description {
     min-width: 0;
     overflow: hidden;
@@ -1151,7 +1184,8 @@
     padding: 10px 12px;
     border: 1px solid var(--nova-border);
     border-radius: var(--nova-radius-large);
-    background: var(--nova-surface);
+    /* Opaque, like the mode and model menus: --nova-surface is a see-through tint, and the agent strip sits behind. */
+    background: var(--vscode-menu-background, var(--vscode-dropdown-background, var(--vscode-editorWidget-background, var(--vscode-editor-background))));
     box-shadow: 0 4px 18px rgb(0 0 0 / 25%);
     z-index: 40;
 
@@ -1188,6 +1222,11 @@
       &.high {
         background: var(--nova-error);
       }
+    }
+
+    .cp-session {
+      padding-top: 8px;
+      border-top: 1px solid var(--nova-subtle-border);
     }
 
     .cp-text {

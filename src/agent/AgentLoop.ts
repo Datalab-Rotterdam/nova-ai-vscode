@@ -15,7 +15,8 @@ export interface AgentLoopHost {
     toolResult?(call: vscode.LanguageModelToolCallPart, result: vscode.LanguageModelToolResult | undefined, error?: string): void;
     compacted?(stage: Exclude<CompactionStage, 'none'>): void;
     /** Prompt tokens reported for a request in this run. */
-    usage?(promptTokens: number): void;
+    /** Tokens of one request; `cachedTokens` is the part of the prompt the provider served from its cache. */
+    usage?(promptTokens: number, completionTokens: number, cachedTokens: number): void;
 }
 
 export interface AgentLoopRequest {
@@ -122,14 +123,14 @@ export async function runAgentLoop(
             } else if (part instanceof vscode.LanguageModelToolCallPart) {
                 toolCalls.push(part);
             } else if (part instanceof vscode.LanguageModelDataPart && part.mimeType === NOVA_USAGE_MIME_TYPE) {
-                const usage = JSON.parse(new TextDecoder().decode(part.data)) as { promptTokens?: number; completionTokens?: number; outputBuffer?: number };
+                const usage = JSON.parse(new TextDecoder().decode(part.data)) as { promptTokens?: number; completionTokens?: number; cachedTokens?: number; outputBuffer?: number };
                 result.promptTokens += usage.promptTokens ?? 0;
                 result.completionTokens += usage.completionTokens ?? 0;
                 result.outputBuffer ??= usage.outputBuffer;
                 if (usage.promptTokens) {
                     result.lastPromptTokens = usage.promptTokens;
                     tokenCalibration.record(model.id, estimatedTokens, usage.promptTokens);
-                    host.usage?.(usage.promptTokens);
+                    host.usage?.(usage.promptTokens, usage.completionTokens ?? 0, usage.cachedTokens ?? 0);
                 }
             } else if (part instanceof vscode.LanguageModelDataPart && part.mimeType === NOVA_THINKING_MIME_TYPE) {
                 host.thinking?.(new TextDecoder().decode(part.data), `nova-thinking-${round}`);

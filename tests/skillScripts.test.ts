@@ -6,12 +6,12 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { toXlsx, zip } from '../src/panel/tableExport';
 
 /*
- * The reading scripts of the bundled document skills (resources/skills/<name>/scripts) use only Python's
+ * The reading scripts of the bundled document skills (@datalabrotterdam/nova-ai-skills, skills/<name>/scripts) use only Python's
  * standard library; these tests run them on small files built here. Skipped where python3 is not installed.
  */
 
 const python = spawnSync('python3', ['--version']).status === 0;
-const SKILLS = join(__dirname, '..', 'resources', 'skills');
+const SKILLS = join(__dirname, '..', 'node_modules', '@datalabrotterdam', 'nova-ai-skills', 'skills');
 const W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml"';
 const encode = (text: string) => new TextEncoder().encode(text);
 

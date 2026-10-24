@@ -466,6 +466,12 @@
                         onclick={() =>
                           post({ command: "chat/regenerate", itemId: item.id })}
                       ></button>
+                      <button
+                        class="edit-button codicon codicon-history"
+                        title="Rewind to before this message (code, chat or both)"
+                        aria-label="Rewind to before this message"
+                        onclick={() => post({ command: "chat/rewind", itemId: item.id })}
+                      ></button>
                     </div>
                     {#if versions.length > 1}
                       <div class="versions" aria-label="Answer versions">
@@ -601,6 +607,9 @@
                     class={`codicon codicon-${item.tone === "error" ? "error" : item.tone === "warning" ? "warning" : "info"}`}
                     aria-hidden="true"
                   ></span><span class="notice-text">{item.text}</span>
+                  {#if item.action}
+                    <button class="notice-action" onclick={() => post({ command: "chat/noticeAction", id: item.action!.id })}>{item.action.label}</button>
+                  {/if}
                 </p>
               {/if}
             {/each}
@@ -640,7 +649,7 @@
       </div>
 
       {#if chat.changes?.length}
-        <ChangesStrip changes={chat.changes} {post} />
+        <ChangesStrip changes={chat.changes} hunks={chat.hunks ?? {}} {post} />
       {/if}
       {#if latestAgents.length}
         <SubagentStrip agents={latestAgents} items={chat.items} {post} />
@@ -1043,6 +1052,20 @@
     /* /help and /model list one entry per line. */
     .notice-text {
       white-space: pre-line;
+    }
+
+    .notice-action {
+      flex: none;
+      align-self: flex-start;
+      padding: 0 2px;
+      border: none;
+      background: none;
+      color: var(--vscode-textLink-foreground);
+      cursor: pointer;
+
+      &:hover {
+        text-decoration: underline;
+      }
     }
 
     &.error .codicon {

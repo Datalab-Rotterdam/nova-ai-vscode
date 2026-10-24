@@ -12,6 +12,8 @@ import {
     COMMAND_CHAT_RENAME,
     COMMAND_MANAGE_AGENTS,
     COMMAND_MANAGE_MCP,
+    COMMAND_INLINE_EDIT,
+    COMMAND_CHOOSE_MODEL,
     COMMAND_MANAGE_SKILLS,
     COMMAND_SHOW_HELP,
     COMMAND_DEV_TEST_LINKS,
@@ -38,27 +40,34 @@ import {SessionService} from './services/SessionService';
 import {toUserMessage} from './core/errors';
 import type {LanguageModelInfo} from './core/types';
 import {StatusBar} from './status/StatusBar';
-import {AGENTS_VIEW_TYPE, CHAT_PANEL_VIEW_TYPE, SKILLS_VIEW_TYPE, ViewProvider, type SignInResult} from './views';
+import {AGENTS_VIEW_TYPE, CHAT_PANEL_VIEW_TYPE, SETTINGS_VIEW_TYPE, SKILLS_VIEW_TYPE, ViewProvider, type SignInResult} from './views';
+import {SettingsController} from './settings/SettingsController';
 import type {SkillPaths} from './skills/SkillService';
 import type {AgentPaths} from './agents/AgentService';
 import * as os from 'node:os';
 import {registerAgentParticipant} from './chat/AgentParticipant';
 import {registerVsCodeTools} from './agent/tools/vscodeTools';
 import {registerBrowserSetup} from './browser/BrowserSetup';
-import {installBundledSkills} from './skills/bundledSkills';
+import {installSkills} from '@datalabrotterdam/nova-ai-skills';
 import {openHelp} from './core/help';
 import {ChatController} from './panel/ChatController';
 import {PROPOSED_SCHEME, ProposedContentProvider} from './panel/ProposedContentProvider';
 import {SessionStore} from './panel/SessionStore';
 import {confirmAndDeleteChats, promptRenameChat, searchChats} from './panel/chatSearch';
 import {ChatHub} from './panel/ChatHub';
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {MemoryService, type MemoryScope} from './memory/MemoryService';
 import {PermissionService} from './permissions/PermissionService';
 import {McpService} from './mcp/McpService';
 import {HookService} from './hooks/HookService';
+import {CodeIndex, type EmbeddingClient} from './index/CodeIndex';
+import {editSelection} from './inline/editInPlace';
+import {InlineCompletionProvider} from './inline/completionProvider';
+import type {InlineClient} from './inline/inlineModel';
+import {chooseModelSetting} from './model/modelSettings';
 import {git, repoRoot} from './git/git';
-import {manageMcpServers} from './mcp/mcpCommand';
+import {manageMcpServers, signInWithBrowser} from './mcp/mcpCommand';
 import {setScratchRoot, toolRoot} from './agent/tools/workspacePaths';
 import {currentWorkspace, ensureDir, NovaHome, pruneOlderThan, type ProjectPaths, workspaceKey} from './storage/NovaHome';
 
@@ -112,6 +121,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     const mcpEnabled = () => vscode.workspace.getConfiguration('nova').get<boolean>('mcp.enabled', true);
 
     const proposedContent = new ProposedContentProvider();
+    // Model settings are picked from the models, not typed as ids: chat models, or the embedding models the chat list leaves out.
+    const listModels = async (kind: 'chat' | 'embedding') => kind === 'embedding'
+        ? codeIndex.embeddingModels()
+        : (await modelProvider.getCachedModels()).map((model) => ({ id: model.id, name: model.name }));
+    // Semantic search over the workspace, when the gateway lists an embedding model.
+    const codeIndex = new CodeIndex({
+        client: async () => await sessionService.createClient() as unknown as EmbeddingClient | undefined,
+        dir: () => workspaceRoot() ? nova.project.index : undefined,
+        log: (message, error) => diagnostics.error(message, error)
+    });
+    // Inline edits and completions use the Nova client directly: one non-streaming answer each.
+    const inlineClient = async () => await sessionService.createClient() as unknown as InlineClient | undefined;
     // Skill folders and settings (docs/NOVA_HOME.md, "Skills"), read fresh on every use.
     const skillPaths = (): SkillPaths => ({
         home: os.homedir(),
@@ -121,8 +142,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         sharedFolders: vscode.workspace.getConfiguration('nova').get<boolean>('skills.includeClaudeCodex', false) ? ['.agents', '.claude', '.codex'] : ['.agents']
     });
     sidebarProvider.useSkills(skillPaths);
-    // Skills this extension ships (reading PDF, Word, Excel and PowerPoint files) go into the skills folder.
-    void installBundledSkills(path.join(context.extensionPath, 'resources', 'skills'), nova.home.root, String(context.extension.packageJSON.version))
+    // The skills every Nova app ships (PDF, Word, Excel and PowerPoint files), from @datalabrotterdam/nova-ai-skills:
+    // the build copies the package to out/nova-ai-skills, because the bundled module cannot find its own folder.
+    const skillsPackage = path.join(context.extensionPath, 'out', 'nova-ai-skills');
+    void fs.promises.readFile(path.join(skillsPackage, 'package.json'), 'utf8')
+        .then((json) => installSkills(nova.home.root, { sourceDir: path.join(skillsPackage, 'skills'), version: (JSON.parse(json) as { version: string }).version }))
         .then((names) => names.length && diagnostics.info('Bundled skills installed.', names))
         .catch((error: unknown) => diagnostics.error('Bundled skills could not be installed.', error));
     // Agent files: built in with the extension, then ~/.nova-ai/agents and the project's agents.
@@ -132,6 +156,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         projectDir: nova.project.dir
     });
     sidebarProvider.useAgents(agentPaths);
+    // The Settings page: the settings this extension contributes, with model settings as lists of the models.
+    sidebarProvider.useSettings((post) => new SettingsController(
+        () => context.extension.packageJSON.contributes.configuration,
+        listModels,
+        post,
+        modelProvider.onDidChangeLanguageModelChatInformation
+    ));
     const chatHub = new ChatHub();
     // One controller per chat surface (the sidebar, each editor tab), all sharing the store.
     sidebarProvider.useChats((post, options) => {
@@ -149,7 +180,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                 agents: agentPaths,
                 mcp: mcpEnabled() ? mcp : undefined,
                 hooks,
-                worktrees: () => workspaceRoot() ? path.join(nova.project.dir, 'worktrees') : undefined
+                worktrees: () => workspaceRoot() ? path.join(nova.project.dir, 'worktrees') : undefined,
+                commands: () => ({
+                    home: os.homedir(),
+                    novaHome: nova.home.root,
+                    workspaceRoots: (vscode.workspace.workspaceFolders ?? []).filter((folder) => folder.uri.scheme === 'file').map((folder) => folder.uri.fsPath),
+                    includeClaude: vscode.workspace.getConfiguration('nova').get<boolean>('skills.includeClaudeCodex', false)
+                }),
+                signInMcp: (server) => signInWithBrowser(mcp, server),
+                codeIndex
             },
             { ...options, hub: chatHub }
         );
@@ -203,6 +242,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         }),
         mcp,
         mcp.watch(),
+        vscode.commands.registerCommand(COMMAND_INLINE_EDIT, async () => editSelection({
+            client: inlineClient,
+            chooseModel: async () => {
+                const value = await chooseModelSetting(listModels, 'inline.model');
+                return typeof value === 'string' && value ? value : undefined;
+            },
+            proposed: proposedContent
+        })),
+        vscode.commands.registerCommand(COMMAND_CHOOSE_MODEL, async (key?: string) => {
+            await chooseModelSetting(listModels, typeof key === 'string' ? key : undefined);
+        }),
+        vscode.languages.registerInlineCompletionItemProvider({ pattern: '**' }, new InlineCompletionProvider(inlineClient)),
         vscode.commands.registerCommand(COMMAND_MANAGE_MCP, async () => {
             await manageMcpServers(mcp, { user: nova.home.mcpConfig, project: projectMcpConfig() });
         }),
@@ -319,8 +370,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             }
         }),
         vscode.commands.registerCommand(COMMAND_OPEN_SETTINGS, async () => {
-            await vscode.commands.executeCommand('workbench.action.openSettings', '@ext:datalabrotterdam.nova-ai-vscode');
+            await sidebarProvider.openSettings();
         }),
+        vscode.window.registerWebviewPanelSerializer(SETTINGS_VIEW_TYPE, sidebarProvider.settingsSerializer),
         vscode.workspace.onDidChangeConfiguration(async (event) => {
             if (!['nova.developer.parseModelCapabilities', 'nova.models.editTools', 'nova.context.defaultContextWindow'].some((key) => event.affectsConfiguration(key))) {
                 return;

@@ -5,7 +5,7 @@ import * as nodePath from 'node:path';
 import * as vscode from 'vscode';
 import { runAgentLoop, summarize, type AgentLoopHost, type AgentLoopRequest } from '../agent/AgentLoop';
 import { BUILT_IN_TOOLS, outputParts, ToolInputError, type NovaTool, type ProposedEdit, type ToolPreparation } from '../agent/tools';
-import { diffLines } from './diff';
+import { applyHunk, diffHunks, diffLines, hunkLines, revertHunk } from './diff';
 import { createInteractionTools, type InteractionHost } from '../agent/tools/interactionTools';
 import { createMemoryTools } from '../agent/tools/memoryTools';
 import { createCodingAgentTool, createSubagentTool, SPAWN_AGENTS_TOOL, START_CODING_AGENT_TOOL, type CodingAgentHost, type SubagentHost, type SubagentOutcome, type SubagentTask } from '../agent/tools/subagentTool';
@@ -14,6 +14,8 @@ import { agentsFolder } from '../agents/AgentsController';
 import { agentAllowsTool, findAgent, listAgents, type AgentDefinition, type AgentPaths } from '../agents/AgentService';
 import type { HookEvent, HookOutcome, HookService } from '../hooks/HookService';
 import type { McpService } from '../mcp/McpService';
+import type { CodeIndex } from '../index/CodeIndex';
+import { createSemanticSearchTool } from '../agent/tools/semanticSearchTool';
 import { createMcpTool } from '../mcp/tools';
 import type { MemoryService } from '../memory/MemoryService';
 import { type PermissionService, suggestRule } from '../permissions/PermissionService';
@@ -27,6 +29,7 @@ import type { LanguageModelInfo } from '../core/types';
 import { toolResultText } from '../model/messages';
 import type { ModelProvider } from '../model/modelProvider';
 import { createDirectModel } from './directModel';
+import { modelPricing } from '../model/modelProvider';
 import { commitChanges, openPullRequest, reviewRequest, type GitCommandHost } from '../git/gitCommands';
 import { repoRoot } from '../git/git';
 import { baseContent, changedFiles, commitWorktree, createWorktree, mergeWorktree, removeWorktree, type AgentWorktree } from '../git/worktrees';
@@ -51,14 +54,15 @@ import type {
 import { enabledSkills, type Skill, type SkillPaths } from '../skills/SkillService';
 import { buildSkillsPrompt, createLoadSkillTool } from '../skills/skillTools';
 import type { ChatHub } from './ChatHub';
-import { parseSlashCommand, type ParsedSlashCommand } from './slashCommands';
+import { parseSlashCommand, type ParsedSlashCommand, type SlashCommand, type SlashCommandName } from './slashCommands';
+import { expandCommand, findCommands, type CommandPaths } from '../commands/CommandService';
 import { runIdOf, setRunId, visibleChatItems } from './steps';
 import { classifyLink, confirmAndOpenExternal } from './links';
 import { toCsv, toXlsx } from './tableExport';
 import { ensureDir } from '../storage/NovaHome';
 import { confirmAndDeleteChats, type ChatHistory } from './chatSearch';
 import { classifyFile } from './drop';
-import { fromStoredMessages, type SessionStore, type StoredSession, toStoredMessages } from './SessionStore';
+import { fromStoredMessages, type CheckpointFile, type SessionStore, type StoredSession, toStoredMessages } from './SessionStore';
 
 const MAX_ATTACHMENT_CHARS = 60_000;
 /** Images the model may see in one run: the newest plus what is already in the conversation. */
@@ -91,6 +95,8 @@ const IMAGE_MIME = new Map([
     ['webp', 'image/webp']
 ]);
 const MAX_CARD_OUTPUT_CHARS = 4_000;
+/** Larger files get no checkpoint, so a chat file stays a reasonable size; rewind says it skipped them. */
+const MAX_CHECKPOINT_CHARS = 1_000_000;
 /** How long a request waits for MCP servers that are still starting; slower ones join the next request. */
 const MCP_START_WAIT_MS = 10_000;
 /** How often Stop hooks may send the agent back to work in one answer. */
@@ -124,7 +130,7 @@ interface TrackedChange {
 /** Tools rendered by their own UI instead of a tool card. */
 const INTERACTION_TOOLS = new Set(['todo_write', 'ask_user']);
 /** What a research sub-agent may use: reading, searching, the web and commands; never edits. */
-const SUBAGENT_TOOLS = new Set(['read_file', 'list_dir', 'find_files', 'search_text', 'get_diagnostics', 'fetch_url', 'web_search', 'run_command']);
+const SUBAGENT_TOOLS = new Set(['read_file', 'list_dir', 'find_files', 'search_text', 'semantic_search', 'get_diagnostics', 'fetch_url', 'web_search', 'run_command']);
 /** What a coding agent may use in its worktree; diagnostics only cover the open workspace. */
 const CODING_AGENT_TOOLS = new Set(['read_file', 'list_dir', 'find_files', 'search_text', 'edit_file', 'create_file', 'run_command', 'fetch_url', 'web_search']);
 
@@ -230,7 +236,7 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         private readonly proposedContent: ProposedContentProvider,
         private readonly diagnostics: Diagnostics,
         private post: (event: ChatEvent) => void,
-        private readonly services: { memory?: MemoryService; permissions?: PermissionService; skillPaths?: () => SkillPaths; agents?: () => AgentPaths; mcp?: McpService; hooks?: HookService; worktrees?: () => string | undefined } = {},
+        private readonly services: { memory?: MemoryService; permissions?: PermissionService; skillPaths?: () => SkillPaths; agents?: () => AgentPaths; mcp?: McpService; hooks?: HookService; worktrees?: () => string | undefined; commands?: () => CommandPaths; signInMcp?: (server: string) => Promise<void>; codeIndex?: CodeIndex } = {},
         private readonly options: ChatControllerOptions = {}
     ) {
         this.rememberLast = options.rememberLast ?? true;
@@ -246,6 +252,22 @@ export class ChatController implements vscode.Disposable, ChatHistory {
                 };
                 this.disposables.push(watcher, watcher.onDidCreate(changed), watcher.onDidChange(changed), watcher.onDidDelete(changed));
             }
+        }
+        // Command files and MCP prompts show in the slash menu as soon as they appear.
+        const commandPaths = this.services.commands?.();
+        for (const dir of commandPaths ? [nodePath.join(commandPaths.novaHome, 'commands'), ...commandPaths.workspaceRoots.map((root) => nodePath.join(root, '.nova-ai', 'commands'))] : []) {
+            const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(vscode.Uri.file(dir), '**/*.md'));
+            const changed = () => {
+                this.commandCache = undefined;
+                this.postState();
+            };
+            this.disposables.push(watcher, watcher.onDidCreate(changed), watcher.onDidChange(changed), watcher.onDidDelete(changed));
+        }
+        if (this.services.mcp) {
+            this.disposables.push(this.services.mcp.onDidChange(() => {
+                this.commandCache = undefined;
+                this.postState();
+            }));
         }
         if (options.hub) {
             this.disposables.push(options.hub.onDidChange(() => this.postSessions()));
@@ -386,17 +408,37 @@ export class ChatController implements vscode.Disposable, ChatHistory {
             case 'chat/skipQuestion':
                 this.answerQuestion(command.itemId, undefined);
                 break;
+            // Changes are saved with the chat, so Keep and Undo save it too.
             case 'chat/keepChange':
                 this.keepChange(command.path);
+                await this.persistIfSaved();
                 break;
             case 'chat/undoChange':
                 await this.undoChange(command.path);
+                await this.persistIfSaved();
                 break;
             case 'chat/openChangeDiff':
                 await this.openChangeDiff(command.path);
                 break;
+            case 'chat/changeHunks':
+                this.postHunks(command.path);
+                break;
+            case 'chat/keepHunk':
+                this.keepHunk(command.path, command.index);
+                await this.persistIfSaved();
+                break;
+            case 'chat/undoHunk':
+                await this.undoHunk(command.path, command.index);
+                await this.persistIfSaved();
+                break;
+            case 'chat/rewind':
+                await this.rewind(command.itemId);
+                break;
             case 'chat/stopAgent':
                 this.stopSubagent(command.id);
+                break;
+            case 'chat/noticeAction':
+                await this.noticeAction(command.id);
                 break;
             case 'chat/agentBranch':
                 await this.agentBranch(command.id, command.action);
@@ -633,11 +675,13 @@ export class ChatController implements vscode.Disposable, ChatHistory {
             effort: this.currentEffort(),
             attachments: this.attachments,
             usage: this.usage,
+            totals: this.session.usageTotals,
             sessions: this.store.list(),
             openElsewhere: this.openElsewhere(),
             approvalMode: getApprovalMode(),
             agent: this.currentAgent().id,
             agents: this.agentOptions(),
+            commands: this.slashCommands(),
             queue: this.queueView(),
             todos: this.session.todos ?? [],
             changes: this.changesView(),
@@ -773,7 +817,7 @@ export class ChatController implements vscode.Disposable, ChatHistory {
             return;
         }
 
-        const slash = parseSlashCommand(prompt);
+        const slash = parseSlashCommand(prompt, this.slashCommands());
         if (slash) {
             await this.runSlashCommand(slash);
             return;
@@ -820,7 +864,11 @@ export class ChatController implements vscode.Disposable, ChatHistory {
 
     /** Runs a slash command typed in the composer (see slashCommands.ts). */
     private async runSlashCommand({ command, args }: ParsedSlashCommand): Promise<void> {
-        switch (command.name) {
+        if (command.source) {
+            await this.runCustomCommand(command, args);
+            return;
+        }
+        switch (command.name as SlashCommandName) {
             case 'clear':
                 await this.newChat();
                 break;
@@ -1010,6 +1058,28 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         this.selectModel(matches[0].id);
     }
 
+    /**
+     * Adds a request's tokens to the chat's totals (unless `toChat` is false) and returns its cost:
+     * computed here from the model's price per 1M tokens, as responses carry no cost.
+     */
+    private addUsage(info: LanguageModelInfo | undefined, promptTokens: number, completionTokens: number, cachedTokens: number, toChat = true): { amount: number; currency: string } | undefined {
+        const pricing = info?.raw ? modelPricing(info.raw) : undefined;
+        const cost = pricing ? { amount: (promptTokens * (pricing.input ?? 0) + completionTokens * (pricing.output ?? 0)) / 1_000_000, currency: pricing.currency } : undefined;
+        if (toChat) {
+            const totals = this.session.usageTotals ??= { promptTokens: 0, completionTokens: 0, cachedTokens: 0 };
+            totals.promptTokens += promptTokens;
+            totals.completionTokens += completionTokens;
+            totals.cachedTokens += cachedTokens;
+            if (cost) {
+                // ponytail: one currency per chat (the last model's); mixing currencies needs exchange rates.
+                totals.cost = (totals.cost ?? 0) + cost.amount;
+                totals.currency = cost.currency;
+            }
+            this.post({ type: 'chat/totals', totals: { ...totals } });
+        }
+        return cost;
+    }
+
     private notice(tone: Extract<ChatItem, { kind: 'notice' }>['tone'], text: string): void {
         this.addItem({ kind: 'notice', id: randomUUID(), tone, text });
     }
@@ -1020,13 +1090,18 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         if (!this.models.length) {
             await this.refreshModels();
         }
-        const info = this.models.find((candidate) => candidate.id === this.selectedModelId());
+        // A command file may name its own model for one answer; the chat keeps its model.
+        const override = this.oneRunModel;
+        this.oneRunModel = undefined;
+        const info = this.models.find((candidate) => candidate.id === (override ?? this.selectedModelId()));
         const model = info ? createDirectModel(this.modelProvider, info) : undefined;
         if (!model) {
             this.addItem({ kind: 'notice', id: randomUUID(), text: 'No Nova model is available. Connect Nova AI or refresh the models.', tone: 'error' });
             return;
         }
-        this.session.modelId = model.id;
+        if (!override) {
+            this.session.modelId = model.id;
+        }
         this.runModelName = info?.name ?? model.name;
 
         // Hooks may block the message or add context for the model; SessionStart only before the first message.
@@ -1081,10 +1156,11 @@ export class ChatController implements vscode.Disposable, ChatHistory {
             : undefined), ...this.messages];
         this.conversation = conversation;
         await this.services.mcp?.ensureStarted(MCP_START_WAIT_MS);
+        this.noticeMcpSignIns();
         const repo = subagentSettings.codingAgents && !agent.readOnly && agentAllowsTool(agent, START_CODING_AGENT_TOOL) && this.services.worktrees?.()
             ? await repoRoot(workspaceFolders()[0]?.uri.fsPath ?? '').catch(() => undefined)
             : undefined;
-        const tools = availableTools(this.services.memory, this.interactionHost(), skills, subagentsOn ? this.subagentHost(agent) : undefined, this.services.mcp, repo ? this.codingAgentHost(agent, repo) : undefined)
+        const tools = availableTools(this.services.memory, this.interactionHost(), skills, subagentsOn ? this.subagentHost(agent) : undefined, this.services.mcp, repo ? this.codingAgentHost(agent, repo) : undefined, await this.searchTools())
             .filter((tool) => agentAllowsTool(agent, tool.info.name, tool.mcp) && (!agent.readOnly || tool.readOnly));
         let assistantItem: Extract<ChatItem, { kind: 'assistant' }> | undefined;
         let thinkingItem: Extract<ChatItem, { kind: 'thinking' }> | undefined;
@@ -1138,9 +1214,10 @@ export class ChatController implements vscode.Disposable, ChatHistory {
                         ? 'Earlier messages were summarized to fit the context window.'
                         : 'Older tool output was shortened to fit the context window.'
                 }),
-                usage: (promptTokens) => {
+                usage: (promptTokens, completionTokens, cachedTokens) => {
                     this.usage = { used: promptTokens, total: model.maxInputTokens };
                     this.post({ type: 'chat/usage', usage: this.usage });
+                    this.addUsage(info, promptTokens, completionTokens, cachedTokens);
                 }
             };
             let result = await runAgentLoop(loopRequest, loopHost, running.token);
@@ -1203,6 +1280,16 @@ export class ChatController implements vscode.Disposable, ChatHistory {
             return;
         }
 
+        await this.truncateAt(index);
+        await this.run(text.trim(), item.files ?? []);
+    }
+
+    /** Removes the user message at `index` and everything after it, from the chat and from what the model sees. */
+    private async truncateAt(index: number): Promise<void> {
+        const item = this.session.items[index];
+        if (!item || item.kind !== 'user') {
+            return;
+        }
         if (this.running) {
             this.stop();
             await this.currentRun;
@@ -1221,8 +1308,6 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         this.session.items = kept;
         this.usage = undefined;
         this.postState();
-
-        await this.run(text.trim(), item.files ?? []);
     }
 
     /** The user item with an ID, or undefined. */
@@ -1439,6 +1524,15 @@ export class ChatController implements vscode.Disposable, ChatHistory {
     }
 
     private recordChange(edit: ProposedEdit): void {
+        // The file as it was before this answer touched it, for rewinding to this message.
+        const runId = this.currentRunUser?.id;
+        if (runId) {
+            const files = (this.session.checkpoints ??= {})[runId] ??= [];
+            if (!files.some((file) => file.path === edit.path)) {
+                const before = edit.isNewFile ? null : edit.original;
+                files.push({ path: edit.path, file: edit.uri.fsPath, ...(before === null || before.length <= MAX_CHECKPOINT_CHARS ? { before } : {}) });
+            }
+        }
         const existing = this.changes.get(edit.path);
         this.changes.set(edit.path, {
             uri: edit.uri,
@@ -1500,15 +1594,7 @@ export class ChatController implements vscode.Disposable, ChatHistory {
 
         for (const change of targets) {
             try {
-                if (change.created) {
-                    await vscode.workspace.fs.delete(change.uri, { useTrash: true });
-                } else {
-                    const document = await vscode.workspace.openTextDocument(change.uri);
-                    const edit = new vscode.WorkspaceEdit();
-                    edit.replace(change.uri, new vscode.Range(document.positionAt(0), document.positionAt(document.getText().length)), change.baseline);
-                    await vscode.workspace.applyEdit(edit);
-                    await document.save();
-                }
+                await restoreFile(change.uri, change.created ? null : change.baseline);
                 this.changes.delete(change.path);
             } catch (error) {
                 void vscode.window.showErrorMessage(`Could not undo the changes to ${change.path}: ${error instanceof Error ? error.message : String(error)}`);
@@ -1525,6 +1611,144 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         }
         const baseline = this.proposedContent.register(`baseline-${randomUUID()}`, change.path, change.baseline);
         await vscode.commands.executeCommand('vscode.diff', baseline, change.uri, `${change.path} (changes by Nova)`, { preview: true });
+    }
+
+    /** The hunks of one changed file, for keeping or undoing them one by one. */
+    private postHunks(path: string): void {
+        const change = this.changes.get(path);
+        const hunks = change ? diffHunks(change.baseline, change.current).map((hunk) => hunkLines(hunk)) : [];
+        this.post({ type: 'chat/changeHunks', path, hunks });
+    }
+
+    /** Keeps one hunk: it becomes part of the baseline, so Undo no longer takes it back. */
+    private keepHunk(path: string, index: number): void {
+        const change = this.changes.get(path);
+        const hunk = change ? diffHunks(change.baseline, change.current)[index] : undefined;
+        if (!change || !hunk) {
+            return;
+        }
+        change.baseline = applyHunk(change.baseline, hunk);
+        if (change.baseline === change.current) {
+            this.changes.delete(path);
+        }
+        this.postChanges();
+        this.postHunks(path);
+    }
+
+    /** Undoes one hunk in the file, leaving Nova's other changes in place. */
+    private async undoHunk(path: string, index: number): Promise<void> {
+        const change = this.changes.get(path);
+        const hunk = change ? diffHunks(change.baseline, change.current)[index] : undefined;
+        if (!change || !hunk) {
+            return;
+        }
+        const now = await readText(change.uri).catch(() => undefined);
+        if (now !== undefined && now !== change.current) {
+            const choice = await vscode.window.showWarningMessage(`${path} changed after Nova edited it. Undo this part anyway? Your later changes to the file are lost.`, { modal: true }, 'Undo');
+            if (choice !== 'Undo') {
+                return;
+            }
+        }
+        const content = revertHunk(change.current, hunk);
+        try {
+            await restoreFile(change.uri, content);
+        } catch (error) {
+            this.notice('error', `Could not undo that change to ${path}: ${error instanceof Error ? error.message : String(error)}`);
+            return;
+        }
+        change.current = content;
+        if (change.current === change.baseline) {
+            this.changes.delete(path);
+        }
+        this.postChanges();
+        this.postHunks(path);
+    }
+
+    /**
+     * Rewinds to before a message: the files Nova changed from that answer on go back to how
+     * they were, the conversation from that message on is removed, or both. Only edits made
+     * with Nova's edit tools come back; commands that ran are listed, not undone.
+     */
+    private async rewind(itemId: string): Promise<void> {
+        const index = this.session.items.findIndex((item) => item.id === itemId);
+        const item = this.session.items[index];
+        if (!item || item.kind !== 'user') {
+            return;
+        }
+        const runIds = this.session.items.slice(index).filter((entry) => entry.kind === 'user').map((entry) => entry.id);
+        // Per file the oldest checkpoint from this answer on: how it was before Nova touched it here.
+        const files = new Map<string, CheckpointFile>();
+        for (const runId of runIds) {
+            for (const file of this.session.checkpoints?.[runId] ?? []) {
+                if (!files.has(file.path)) {
+                    files.set(file.path, file);
+                }
+            }
+        }
+        const commands = runIds.flatMap((runId) => this.session.commandsRan?.[runId] ?? []);
+        const restorable = [...files.values()].filter((file) => file.before !== undefined);
+        const tooLarge = [...files.values()].filter((file) => file.before === undefined).map((file) => file.path);
+
+        const fileCount = `${restorable.length} ${restorable.length === 1 ? 'file' : 'files'}`;
+        type Choice = vscode.QuickPickItem & { mode: 'both' | 'chat' | 'code' };
+        const choices: Choice[] = [
+            ...(restorable.length ? [{ label: '$(history) Code and chat', description: `restore ${fileCount}, remove the messages from here on`, mode: 'both' as const }] : []),
+            { label: '$(comment-discussion) Chat only', description: 'remove the messages from here on; files stay as they are', mode: 'chat' },
+            ...(restorable.length ? [{ label: '$(file-code) Code only', description: `restore ${fileCount}; the chat stays`, mode: 'code' as const }] : [])
+        ];
+        const notes = [
+            ...(commands.length ? [`Not undone: ${commands.length} ${commands.length === 1 ? 'command' : 'commands'} that ran (${commands.slice(0, 3).join('; ')}${commands.length > 3 ? '; …' : ''})`] : []),
+            ...(tooLarge.length ? [`Too large to restore: ${tooLarge.join(', ')}`] : [])
+        ];
+        const picked = await vscode.window.showQuickPick(choices, { title: 'Rewind to before this message', placeHolder: notes.join(' · ') || 'Choose what to rewind' });
+        if (!picked) {
+            return;
+        }
+
+        if (picked.mode !== 'chat') {
+            const modified: string[] = [];
+            for (const file of restorable) {
+                const now = await readText(vscode.Uri.file(file.file)).catch(() => undefined);
+                const known = this.changes.get(file.path)?.current;
+                if (now !== undefined && now !== known) {
+                    modified.push(file.path);
+                }
+            }
+            if (modified.length) {
+                const choice = await vscode.window.showWarningMessage(`${modified.join(', ')} changed since Nova's last edit. Rewind anyway? Those changes are lost.`, { modal: true }, 'Rewind');
+                if (choice !== 'Rewind') {
+                    return;
+                }
+            }
+            for (const file of restorable) {
+                try {
+                    await restoreFile(vscode.Uri.file(file.file), file.before ?? null);
+                } catch (error) {
+                    this.notice('error', `Could not restore ${file.path}: ${error instanceof Error ? error.message : String(error)}`);
+                    continue;
+                }
+                const change = this.changes.get(file.path);
+                if (change && file.before !== null && file.before !== change.baseline) {
+                    change.current = file.before!;
+                } else {
+                    this.changes.delete(file.path);
+                }
+            }
+            this.postChanges();
+        }
+        // Those answers are undone or gone: their checkpoints no longer apply.
+        for (const runId of runIds) {
+            delete this.session.checkpoints?.[runId];
+            delete this.session.commandsRan?.[runId];
+        }
+
+        if (picked.mode !== 'code') {
+            await this.truncateAt(index);
+            // The message comes back in the input box, to edit and send again.
+            this.post({ type: 'chat/draft', text: item.text });
+        }
+        this.notice('info', picked.mode === 'chat' ? 'Rewound the chat.' : picked.mode === 'code' ? `Restored ${fileCount}.` : `Rewound the chat and restored ${fileCount}.`);
+        await this.persist();
     }
 
     // --- Sub-agents (spawn_agents) ---
@@ -1594,7 +1818,8 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         // Same limits as the main agent's mode: a read-only mode gives read-only agents, and no mode lends an agent more than it has itself.
         const allowed = worktree ? CODING_AGENT_TOOLS : SUBAGENT_TOOLS;
         const maxRounds = worktree ? settings.codingRounds : settings.maxRounds;
-        const tools = availableTools()
+        // The index covers the open workspace, not a coding agent's worktree: research agents only.
+        const tools = availableTools(undefined, undefined, [], undefined, undefined, undefined, worktree ? [] : await this.searchTools())
             .filter((tool) => allowed.has(tool.info.name) && agentAllowsTool(agent, tool.info.name, false) && (!agent.readOnly || tool.readOnly));
         const own = new vscode.CancellationTokenSource();
         this.subagentRuns.set(id, own);
@@ -1652,9 +1877,14 @@ export class ChatController implements vscode.Disposable, ChatHistory {
                     state.currentTool = undefined;
                     touch();
                 },
-                usage: (promptTokens) => {
+                usage: (promptTokens, completionTokens, cachedTokens) => {
                     state.rounds++;
                     state.tokens += promptTokens;
+                    // A coding agent's chat may not be the open one; its cost stays on the agent then.
+                    const cost = this.addUsage(info, promptTokens, completionTokens, cachedTokens, !worktree || this.codingAgents.get(id)?.sessionId === this.session.id);
+                    if (cost) {
+                        state.cost = { amount: (state.cost?.amount ?? 0) + cost.amount, currency: cost.currency };
+                    }
                     touch();
                 }
             }, own.token);
@@ -2145,6 +2375,10 @@ export class ChatController implements vscode.Disposable, ChatHistory {
 
             item.status = 'done';
             item.output = clip(output);
+            const runId = this.currentRunUser?.id;
+            if (call.name === 'run_command' && runId && !scope?.root && typeof input.command === 'string') {
+                ((this.session.commandsRan ??= {})[runId] ??= []).push(input.command);
+            }
             if (preparation.edit && call.name !== 'memory_write') {
                 item.diff = diffLines(preparation.edit.original, preparation.edit.proposed, MAX_CARD_DIFF_LINES);
                 if (!scope?.root) {
@@ -2281,6 +2515,128 @@ export class ChatController implements vscode.Disposable, ChatHistory {
             await this.openFileLink(link.path, link.line, link.column);
         } else {
             void vscode.window.showWarningMessage(link.reason);
+        }
+    }
+
+    /** semantic_search, when the workspace has an embedding model to index with. */
+    private async searchTools(): Promise<Array<NovaTool<never>>> {
+        const index = this.services.codeIndex;
+        return index && await index.available().catch(() => false) ? [createSemanticSearchTool(index)] : [];
+    }
+
+    private commandCache?: { at: number; commands: SlashCommand[] };
+    /** A model id for the next answer only (a command file's `model`). */
+    private oneRunModel?: string;
+    /** `<chat id>:<server>`: MCP servers this chat already asked the user to sign in to. */
+    private readonly signInNoticed = new Set<string>();
+
+    /** Commands besides the built-ins: command files, skills (`/skill-name`) and MCP prompts. */
+    private slashCommands(): SlashCommand[] {
+        if (this.commandCache && Date.now() - this.commandCache.at < 2_000) {
+            return this.commandCache.commands;
+        }
+        const paths = this.services.commands?.();
+        const files = paths ? findCommands(paths).map((command): SlashCommand => ({
+            name: command.name,
+            description: command.description,
+            ...(command.argumentHint ? { args: command.argumentHint } : {}),
+            source: 'file'
+        })) : [];
+        const skills = this.services.skillPaths ? enabledSkills(this.services.skillPaths())
+            .filter((skill) => /^[a-z0-9][\w:-]*$/i.test(skill.name))
+            .map((skill): SlashCommand => ({ name: skill.name, args: '[request]', description: skill.description, source: 'skill' })) : [];
+        const prompts = (this.services.mcp?.prompts() ?? []).map((entry): SlashCommand => ({
+            name: entry.name,
+            description: entry.prompt.description ?? entry.prompt.title ?? `Prompt ${entry.prompt.name} of ${entry.server}`,
+            ...(entry.prompt.arguments?.length ? { args: entry.prompt.arguments.map((arg) => arg.required ? `<${arg.name}>` : `[${arg.name}]`).join(' ') } : {}),
+            source: 'mcp'
+        }));
+        // A command file wins over a skill of the same name, both over an MCP prompt.
+        const seen = new Set<string>();
+        const commands = [...files, ...skills, ...prompts].filter((command) => !seen.has(command.name.toLowerCase()) && seen.add(command.name.toLowerCase()));
+        this.commandCache = { at: Date.now(), commands };
+        return commands;
+    }
+
+    /** Runs a command from a file, a skill or an MCP prompt as a normal message. */
+    private async runCustomCommand(command: SlashCommand, args: string): Promise<void> {
+        try {
+            if (command.source === 'file') {
+                const paths = this.services.commands?.();
+                const file = paths ? findCommands(paths).find((candidate) => candidate.name === command.name) : undefined;
+                if (!file) {
+                    throw new Error(`The command file of /${command.name} is gone.`);
+                }
+                const wanted = file.model?.toLowerCase();
+                const model = wanted ? this.models.find((candidate) => candidate.id.toLowerCase() === wanted || candidate.name.toLowerCase() === wanted) : undefined;
+                if (wanted && !model) {
+                    this.notice('warning', `/${command.name} asks for the model "${file.model}", which is not available; using the chat's model.`);
+                }
+                this.oneRunModel = model?.id;
+                await this.run(expandCommand(file, args), []);
+            } else if (command.source === 'skill') {
+                await this.run(`Use the ${command.name} skill.${args ? ` ${args}` : ''}`, []);
+            } else {
+                const entry = this.services.mcp?.prompts().find((candidate) => candidate.name === command.name);
+                if (!entry) {
+                    throw new Error(`The MCP prompt /${command.name} is not available.`);
+                }
+                // Arguments by position; the last one takes the rest of the line.
+                const names = entry.prompt.arguments?.map((arg) => arg.name) ?? [];
+                const words = args.split(/\s+/).filter(Boolean);
+                const values = Object.fromEntries(names.map((name, index) => [name, index === names.length - 1 ? words.slice(index).join(' ') : words[index] ?? '']).filter(([, value]) => value));
+                const missing = entry.prompt.arguments?.filter((arg) => arg.required && !values[arg.name]).map((arg) => arg.name) ?? [];
+                if (missing.length) {
+                    this.notice('warning', `/${command.name} needs: ${missing.join(', ')}.`);
+                    return;
+                }
+                const result = await this.services.mcp!.getPrompt(entry.server, entry.prompt.name, values);
+                const texts: string[] = [];
+                const attachments: Attachment[] = [];
+                for (const message of result.messages) {
+                    const content = message.content as { type: string; text?: string; data?: string; mimeType?: string; resource?: { uri?: string; text?: string } };
+                    if (content.type === 'text' && content.text) {
+                        texts.push(content.text);
+                    } else if (content.type === 'image' && content.data && content.mimeType) {
+                        attachments.push({ id: randomUUID(), label: `image ${attachments.length + 1}`, image: { mimeType: content.mimeType, data: content.data } });
+                    } else if (content.type === 'resource' && content.resource?.text) {
+                        texts.push(`<resource uri="${content.resource.uri ?? ''}">\n${content.resource.text}\n</resource>`);
+                    }
+                }
+                await this.run(texts.join('\n\n') || `/${command.name}`, attachments);
+            }
+        } catch (error) {
+            this.notice('error', error instanceof Error ? error.message : String(error));
+        }
+    }
+
+    /** One notice per chat for each MCP server that waits for the user to sign in. */
+    private noticeMcpSignIns(): void {
+        for (const server of this.services.mcp?.statuses() ?? []) {
+            const key = `${this.session.id}:${server.name}`;
+            if (server.status === 'needs-auth' && this.services.signInMcp && !this.signInNoticed.has(key)) {
+                this.signInNoticed.add(key);
+                this.addItem({
+                    kind: 'notice',
+                    id: randomUUID(),
+                    tone: 'warning',
+                    text: `MCP server "${server.name}" needs you to sign in before Nova can use its tools.`,
+                    action: { label: 'Sign in', id: `mcp-signin:${server.name}` }
+                });
+            }
+        }
+    }
+
+    private async noticeAction(id: string): Promise<void> {
+        const server = /^mcp-signin:(.+)$/.exec(id)?.[1];
+        if (!server || !this.services.signInMcp) {
+            return;
+        }
+        try {
+            await this.services.signInMcp(server);
+            this.notice('info', `Signed in to ${server}. Its tools are available from the next message on.`);
+        } catch (error) {
+            this.notice('error', `${server}: ${error instanceof Error ? error.message : String(error)}`);
         }
     }
 
@@ -2584,13 +2940,25 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         this.usage = undefined;
         this.sessionApproved = false;
         this.edits.clear();
+        // Changes wait for Keep or Undo across reloads.
         this.changes.clear();
+        for (const change of session.changes ?? []) {
+            this.changes.set(change.path, { uri: vscode.Uri.file(change.file), path: change.path, baseline: change.baseline, current: change.current, created: change.created });
+        }
         this.snapshots.clear();
+    }
+
+    /** Saves the chat unless a running answer will save it when it ends. */
+    private async persistIfSaved(): Promise<void> {
+        if (!this.running) {
+            await this.persist();
+        }
     }
 
     private async persist(): Promise<void> {
         this.session.updatedAt = Date.now();
         this.session.messages = toStoredMessages(this.messages);
+        this.session.changes = [...this.changes.values()].map((change) => ({ path: change.path, file: change.uri.fsPath, baseline: change.baseline, current: change.current, created: change.created }));
         try {
             await this.store.save(this.session);
             await this.rememberAsLast();
@@ -2643,7 +3011,7 @@ interface AvailableTool {
  * VS Code, which can run without a chat request. A server both know is used through Nova's
  * client, which honours its read-only hints and keeps its connection.
  */
-function availableTools(memory?: MemoryService, interaction?: InteractionHost, skills: readonly Skill[] = [], subagents?: SubagentHost, mcpService?: McpService, codingAgents?: CodingAgentHost): AvailableTool[] {
+function availableTools(memory?: MemoryService, interaction?: InteractionHost, skills: readonly Skill[] = [], subagents?: SubagentHost, mcpService?: McpService, codingAgents?: CodingAgentHost, extra: ReadonlyArray<NovaTool<never>> = []): AvailableTool[] {
     const webSearchEnabled = vscode.workspace.getConfiguration('nova.webSearch').get<boolean>('enabled', true);
     const novaTools = [
         ...BUILT_IN_TOOLS.filter((tool) => tool.name !== 'web_search' || webSearchEnabled),
@@ -2651,7 +3019,8 @@ function availableTools(memory?: MemoryService, interaction?: InteractionHost, s
         ...(interaction ? createInteractionTools(interaction) : []),
         ...(memory?.isEnabled() ? createMemoryTools(memory) : []),
         ...(subagents ? [createSubagentTool(subagents)] : []),
-        ...(codingAgents ? [createCodingAgentTool(codingAgents)] : [])
+        ...(codingAgents ? [createCodingAgentTool(codingAgents)] : []),
+        ...extra
     ];
     const ownMcp = mcpService?.tools() ?? [];
     const toAvailable = (tool: NovaTool<never>, mcp: boolean): AvailableTool => ({
@@ -2828,4 +3197,21 @@ function summarizeTitle(text: string): string {
 function newSession(): StoredSession {
     const now = Date.now();
     return { id: randomUUID(), title: 'New chat', createdAt: now, updatedAt: now, items: [], messages: [] };
+}
+
+/** Writes a file through its document (undo history, open editors), or moves it to the trash for null. */
+async function restoreFile(uri: vscode.Uri, content: string | null): Promise<void> {
+    if (content === null) {
+        await vscode.workspace.fs.delete(uri, { useTrash: true });
+        return;
+    }
+    if (!(await vscode.workspace.fs.stat(uri).then(() => true, () => false))) {
+        await vscode.workspace.fs.writeFile(uri, new TextEncoder().encode(content));
+        return;
+    }
+    const document = await vscode.workspace.openTextDocument(uri);
+    const edit = new vscode.WorkspaceEdit();
+    edit.replace(uri, new vscode.Range(document.positionAt(0), document.positionAt(document.getText().length)), content);
+    await vscode.workspace.applyEdit(edit);
+    await document.save();
 }

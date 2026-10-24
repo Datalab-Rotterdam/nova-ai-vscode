@@ -105,6 +105,7 @@ Legend: ✅ the ACP agent already does this · 🟡 small change · 🔴 new wor
 | `todo_write` | `update_plan` (ACP `plan`) | ✅ different name, same feature; alias for rules |
 | `find_files` (glob) | — | ✅ (A) workspace-confined; `node_modules`, `.git` and build output skipped (`.gitignore` is not read) |
 | `fetch_url` | — | ✅ (A) always asks unless a rule allows the URL; same-site redirects only |
+| `semantic_search` (embeddings index in `projects/<key>/index`, `src/index/CodeIndex.ts`) | — | 🟡 move the index into the agent (same folder and format) or offer it over the MCP bridge |
 | `get_diagnostics` (VS Code problems) | — | 🔴 editor-only: provided by the extension's MCP bridge (below) |
 | VS Code MCP tools (`mcp_*`, `nova.agent.includeMcpTools`) | agent connects MCP servers given in `session/new` | 🔴 MCP bridge (below) |
 | MCP servers from `.mcp.json` / `.nova-ai/settings.json` | ✅ agent reads them (trusted workspaces) | ✅ |
@@ -127,6 +128,7 @@ Built on the extension's own agent (October 2026); each needs a place on ACP.
 | Panel feature | ACP agent today | Status / work |
 |---|---|---|
 | Hooks (`PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `SessionStart`, `Stop`; Claude Code's format, `src/hooks/HookService.ts`) | — | 🔴 (A) run them in the agent, where the tool calls happen; same settings key and semantics (`docs/NOVA_HOME.md`, "Hooks") |
+| Slash commands from markdown files, skills as `/name`, MCP prompts (`src/commands/`, `McpService.prompts`) | ACP `available_commands_update` | 🟡 the agent can announce file commands and skills itself; MCP prompts follow wherever the MCP servers end up (see Tools) |
 | `/commit`, `/review`, `/pr` (`src/git/`) | — | ✅ **stays in the extension**: git and `gh`/`glab` with one model answer; `/review` becomes a normal `session/prompt` with the diff attached |
 | Coding agents in their own git worktree (`start_coding_agent`, `src/git/worktrees.ts`) | — | 🟡 the worktree and branch handling (create, commit, review, merge, discard) stays in the extension; each agent becomes its own ACP session with `cwd` set to its worktree, so no tool rooting is needed. The tool that starts one has to be offered to the agent (an extension-provided tool over the MCP bridge) |
 
@@ -137,6 +139,7 @@ Built on the extension's own agent (October 2026); each needs a place on ACP.
 | Edits see unsaved editor buffers | client `fs/read_text_file` / `fs/write_text_file` | ✅ the extension implements these with VS Code documents |
 | Diff in the tool card, "Open diff" | `diff` content in `tool_call` | ✅ render it; `ProposedContentProvider` stays |
 | Keep / Undo per file or all (`chat/keepChange`, `chat/undoChange`) | — | ✅ **stays in the extension**: every write goes through the client's `fs/write_text_file`, so the extension records the baseline exactly as today |
+| Keep / Undo per hunk, rewind code/chat to before a message (checkpoints per user message in the session) | — | ✅ **stays in the extension**, on the same `fs/write_text_file` writes; chat rewind needs a way to truncate the agent's session (open: `session/fork` at a message, or a `_nova` truncate) |
 | Command execution | client `terminal/*` or agent-side | 🟡 the extension implements ACP terminals (process tree kill as in `terminalTool.ts`); `nova.agent.commandTimeoutSeconds` → session setting `commandTimeoutSeconds` (✅ A: the agent kills with `terminal/kill`) |
 
 ### Permissions

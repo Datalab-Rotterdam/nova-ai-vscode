@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { diffLines } from '../src/panel/diff';
+import { applyHunk, diffHunks, diffLines, hunkLines, revertHunk } from '../src/panel/diff';
 
 describe('diffLines', () => {
   it('shows changed lines with context and line numbers', () => {
@@ -36,4 +36,42 @@ describe('diffLines', () => {
     expect(result.truncated).toBe(true);
     expect(result.added).toBe(1000);
   });
+});
+
+describe('hunks', () => {
+    const before = 'a\nb\nc\nd\ne\nf\ng\n';
+    const after = 'a\nB\nc\nd\ne\nf2\nf3\ng\nh\n';
+
+    it('splits a change into hunks that can each be kept or undone', () => {
+        const hunks = diffHunks(before, after);
+        expect(hunks.map((hunk) => [hunk.removed, hunk.added])).toEqual([[['b'], ['B']], [['f'], ['f2', 'f3']], [[], ['h']]]);
+        // Keeping or undoing hunks one at a time (recomputed in between) ends at the new or the old text.
+        let baseline = before;
+        while (diffHunks(baseline, after).length) {
+            baseline = applyHunk(baseline, diffHunks(baseline, after)[0]);
+        }
+        expect(baseline).toBe(after);
+        let current = after;
+        while (diffHunks(before, current).length) {
+            current = revertHunk(current, diffHunks(before, current).at(-1)!);
+        }
+        expect(current).toBe(before);
+    });
+
+    it('keeps one hunk without touching the others, and keeps CRLF line endings', () => {
+        const crlf = (text: string) => text.replace(/\n/g, '\r\n');
+        const [, second] = diffHunks(crlf(before), crlf(after));
+        expect(applyHunk(crlf(before), second)).toBe(crlf('a\nb\nc\nd\ne\nf2\nf3\ng\n'));
+        expect(revertHunk(crlf(after), second)).toBe(crlf('a\nB\nc\nd\ne\nf\ng\nh\n'));
+    });
+
+    it('handles a new file and shows a hunk with line numbers', () => {
+        const [hunk] = diffHunks('', 'x\ny\n');
+        expect(revertHunk('x\ny\n', hunk)).toBe('');
+        expect(hunkLines(diffHunks(before, after)[0])).toEqual([
+            { type: 'hunk', text: '@@ -2 +2 @@' },
+            { type: 'del', text: 'b', oldNo: 2 },
+            { type: 'add', text: 'B', newNo: 2 }
+        ]);
+    });
 });
