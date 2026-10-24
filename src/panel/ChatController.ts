@@ -59,6 +59,7 @@ import { expandCommand, findCommands, type CommandPaths } from '../commands/Comm
 import { runIdOf, setRunId, visibleChatItems } from './steps';
 import { classifyLink, confirmAndOpenExternal } from './links';
 import { toCsv, toXlsx } from './tableExport';
+import { chatToMarkdown, exportFileName } from './chatExport';
 import { ensureDir } from '../storage/NovaHome';
 import { confirmAndDeleteChats, type ChatHistory } from './chatSearch';
 import { classifyFile } from './drop';
@@ -2874,6 +2875,35 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         await this.rememberAsLast();
         this.postState();
         return true;
+    }
+
+    /** Saves a chat as Markdown; an open chat (here or in another tab) is exported as it is on screen. */
+    public async exportSession(sessionId: string): Promise<void> {
+        await this.initialize();
+        const holder = sessionId === this.session.id ? this : this.options.hub?.ownerOf(sessionId, this);
+        const chat = holder?.session ?? await this.store.load(sessionId);
+        if (!chat) {
+            void vscode.window.showWarningMessage('This Nova chat could not be loaded.');
+            return;
+        }
+        const folder = vscode.workspace.workspaceFolders?.[0]?.uri;
+        const target = await vscode.window.showSaveDialog({
+            defaultUri: folder ? vscode.Uri.joinPath(folder, exportFileName(chat.title)) : undefined,
+            filters: { Markdown: ['md'] },
+            saveLabel: 'Export chat'
+        });
+        if (!target) {
+            return;
+        }
+        try {
+            await vscode.workspace.fs.writeFile(target, new TextEncoder().encode(chatToMarkdown(chat)));
+        } catch (error) {
+            void vscode.window.showErrorMessage(`The chat could not be exported: ${error instanceof Error ? error.message : String(error)}`);
+            return;
+        }
+        if (await vscode.window.showInformationMessage('Chat exported.', 'Open') === 'Open') {
+            await vscode.window.showTextDocument(target);
+        }
     }
 
     /** Renames a chat; the open chat is renamed in memory too, so a running reply keeps the name. */

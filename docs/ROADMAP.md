@@ -19,6 +19,7 @@ lands.
 | **Semantic code search** | #24 | `semantic_search` with the gateway's embedding model. The index lives in `projects/<key>/index` and updates incrementally. |
 | **Nova Settings page** | #24 | All settings in grouped sections, models picked from a list, User or Workspace scope. Also adds **Nova AI: Choose Models**. |
 | **CLI reads `mcp.json`** | nova-ai-cli | `~/.nova-ai/mcp.json` in every workspace, `.nova-ai/mcp.json` in a trusted one, same merge order as the extension. `${VAR}` expands in the CLI too. |
+| **Exporting chats** | | **Export as Markdown…** in a chat's menu on the Chats page. The versions the chat follows, one line per tool call; thinking and sub-agent steps are left out. No share link yet. |
 | **CLI parity, partly** | nova-ai-cli | The CLI reads command files and supports autopilot and hooks. Its `rules.ts` understands `mcp__server__*`. |
 
 ## Still to do
@@ -27,11 +28,7 @@ In three phases. Each item ships as its own PR into `alpha`.
 
 ### Phase 1: close the gap, quick wins
 
-#### 2. Exporting chats as Markdown (extension)
-- **What:** a command that saves the open chat as a Markdown file. No share link: that needs a backend; add it when someone asks.
-- **Why:** handing a chat to a colleague or attaching it to an issue.
-
-#### 3. File watcher for the search index (extension)
+#### 1. File watcher for the search index (extension)
 - **What:**
   - Mark changed files from a `FileSystemWatcher` instead of checking every file's modification time on each search.
   - Show progress during the first index build.
@@ -39,7 +36,7 @@ In three phases. Each item ships as its own PR into `alpha`.
 
 ### Phase 2: CI
 
-#### 4. CI integration (nova-ai-cli)
+#### 2. CI integration (nova-ai-cli)
 - **What:**
   - A composite GitHub Action (`action.yml`) and an includable GitLab template.
   - Both run `nova-ai -p "…" --output-format json` with `NOVA_API_KEY`.
@@ -50,11 +47,11 @@ In three phases. Each item ships as its own PR into `alpha`.
 
 ### Phase 3: only on demand
 
-#### 5. Voice input (extension)
+#### 3. Voice input (extension)
 - **What:** a microphone button in the composer, sending audio through `audio.transcriptions.create` (already in the SDK and gateway).
 - **Why:** both competitors have it, but it is a nice-to-have in an IDE. Spike the webview's microphone permission first.
 
-#### 6. Syncing skills, agents and commands
+#### 4. Syncing skills, agents and commands
 - **What:** sync `~/.nova-ai/{skills,agents,commands}` across machines.
 - **Why not yet:** Settings Sync cannot sync arbitrary folders, so this needs storage on the gateway. Until users ask, `docs/NOVA_HOME.md` can suggest keeping `~/.nova-ai` in a dotfiles repository.
 

@@ -332,6 +332,11 @@
         "category": "Nova AI"
       },
       {
+        "command": "nova.chats.export",
+        "title": "Export as Markdown…",
+        "category": "Nova AI"
+      },
+      {
         "command": "nova.chats.delete",
         "title": "Delete",
         "category": "Nova AI"
@@ -487,6 +492,10 @@
           "when": "false"
         },
         {
+          "command": "nova.chats.export",
+          "when": "false"
+        },
+        {
           "command": "nova.chats.delete",
           "when": "false"
         }
@@ -496,6 +505,11 @@
           "command": "nova.chats.openInEditor",
           "when": "webviewSection == 'novaChatRow'",
           "group": "1_open@1"
+        },
+        {
+          "command": "nova.chats.export",
+          "when": "webviewSection == 'novaChatRow'",
+          "group": "1_open@2"
         },
         {
           "command": "nova.chats.rename",
