@@ -1,3 +1,10 @@
+# [1.0.0-alpha.36](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.35...v1.0.0-alpha.36) (2026-10-24)
+
+
+### Features
+
+* a file watcher keeps the search index up to date ([fa7fb17](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/fa7fb17238caf1d1581c3069159ff9bcb74f6ba4))
+
 # [1.0.0-alpha.35](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.34...v1.0.0-alpha.35) (2026-10-24)
 
 
