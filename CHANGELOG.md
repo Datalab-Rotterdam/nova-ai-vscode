@@ -1,3 +1,15 @@
+# [1.0.0-alpha.28](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.27...v1.0.0-alpha.28) (2026-10-24)
+
+
+### Bug Fixes
+
+* **chat:** opaque context popover ([4d5a078](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/4d5a0782c6869aad9ac7b6e09bd73ecefed0e468))
+
+
+### Features
+
+* **chat:** tokens and cost per chat; show model prices again ([51ca672](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/51ca6726b8380541e077d3236c6457cdf5b9570f))
+
 # [1.0.0-alpha.27](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.26...v1.0.0-alpha.27) (2026-10-23)
 
 
