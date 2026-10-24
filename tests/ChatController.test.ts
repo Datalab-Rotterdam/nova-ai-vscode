@@ -9,6 +9,7 @@ let currentModel: unknown;
 vi.mock('../src/panel/directModel', () => ({ createDirectModel: () => currentModel }));
 
 import { setScratchRoot } from '../src/agent/tools/workspacePaths';
+import { NOVA_USAGE_MIME_TYPE } from '../src/core/constants';
 import { Diagnostics } from '../src/core/diagnostics';
 import { ChatController } from '../src/panel/ChatController';
 import type { ChatEvent, ToolItem } from '../src/panel/protocol';
@@ -556,6 +557,29 @@ describe('ChatController', () => {
     await controller.handle({ command: 'chat/delete', sessionIds: ['a', 'unknown'] });
     expect(confirm).toHaveBeenLastCalledWith('Delete the chat "Alpha"?', expect.anything(), 'Delete');
     expect(store.delete.mock.calls).toEqual([['a']]);
+  });
+
+  it('adds up tokens and cost per chat from the model\'s price, and saves them with the chat', async () => {
+    const usage = (promptTokens: number, completionTokens: number, cachedTokens = 0) =>
+      vscode.LanguageModelDataPart.json({ promptTokens, completionTokens, cachedTokens }, NOVA_USAGE_MIME_TYPE);
+    const { controller, events, store } = setup([
+      [new vscode.LanguageModelTextPart('One.'), usage(1_000, 100, 400)],
+      [new vscode.LanguageModelTextPart('Two.'), usage(2_000, 200)]
+    ]);
+    // The model lists €2 per 1M input and €10 per 1M output tokens.
+    const models = await (controller as unknown as { modelProvider: { listModels(): Promise<Array<Record<string, unknown>>> } }).modelProvider.listModels();
+    (controller as unknown as { modelProvider: { listModels(): Promise<unknown> } }).modelProvider.listModels = async () =>
+      models.map((model) => ({ ...model, raw: { id: model.id, inputCostPer1M: 2, outputCostPer1M: 10, currency: 'EUR' } }));
+
+    await controller.handle({ command: 'chat/send', text: 'first' });
+    await controller.handle({ command: 'chat/send', text: 'second' });
+
+    const tokens = { promptTokens: 3_000, completionTokens: 300, cachedTokens: 400, currency: 'EUR' };
+    const totals = controller.getState().totals!;
+    expect(totals).toMatchObject(tokens);
+    expect(totals.cost).toBeCloseTo((3_000 * 2 + 300 * 10) / 1_000_000, 10);
+    expect(events.filter((event) => event.type === 'chat/totals').at(-1)).toEqual({ type: 'chat/totals', totals });
+    expect(store.save.mock.calls.at(-1)?.[0].usageTotals).toEqual(totals);
   });
 
   it('opens a saved chat', async () => {

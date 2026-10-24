@@ -76,7 +76,7 @@ On an approval card choose **Allow**, **Always allow** (saves a rule), **Allow a
 - Type **`@`** to mention a workspace file.
 - Use the **paperclip**, or **paste and drop** files and images (also from the Explorer; hold **Shift** while dropping from VS Code). Click an image to enlarge it.
 - Right-click in the editor and choose **Add to Nova Chat** to send your selection.
-- The ring next to Send shows how full the model's context window is; click it for details and a **Compact** button. Long chats are compacted automatically.
+- The ring next to Send shows how full the model's context window is; click it for details, a **Compact** button, and what the chat used so far: tokens in and out and, for models with a price, about what it cost. Long chats are compacted automatically.
 
 ### Chat comfortably
 

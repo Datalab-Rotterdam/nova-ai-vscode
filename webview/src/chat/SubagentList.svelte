@@ -1,5 +1,6 @@
 <script lang="ts">
     import type {SubagentState} from '../../../src/panel/protocol';
+    import {formatCost} from './usage';
 
     let {agents, post, onOpen}: {
         agents: SubagentState[];
@@ -68,6 +69,7 @@
                     <span class="stats">
                         {#if agent.toolCount}<span title="Tool calls"><span class="codicon codicon-tools" aria-hidden="true"></span>{agent.toolCount}</span>{/if}
                         {#if agent.tokens}<span title="Tokens"><span class="codicon codicon-symbol-numeric" aria-hidden="true"></span>{tokens(agent.tokens)}</span>{/if}
+                        {#if agent.cost}<span title="About this much, from the model's price">≈ {formatCost(agent.cost.amount, agent.cost.currency)}</span>{/if}
                         {#if agent.startedAt}<span title="Time">{elapsed(agent)}</span>{/if}
                     </span>
                     <span class="codicon codicon-chevron-right chevron" aria-hidden="true"></span>
