@@ -16,7 +16,7 @@ const BINARY = /\.(png|jpe?g|gif|webp|ico|pdf|zip|gz|tgz|jar|exe|dll|so|dylib|wo
 
 /** The part of the Nova client the index uses. */
 export interface EmbeddingClient {
-    models: { list(options?: { limit?: number }): Promise<{ data: Array<{ id: string; capabilities?: string[] }> }> };
+    models: { list(options?: { limit?: number }): Promise<{ data: Array<{ id: string; name?: string | null; capabilities?: string[] }> }> };
     embeddings: { create(request: { model: string; input: string[] }): Promise<{ data: Array<{ index: number; embedding: number[] }> }> };
 }
 
@@ -54,7 +54,7 @@ interface StoredIndex {
 export class CodeIndex {
     private stored?: StoredIndex;
     private vectors = new Float32Array(0);
-    private model?: { id: string | undefined; at: number };
+    private model?: { models: Array<{ id: string; name: string }>; at: number };
     private updating?: Promise<void>;
 
     public constructor(private readonly deps: {
@@ -76,12 +76,20 @@ export class CodeIndex {
         if (configured) {
             return configured;
         }
+        return (await this.embeddingModels())[0]?.id;
+    }
+
+    /** The gateway's models with the `embedding` capability (the chat model list leaves them out). */
+    public async embeddingModels(): Promise<Array<{ id: string; name: string }>> {
         if (!this.model || Date.now() - this.model.at > MODEL_TTL_MS) {
             const client = await this.deps.client();
             const models = client ? await client.models.list({ limit: 500 }).catch(() => undefined) : undefined;
-            this.model = { id: models?.data.find((model) => model.capabilities?.includes('embedding'))?.id, at: Date.now() };
+            this.model = {
+                models: (models?.data ?? []).filter((model) => model.capabilities?.includes('embedding')).map((model) => ({ id: model.id, name: model.name || model.id })),
+                at: Date.now()
+            };
         }
-        return this.model.id;
+        return this.model.models;
     }
 
     /** The chunks most like the query, best first. */

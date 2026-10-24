@@ -134,6 +134,7 @@ Open the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`) and type **Nova AI**:
 | Add to Nova Chat | Send the editor selection (also in the editor context menu) |
 | Manage Skills / Manage Agents | Create and manage skills and agent modes |
 | Edit Selection with Nova | Rewrite the selection as you ask, shown as a diff first (also in the editor's context menu) |
+| Choose Models | Pick the models for inline edits, semantic search and sub-agents from a list instead of typing ids |
 | MCP Servers | Status of your MCP servers; connect (sign in), reconnect, turn off |
 | Open Global Memory / Open Project Memory | Edit Nova's memory |
 | Set Up Browser Integration | Let Nova use your browser |

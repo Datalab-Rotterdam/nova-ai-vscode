@@ -256,6 +256,7 @@ Everything lives in `~/.nova-ai` (change it with `nova.home` or `NOVA_AI_HOME`):
 | Nova AI: Manage Skills / Manage Agents | Create and manage skills and agent modes |
 | Nova AI: MCP Servers | Status of your MCP servers; connect (sign in), reconnect, turn off |
 | Edit Selection with Nova | Rewrite the selection as you ask, shown as a diff first |
+| Nova AI: Choose Models | Pick the models for inline edits, semantic search and sub-agents from a list |
 | Nova AI: Set Up Browser Integration | Let Nova use your browser |
 | Nova AI: Open Global Memory / Open Project Memory | Edit Nova's memory |
 | Nova AI: Reveal Nova Folder | Open `~/.nova-ai` |

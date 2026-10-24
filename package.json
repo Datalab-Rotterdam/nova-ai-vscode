@@ -272,6 +272,11 @@
         "category": "Nova AI"
       },
       {
+        "command": "nova.chooseModel",
+        "title": "Nova AI: Choose Models",
+        "category": "Nova AI"
+      },
+      {
         "command": "nova.openChatInEditor",
         "title": "Nova AI: Open Chat in Editor",
         "category": "Nova AI",
@@ -585,7 +590,7 @@
           "nova.agent.subagents.model": {
             "type": "string",
             "default": "inherit",
-            "markdownDescription": "Model sub-agents use. `inherit` uses the model selected in the chat; otherwise a model id (see the Agents page)."
+            "markdownDescription": "Model sub-agents use. `inherit` uses the model selected in the chat; otherwise a model id. [Choose from your models](command:nova.chooseModel?%5B%22agent.subagents.model%22%5D)"
           },
           "nova.agent.subagents.allowedModels": {
             "type": "array",
@@ -593,7 +598,7 @@
               "type": "string"
             },
             "default": [],
-            "markdownDescription": "Model ids Nova may pick for a single sub-agent (for example a cheaper model for simple lookups). Empty: every sub-agent uses the model above."
+            "markdownDescription": "Model ids Nova may pick for a single sub-agent (for example a cheaper model for simple lookups). Empty: every sub-agent uses the model above. [Choose from your models](command:nova.chooseModel?%5B%22agent.subagents.allowedModels%22%5D)"
           },
           "nova.agent.subagents.maxPerCall": {
             "type": "integer",
@@ -706,12 +711,12 @@
           "nova.index.model": {
             "type": "string",
             "default": "",
-            "markdownDescription": "Embedding model for semantic search. Empty: the first model with the `embedding` capability."
+            "markdownDescription": "Embedding model for semantic search. Empty: the first model with the `embedding` capability. [Choose from your models](command:nova.chooseModel?%5B%22index.model%22%5D)"
           },
           "nova.inline.model": {
             "type": "string",
             "default": "",
-            "markdownDescription": "Model for **Edit Selection with Nova** (Cmd/Ctrl+I once set) and Tab completions. Empty turns both off; a fast model works best. The code around the cursor or selection is sent to Nova."
+            "markdownDescription": "Model for **Edit Selection with Nova** (Cmd/Ctrl+I once set) and Tab completions. Empty turns both off; a fast model works best. The code around the cursor or selection is sent to Nova. [Choose from your models](command:nova.chooseModel?%5B%22inline.model%22%5D)"
           },
           "nova.inline.tabEnabled": {
             "type": "boolean",

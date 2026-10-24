@@ -13,6 +13,7 @@ import {
     COMMAND_MANAGE_AGENTS,
     COMMAND_MANAGE_MCP,
     COMMAND_INLINE_EDIT,
+    COMMAND_CHOOSE_MODEL,
     COMMAND_MANAGE_SKILLS,
     COMMAND_SHOW_HELP,
     COMMAND_DEV_TEST_LINKS,
@@ -62,6 +63,7 @@ import {CodeIndex, type EmbeddingClient} from './index/CodeIndex';
 import {editSelection} from './inline/editInPlace';
 import {InlineCompletionProvider} from './inline/completionProvider';
 import type {InlineClient} from './inline/inlineModel';
+import {chooseModelSetting} from './model/modelSettings';
 import {git, repoRoot} from './git/git';
 import {manageMcpServers, signInWithBrowser} from './mcp/mcpCommand';
 import {setScratchRoot, toolRoot} from './agent/tools/workspacePaths';
@@ -117,6 +119,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     const mcpEnabled = () => vscode.workspace.getConfiguration('nova').get<boolean>('mcp.enabled', true);
 
     const proposedContent = new ProposedContentProvider();
+    // Model settings are picked from the models, not typed as ids: chat models, or the embedding models the chat list leaves out.
+    const listModels = async (kind: 'chat' | 'embedding') => kind === 'embedding'
+        ? codeIndex.embeddingModels()
+        : (await modelProvider.getCachedModels()).map((model) => ({ id: model.id, name: model.name }));
     // Semantic search over the workspace, when the gateway lists an embedding model.
     const codeIndex = new CodeIndex({
         client: async () => await sessionService.createClient() as unknown as EmbeddingClient | undefined,
@@ -226,9 +232,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         mcp.watch(),
         vscode.commands.registerCommand(COMMAND_INLINE_EDIT, async () => editSelection({
             client: inlineClient,
-            models: async () => (await modelProvider.getCachedModels()).map((model) => ({ id: model.id, name: model.name })),
+            chooseModel: async () => {
+                const value = await chooseModelSetting(listModels, 'inline.model');
+                return typeof value === 'string' && value ? value : undefined;
+            },
             proposed: proposedContent
         })),
+        vscode.commands.registerCommand(COMMAND_CHOOSE_MODEL, async (key?: string) => {
+            await chooseModelSetting(listModels, typeof key === 'string' ? key : undefined);
+        }),
         vscode.languages.registerInlineCompletionItemProvider({ pattern: '**' }, new InlineCompletionProvider(inlineClient)),
         vscode.commands.registerCommand(COMMAND_MANAGE_MCP, async () => {
             await manageMcpServers(mcp, { user: nova.home.mcpConfig, project: projectMcpConfig() });
