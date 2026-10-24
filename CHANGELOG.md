@@ -1,3 +1,10 @@
+# [1.0.0-alpha.29](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.28...v1.0.0-alpha.29) (2026-10-24)
+
+
+### Features
+
+* **chat:** slash commands from markdown files, skills and MCP prompts ([7c2a369](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/7c2a36922970f08c945513bd21fc25212ed034e0))
+
 # [1.0.0-alpha.28](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.27...v1.0.0-alpha.28) (2026-10-24)
 
 
