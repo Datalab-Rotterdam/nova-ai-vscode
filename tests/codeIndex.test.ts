@@ -73,9 +73,43 @@ describe('code index', () => {
         writeFileSync(path.join(dir, 'billing.ts'), 'export function chart() {\n  // draw a chart chart\n}\n');
         const later = Date.now() / 1000 + 5;
         (await import('node:fs')).utimesSync(path.join(dir, 'billing.ts'), later, later);
-        expect(path.basename((await reloaded.search('chart', 1))[0].path)).toBe('billing.ts');
+        // Changed while no window watched: the next window's first update finds it.
+        expect(path.basename((await index(client).search('chart', 1))[0].path)).toBe('billing.ts');
         expect(create.mock.calls[3][0].input).toHaveLength(1);
         expect(create.mock.calls[3][0].input[0]).toContain('billing.ts:1-4');
+    });
+
+    it('after the first update, reads only the files the watcher marked', async () => {
+        const handlers: Record<string, (uri: vscode.Uri) => void> = {};
+        vi.spyOn(vscode.workspace, 'createFileSystemWatcher').mockImplementation(() => ({
+            onDidCreate: (fn: (uri: vscode.Uri) => void) => (handlers.create = fn, new vscode.Disposable()),
+            onDidChange: (fn: (uri: vscode.Uri) => void) => (handlers.change = fn, new vscode.Disposable()),
+            onDidDelete: (fn: (uri: vscode.Uri) => void) => (handlers.delete = fn, new vscode.Disposable()),
+            dispose: () => undefined
+        }) as never);
+        const { client, create } = fakeClient();
+        const codeIndex = index(client);
+        const watching = codeIndex.watch();
+        await codeIndex.search('login', 1);
+        expect(vscode.workspace.findFiles).toHaveBeenCalledTimes(1);
+
+        // Nothing marked: no scan, only the query is embedded.
+        await codeIndex.search('login', 1);
+        expect(vscode.workspace.findFiles).toHaveBeenCalledTimes(1);
+        expect(create).toHaveBeenCalledTimes(3);
+
+        // A new file and a deleted one; changes under node_modules are ignored.
+        writeFileSync(path.join(dir, 'chart.ts'), 'export function chart() {\n  // chart chart\n}\n');
+        handlers.create(vscode.Uri.file(path.join(dir, 'chart.ts')));
+        rmSync(path.join(dir, 'auth.ts'));
+        handlers.delete(vscode.Uri.file(path.join(dir, 'auth.ts')));
+        handlers.change(vscode.Uri.file(path.join(dir, 'node_modules', 'x', 'index.js')));
+        const hits = await codeIndex.search('chart login', 5);
+        expect(vscode.workspace.findFiles).toHaveBeenCalledTimes(1);
+        expect(create.mock.calls[3][0].input).toHaveLength(1);
+        expect(create.mock.calls[3][0].input[0]).toContain('chart.ts:1-4');
+        expect(hits.map((hit) => path.basename(hit.path)).sort()).toEqual(['billing.ts', 'chart.ts']);
+        watching.dispose();
     });
 
     it('serves the semantic_search tool with snippets, and points to search_text when it fails', async () => {

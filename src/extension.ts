@@ -132,6 +132,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         dir: () => workspaceRoot() ? nova.project.index : undefined,
         log: (message, error) => diagnostics.error(message, error)
     });
+    context.subscriptions.push(codeIndex.watch());
     // Inline edits and completions use the Nova client directly: one non-streaming answer each.
     const inlineClient = async () => await sessionService.createClient() as unknown as InlineClient | undefined;
     // Skill folders and settings (docs/NOVA_HOME.md, "Skills"), read fresh on every use.

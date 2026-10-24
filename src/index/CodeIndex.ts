@@ -12,6 +12,10 @@ const MAX_CHUNK_CHARS = 4_000;
 const BATCH_SIZE = 64;
 /** How long the embedding model found in the model list is trusted before asking again. */
 const MODEL_TTL_MS = 10 * 60_000;
+/** What the watcher skips: the same folders and files as `EXCLUDE`. */
+const EXCLUDED = /[\\/](?:node_modules|\.git|dist|out|build|\.next|coverage)[\\/]|\.min\.js$|\.map$|\.lock$|[\\/]package-lock\.json$/;
+/** From this many files to embed, an update shows its progress. */
+const PROGRESS_FROM_FILES = 50;
 const BINARY = /\.(png|jpe?g|gif|webp|ico|pdf|zip|gz|tgz|jar|exe|dll|so|dylib|woff2?|ttf|otf|mp[34]|mov|wasm|bin|class|pyc|sqlite|db)$/i;
 
 /** The part of the Nova client the index uses. */
@@ -47,7 +51,9 @@ interface StoredIndex {
  * Semantic code search over the workspace: files are cut into overlapping chunks of lines,
  * embedded with the gateway's embedding model, and kept in the project folder
  * (`projects/<key>/index/`: `chunks.json` and `vectors.f32`, normalized float32 vectors).
- * Built on the first search, then brought up to date (changed files only) on each search.
+ * Built on the first search. The first update in a window checks every file's modification
+ * time (to catch changes made while it was closed); after that a file watcher marks what
+ * changed, and a search embeds only those files.
  * Without an embedding model in the model list (or with `nova.index.enabled` off) there is
  * no index and no tool.
  */
@@ -56,6 +62,10 @@ export class CodeIndex {
     private vectors = new Float32Array(0);
     private model?: { models: Array<{ id: string; name: string }>; at: number };
     private updating?: Promise<void>;
+    /** Whether this window has compared every file with the stored index yet. */
+    private scanned = false;
+    /** Files created, changed or deleted since the last update (absolute paths). */
+    private dirty = new Set<string>();
 
     public constructor(private readonly deps: {
         client(): Promise<EmbeddingClient | undefined>;
@@ -63,6 +73,17 @@ export class CodeIndex {
         dir(): string | undefined;
         log?(message: string, error?: unknown): void;
     }) {
+    }
+
+    /** Marks files as changed when they are created, changed or deleted in the workspace. */
+    public watch(): vscode.Disposable {
+        const watcher = vscode.workspace.createFileSystemWatcher('**/*');
+        const mark = (uri: vscode.Uri) => {
+            if (uri.scheme === 'file' && !EXCLUDED.test(uri.fsPath) && !BINARY.test(uri.fsPath)) {
+                this.dirty.add(uri.fsPath);
+            }
+        };
+        return vscode.Disposable.from(watcher, watcher.onDidCreate(mark), watcher.onDidChange(mark), watcher.onDidDelete(mark));
     }
 
     /** Whether semantic search can be offered: on, a folder is open, and an embedding model exists. */
@@ -123,33 +144,71 @@ export class CodeIndex {
         const previous = this.stored ?? { model, dims: 0, mtimes: {}, chunks: [] };
         const previousVectors = this.vectors;
 
-        const uris = await vscode.workspace.findFiles('**/*', EXCLUDE, MAX_FILES, token);
+        // Taken now: files changed while this update runs are picked up by the next one.
+        const dirty = [...this.dirty];
+        this.dirty.clear();
         const files = new Map<string, number>();
-        await Promise.all(uris.filter((uri) => uri.scheme === 'file' && !BINARY.test(uri.fsPath)).map(async (uri) => {
-            const stat = await fs.stat(uri.fsPath).catch(() => undefined);
+        const check = async (file: string) => {
+            const stat = await fs.stat(file).catch(() => undefined);
             if (stat?.isFile() && stat.size <= MAX_FILE_BYTES) {
-                files.set(uri.fsPath, stat.mtimeMs);
+                files.set(file, stat.mtimeMs);
+            } else {
+                files.delete(file);
             }
-        }));
+        };
+        const full = !this.scanned || !this.stored;
+        try {
+            if (full) {
+                const uris = await vscode.workspace.findFiles('**/*', EXCLUDE, MAX_FILES, token);
+                await Promise.all(uris.filter((uri) => uri.scheme === 'file' && !BINARY.test(uri.fsPath)).map((uri) => check(uri.fsPath)));
+            } else {
+                if (!dirty.length) {
+                    return;
+                }
+                // ponytail: new files past MAX_FILES are still added here; the next window's full scan trims back.
+                for (const [file, mtime] of Object.entries(previous.mtimes)) {
+                    files.set(file, mtime);
+                }
+                await Promise.all(dirty.map(check));
+            }
+        } catch (error) {
+            dirty.forEach((file) => this.dirty.add(file));
+            throw error;
+        }
         const unchanged = new Set([...files].filter(([file, mtime]) => previous.mtimes[file] === mtime).map(([file]) => file));
         if (unchanged.size === files.size && Object.keys(previous.mtimes).length === files.size) {
+            this.scanned ||= full;
             return;
         }
 
         // Keep the vectors of unchanged files; embed the chunks of new and changed ones.
         const kept = previous.chunks.map((chunk, index) => ({ chunk, index })).filter(({ chunk }) => unchanged.has(chunk.file));
+        const changed = [...files.keys()].filter((file) => !unchanged.has(file));
         const fresh: Array<{ chunk: Chunk; text: string }> = [];
-        for (const file of files.keys()) {
-            if (!unchanged.has(file)) {
-                fresh.push(...await chunksOf(file));
-            }
+        for (const file of changed) {
+            fresh.push(...await chunksOf(file));
         }
         const vectors: number[][] = [];
-        for (let start = 0; start < fresh.length; start += BATCH_SIZE) {
-            if (token?.isCancellationRequested) {
-                throw new Error('Indexing was cancelled.');
+        const embedAll = async (progress?: vscode.Progress<{ message?: string; increment?: number }>) => {
+            for (let start = 0; start < fresh.length; start += BATCH_SIZE) {
+                if (token?.isCancellationRequested) {
+                    throw new Error('Indexing was cancelled.');
+                }
+                vectors.push(...await embed(client, model, fresh.slice(start, start + BATCH_SIZE).map((entry) => entry.text)));
+                const done = Math.min(fresh.length, start + BATCH_SIZE);
+                progress?.report({ message: `${done.toLocaleString()} / ${fresh.length.toLocaleString()} parts of ${changed.length.toLocaleString()} files`, increment: (done - start) / fresh.length * 100 });
             }
-            vectors.push(...await embed(client, model, fresh.slice(start, start + BATCH_SIZE).map((entry) => entry.text)));
+        };
+        try {
+            if (changed.length >= PROGRESS_FROM_FILES) {
+                await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Nova: indexing for semantic search' }, embedAll);
+            } else {
+                await embedAll();
+            }
+        } catch (error) {
+            // The changed files stay changed, so the next search tries them again.
+            dirty.forEach((file) => this.dirty.add(file));
+            throw error;
         }
         const dims = vectors[0]?.length ?? previous.dims;
         const all = new Float32Array((kept.length + fresh.length) * dims);
@@ -159,6 +218,7 @@ export class CodeIndex {
         // Every file counts as indexed, also those without text (empty, binary), so they are not read again.
         this.stored = { model, dims, mtimes: Object.fromEntries(files), chunks: [...kept.map(({ chunk }) => chunk), ...fresh.map((entry) => entry.chunk)] };
         this.vectors = all;
+        this.scanned ||= full;
         await this.save(dir);
     }
 
