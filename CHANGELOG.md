@@ -1,3 +1,12 @@
+# [1.0.0-alpha.32](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.31...v1.0.0-alpha.32) (2026-10-24)
+
+
+### Features
+
+* **agent:** semantic code search with the gateway's embedding model ([efe14f2](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/efe14f2dc49d06de7731faae372098640310bbde))
+* **settings:** Nova Settings page with grouped sections and model lists ([235c77d](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/235c77d8bf304749e3f9ab50fc94afb6f34a8014))
+* **settings:** pick model settings from the model list ([a4ffa14](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/a4ffa14d11d8170bfe8e892f4af3d5fed2b6f667))
+
 # [1.0.0-alpha.31](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.30...v1.0.0-alpha.31) (2026-10-24)
 
 
