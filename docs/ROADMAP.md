@@ -18,6 +18,7 @@ lands.
 | **Inline editing** | #23 | **Edit Selection with Nova** (diff, then Apply). Tab completions are opt-in (`nova.inline.tabEnabled`). |
 | **Semantic code search** | #24 | `semantic_search` with the gateway's embedding model. The index lives in `projects/<key>/index` and updates incrementally. |
 | **Nova Settings page** | #24 | All settings in grouped sections, models picked from a list, User or Workspace scope. Also adds **Nova AI: Choose Models**. |
+| **CLI reads `mcp.json`** | nova-ai-cli | `~/.nova-ai/mcp.json` in every workspace, `.nova-ai/mcp.json` in a trusted one, same merge order as the extension. `${VAR}` expands in the CLI too. |
 | **CLI parity, partly** | nova-ai-cli | The CLI reads command files and supports autopilot and hooks. Its `rules.ts` understands `mcp__server__*`. |
 
 ## Still to do
@@ -25,10 +26,6 @@ lands.
 In three phases. Each item ships as its own PR into `alpha`.
 
 ### Phase 1: close the gap, quick wins
-
-#### 1. CLI: read `mcp.json` (nova-ai-cli)
-- **What:** `packages/agent/src/core/workspace-mcp.ts` should also read `~/.nova-ai/mcp.json` (the user's) and `<cwd>/.nova-ai/mcp.json` (only in a trusted workspace). The merge order matches the extension's `src/mcp/config.ts`.
-- **Why:** both tools share `~/.nova-ai`. Today a server added in the extension does not exist in the CLI, which goes against the contract in `docs/NOVA_HOME.md`.
 
 #### 2. Exporting chats as Markdown (extension)
 - **What:** a command that saves the open chat as a Markdown file. No share link: that needs a backend; add it when someone asks.
