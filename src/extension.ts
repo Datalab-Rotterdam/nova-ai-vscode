@@ -12,6 +12,7 @@ import {
     COMMAND_CHAT_RENAME,
     COMMAND_MANAGE_AGENTS,
     COMMAND_MANAGE_MCP,
+    COMMAND_INLINE_EDIT,
     COMMAND_MANAGE_SKILLS,
     COMMAND_SHOW_HELP,
     COMMAND_DEV_TEST_LINKS,
@@ -57,6 +58,9 @@ import {MemoryService, type MemoryScope} from './memory/MemoryService';
 import {PermissionService} from './permissions/PermissionService';
 import {McpService} from './mcp/McpService';
 import {HookService} from './hooks/HookService';
+import {editSelection} from './inline/editInPlace';
+import {InlineCompletionProvider} from './inline/completionProvider';
+import type {InlineClient} from './inline/inlineModel';
 import {git, repoRoot} from './git/git';
 import {manageMcpServers, signInWithBrowser} from './mcp/mcpCommand';
 import {setScratchRoot, toolRoot} from './agent/tools/workspacePaths';
@@ -112,6 +116,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     const mcpEnabled = () => vscode.workspace.getConfiguration('nova').get<boolean>('mcp.enabled', true);
 
     const proposedContent = new ProposedContentProvider();
+    // Inline edits and completions use the Nova client directly: one non-streaming answer each.
+    const inlineClient = async () => await sessionService.createClient() as unknown as InlineClient | undefined;
     // Skill folders and settings (docs/NOVA_HOME.md, "Skills"), read fresh on every use.
     const skillPaths = (): SkillPaths => ({
         home: os.homedir(),
@@ -210,6 +216,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         }),
         mcp,
         mcp.watch(),
+        vscode.commands.registerCommand(COMMAND_INLINE_EDIT, async () => editSelection({
+            client: inlineClient,
+            models: async () => (await modelProvider.getCachedModels()).map((model) => ({ id: model.id, name: model.name })),
+            proposed: proposedContent
+        })),
+        vscode.languages.registerInlineCompletionItemProvider({ pattern: '**' }, new InlineCompletionProvider(inlineClient)),
         vscode.commands.registerCommand(COMMAND_MANAGE_MCP, async () => {
             await manageMcpServers(mcp, { user: nova.home.mcpConfig, project: projectMcpConfig() });
         }),

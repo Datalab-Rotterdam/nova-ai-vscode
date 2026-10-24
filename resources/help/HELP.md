@@ -146,6 +146,19 @@ For work with several steps Nova keeps a task list, shown as a one-line strip ab
 
 ---
 
+## In the editor
+
+### Edit Selection with Nova
+
+Select code, right-click and choose **Edit Selection with Nova** (or press **Cmd+I** / **Ctrl+I** once an inline model is set). Say what should change; Nova shows the result as a diff, and **Apply** puts it in the file (only if the file did not change meanwhile) while **Discard** leaves it. Without a selection Nova edits the line the cursor is on. The first time, Nova asks which model to use and saves it in `nova.inline.model`; a fast model works best.
+
+### Tab completions
+
+Off by default. With `nova.inline.tabEnabled` on (and `nova.inline.model` set), Nova suggests a continuation as ghost text when you pause typing; **Tab** accepts it. Good to know:
+
+- Nova's API has no fill-in-the-middle endpoint, so suggestions come from a chat model. They are slower than dedicated completion engines and sometimes less precise.
+- Every pause sends the code around the cursor (about 60 lines before and 20 after) to Nova and costs tokens. `nova.inline.debounceMs` sets how long a pause must be.
+
 ## VS Code Chat and `@nova`
 
 - **Agent mode**: Nova models that support tool calling appear in agent mode and can use VS Code's tools. The **Nova** custom agent in the agent dropdown is tuned for Nova models.
@@ -238,6 +251,7 @@ Everything lives in `~/.nova-ai` (change it with `nova.home` or `NOVA_AI_HOME`):
 | Add to Nova Chat | Attach the editor selection |
 | Nova AI: Manage Skills / Manage Agents | Create and manage skills and agent modes |
 | Nova AI: MCP Servers | Status of your MCP servers; connect (sign in), reconnect, turn off |
+| Edit Selection with Nova | Rewrite the selection as you ask, shown as a diff first |
 | Nova AI: Set Up Browser Integration | Let Nova use your browser |
 | Nova AI: Open Global Memory / Open Project Memory | Edit Nova's memory |
 | Nova AI: Reveal Nova Folder | Open `~/.nova-ai` |
@@ -260,6 +274,9 @@ Everything lives in `~/.nova-ai` (change it with `nova.home` or `NOVA_AI_HOME`):
 | `nova.mcp.enabled` | on | Connect the servers in your `mcp.json` files |
 | `nova.mcp.toolTimeoutSeconds` | 60 | Time limit for one MCP tool call |
 | `nova.agent.includeMcpTools` | on | Also offer MCP tools registered in VS Code |
+| `nova.inline.model` | (none) | Model for Edit Selection and Tab completions; empty turns them off |
+| `nova.inline.tabEnabled` | off | Ghost-text completions while you type |
+| `nova.inline.debounceMs` | 300 | Pause before a completion is requested |
 | `nova.agent.subagents.*` | on | Research sub-agents: on/off, model and limits |
 | `nova.agent.codingAgents.*` | on | Background coding agents: on/off, how many at once, round limit |
 | `nova.webSearch.*` | on | Web search providers |

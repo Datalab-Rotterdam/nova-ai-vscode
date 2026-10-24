@@ -307,3 +307,7 @@ export const extensions = {
 };
 
 export const version = '1.139.0';
+
+export class InlineCompletionItem {
+  public constructor(public readonly insertText: string, public readonly range?: Range) { }
+}

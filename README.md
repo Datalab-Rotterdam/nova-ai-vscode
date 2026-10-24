@@ -79,6 +79,11 @@ On an approval card choose **Allow**, **Always allow** (saves a rule), **Allow a
 - Right-click in the editor and choose **Add to Nova Chat** to send your selection.
 - The ring next to Send shows how full the model's context window is; click it for details, a **Compact** button, and what the chat used so far: tokens in and out and, for models with a price, about what it cost. Long chats are compacted automatically.
 
+### In the editor
+
+- **Edit Selection with Nova** (right-click, or **Cmd/Ctrl+I** once a model is set): say what should change, see the result as a diff, and **Apply** or **Discard** it. Without a selection it edits the current line. The first time, Nova asks which model to use (`nova.inline.model`); a fast one works best.
+- **Tab completions** (off by default): turn on `nova.inline.tabEnabled` to get Nova's suggestions as ghost text while you type. Nova's API has no fill-in-the-middle endpoint, so they come from a chat model: slower than dedicated completion engines, and each pause in typing costs tokens.
+
 ### Chat comfortably
 
 - **Enter** sends, **Shift+Enter** adds a line. Keep typing while Nova works to **steer** it, or queue a follow-up.
@@ -127,6 +132,7 @@ Open the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`) and type **Nova AI**:
 | Chats / Search Chats | Find, open, rename or delete chats |
 | Add to Nova Chat | Send the editor selection (also in the editor context menu) |
 | Manage Skills / Manage Agents | Create and manage skills and agent modes |
+| Edit Selection with Nova | Rewrite the selection as you ask, shown as a diff first (also in the editor's context menu) |
 | MCP Servers | Status of your MCP servers; connect (sign in), reconnect, turn off |
 | Open Global Memory / Open Project Memory | Edit Nova's memory |
 | Set Up Browser Integration | Let Nova use your browser |
@@ -148,6 +154,8 @@ Search for **Nova** in VS Code Settings. The ones you are most likely to want:
 | `nova.mcp.enabled` | on | Connect the servers in `mcp.json` (workspace servers only when trusted) |
 | `nova.mcp.toolTimeoutSeconds` | 60 | Time limit for one MCP tool call |
 | `nova.agent.includeMcpTools` | on | Also offer MCP tools registered in VS Code |
+| `nova.inline.model` | (none) | Model for Edit Selection and Tab completions; empty turns them off |
+| `nova.inline.tabEnabled` | off | Ghost-text completions while you type |
 | `nova.agent.subagents.*` | on | Research sub-agents: on/off, model, and limits on how many run |
 | `nova.agent.codingAgents.*` | on, 2 at a time | Background coding agents in their own worktree: on/off, how many work at once, round limit |
 | `nova.webSearch.*` | on | Web search providers (DuckDuckGo, You.com, your own SearXNG) |

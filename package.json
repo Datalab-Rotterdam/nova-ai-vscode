@@ -267,6 +267,11 @@
         "category": "Nova AI"
       },
       {
+        "command": "nova.inlineEdit",
+        "title": "Edit Selection with Nova",
+        "category": "Nova AI"
+      },
+      {
         "command": "nova.openChatInEditor",
         "title": "Nova AI: Open Chat in Editor",
         "category": "Nova AI",
@@ -361,6 +366,14 @@
         "category": "Nova AI"
       }
     ],
+    "keybindings": [
+      {
+        "command": "nova.inlineEdit",
+        "key": "ctrl+i",
+        "mac": "cmd+i",
+        "when": "editorTextFocus && !editorReadonly && config.nova.inline.model"
+      }
+    ],
     "menus": {
       "view/title": [
         {
@@ -439,6 +452,11 @@
           "command": "nova.addSelectionToChat",
           "when": "nova.signedIn && resourceScheme == file",
           "group": "nova@1"
+        },
+        {
+          "command": "nova.inlineEdit",
+          "when": "nova.signedIn && !editorReadonly",
+          "group": "nova@2"
         }
       ],
       "commandPalette": [
@@ -679,6 +697,23 @@
             "type": "boolean",
             "default": false,
             "markdownDescription": "Also load skills from the `.claude/skills` and `.codex/skills` folders (in your home folder and in workspaces). `.agents` and Nova's own skills folders are always loaded."
+          },
+          "nova.inline.model": {
+            "type": "string",
+            "default": "",
+            "markdownDescription": "Model for **Edit Selection with Nova** (Cmd/Ctrl+I once set) and Tab completions. Empty turns both off; a fast model works best. The code around the cursor or selection is sent to Nova."
+          },
+          "nova.inline.tabEnabled": {
+            "type": "boolean",
+            "default": false,
+            "markdownDescription": "Show Nova's completions as ghost text while you type (accept with Tab). Needs `nova.inline.model`. Each pause in typing sends the code around the cursor to Nova, which costs tokens; Nova's API has no fill-in-the-middle endpoint, so completions come from a chat model and are slower than dedicated completion engines."
+          },
+          "nova.inline.debounceMs": {
+            "type": "number",
+            "default": 300,
+            "minimum": 100,
+            "maximum": 2000,
+            "markdownDescription": "How long typing must pause before Nova suggests a completion, in milliseconds."
           },
           "nova.agent.includeMcpTools": {
             "type": "boolean",
