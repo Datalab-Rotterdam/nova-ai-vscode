@@ -1,3 +1,10 @@
+# [1.0.0-alpha.31](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.30...v1.0.0-alpha.31) (2026-10-24)
+
+
+### Features
+
+* **editor:** Edit Selection with Nova and opt-in Tab completions ([5abfdeb](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/5abfdeb6f7c9f41d63fb74f24bd00a6f2e0fdbc8))
+
 # [1.0.0-alpha.30](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.29...v1.0.0-alpha.30) (2026-10-24)
 
 
