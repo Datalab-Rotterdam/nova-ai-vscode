@@ -26,7 +26,7 @@ describe('browser setup', () => {
 
         expect(await runBrowserSetup('/ext', '/home/me/.nova-ai', run)).toEqual(result);
         expect(call?.file).toBe(process.execPath);
-        expect(call?.args).toEqual(['/ext/resources/browser-host/dist/cli.js', 'install', '--auto', '--json']);
+        expect(call?.args).toEqual(['/ext/out/browser-host/dist/cli.js', 'install', '--auto', '--json']);
         expect(call?.env.ELECTRON_RUN_AS_NODE).toBe('1');
         expect(call?.env.NOVA_AI_HOME).toBe('/home/me/.nova-ai');
     });

@@ -5,8 +5,8 @@ import type { Diagnostics } from '../core/diagnostics';
 
 /*
  * Browser integration, set up the way Claude Code does it for its Chrome extension: this
- * extension ships the Nova AI Browser host (resources/browser-host, vendored from
- * nova-ai-browser) and registers it on startup. The host's own installer copies itself to
+ * extension ships the Nova AI Browser host (@datalabrotterdam/nova-ai-browser-host, copied to
+ * out/browser-host by the build) and registers it on startup. The host's own installer copies itself to
  * ~/.nova-ai-browser/host/<version>/, writes a wrapper and the browsers' native messaging
  * manifests, and installs the nova-browser skill into Nova's skills folder. It changes nothing
  * when everything is current and never replaces a newer host (nova-ai-cli ships one too).
@@ -53,7 +53,7 @@ export function parseSetupOutput(output: string): BrowserSetupResult {
  * system Node for the browser wrapper when there is one.
  */
 export async function runBrowserSetup(extensionPath: string, novaHome: string | undefined, run: ExecFile = execFileText): Promise<BrowserSetupResult> {
-    const cli = path.join(extensionPath, 'resources', 'browser-host', 'dist', 'cli.js');
+    const cli = path.join(extensionPath, 'out', 'browser-host', 'dist', 'cli.js');
     const env: NodeJS.ProcessEnv = { ...process.env, ELECTRON_RUN_AS_NODE: '1' };
     if (novaHome) {
         // The skill goes into the same Nova home this extension reads skills from.
