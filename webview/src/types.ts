@@ -17,7 +17,7 @@ export interface SidebarRenderState {
   /** Token colors of the editor theme by role (keyword, string, …); see src/views/syntaxColors.ts. */
   syntaxColors?: Partial<Record<string, string>>;
   profile?: ProfileView;
-  surface?: 'sidebar' | 'editor' | 'skills' | 'agents';
+  surface?: 'sidebar' | 'editor' | 'skills' | 'agents' | 'settings';
   models?: SidebarModel[];
   preferredModelId?: string;
   logoUri?: string;

@@ -4,6 +4,8 @@
     import ChatView from './chat/ChatView.svelte';
     import AgentsPage from './agents/AgentsPage.svelte';
     import SkillsPage from './skills/SkillsPage.svelte';
+    import SettingsPage from './settings/SettingsPage.svelte';
+    import type {SettingsPageData} from '../../src/settings/protocol';
     import type {AgentsPageData} from '../../src/agents/protocol';
     import type {SkillScopeName, SkillsPageData} from '../../src/skills/protocol';
     import {createChatStore} from './chat/store.svelte';
@@ -25,6 +27,8 @@
     /** The Skills tab runs this same app with surface "skills". */
     const skillsSurface = untrack(() => initialState.surface === 'skills');
     const agentsSurface = untrack(() => initialState.surface === 'agents');
+    const settingsSurface = untrack(() => initialState.surface === 'settings');
+    let settings = $state<SettingsPageData | undefined>();
     let skills = $state<SkillsPageData | undefined>();
     let agents = $state<AgentsPageData | undefined>();
     const savedScope = (vscode?.getState?.() as { scope?: SkillScopeName & ('global' | 'project') } | undefined)?.scope;
@@ -48,6 +52,8 @@
             const message = event.data;
             if (message.type === 'skills') {
                 skills = (message as unknown as { data: SkillsPageData }).data;
+            } else if (message.type === 'settings') {
+                settings = (message as unknown as { data: SettingsPageData }).data;
             } else if (message.type === 'agents') {
                 agents = (message as unknown as { data: AgentsPageData }).data;
             } else if (message.type.startsWith('chat/')) {
@@ -92,6 +98,10 @@
             post({command: 'agents/ready'});
             return () => window.removeEventListener('message', onMessage);
         }
+        if (settingsSurface) {
+            post({command: 'settings/ready'});
+            return () => window.removeEventListener('message', onMessage);
+        }
         post({command: 'ready'});
         post({command: 'chat/ready'});
         return () => window.removeEventListener('message', onMessage);
@@ -111,7 +121,9 @@
     <title>Nova AI</title>
 </svelte:head>
 
-{#if agentsSurface}
+{#if settingsSurface}
+    <SettingsPage data={settings} {post}/>
+{:else if agentsSurface}
     <AgentsPage data={agents} {post} initialScope={savedAgentScope ?? 'builtin'} onScope={(scope) => vscode?.setState?.({scope})}/>
 {:else if skillsSurface}
     <SkillsPage data={skills} {post} initialScope={savedScope ?? 'global'} onScope={(scope) => vscode?.setState?.({scope})}/>

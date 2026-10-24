@@ -98,6 +98,10 @@ Both menus show only their icon when the input box is too narrow for the labels.
 
 On an approval card: **Allow** runs it once, **Always allow** saves a rule to `.nova-ai/settings.local.json`, **Allow all** allows every tool call in this chat, **Reject** tells Nova to try something else. Edit cards can open the proposed diff first.
 
+### Semantic code search
+
+When your Nova gateway lists an embedding model, Nova gets a `semantic_search` tool: it finds code by meaning ("where are login sessions refreshed?", "retry logic for HTTP calls") instead of by exact text, and uses `search_text` for names and strings. The first search builds an index of the workspace in `~/.nova-ai/projects/<project>/index` (up to 5,000 files, skipping `node_modules`, build output, binaries and files over 200 KB), which can take a while in a large project; later searches only re-index files that changed. Your code is sent to Nova's embedding model for this, like code Nova reads in a chat. Turn it off with `nova.index.enabled`, or pick the model with `nova.index.model`.
+
 ### Research sub-agents
 
 For broad questions Nova can start research sub-agents that explore the project in parallel. A strip above the input shows each agent (state, tool calls, tokens, time). Click an agent to watch what it does, or stop it with its stop button. Turn them off or limit them with `nova.agent.subagents.*`.
@@ -252,6 +256,7 @@ Everything lives in `~/.nova-ai` (change it with `nova.home` or `NOVA_AI_HOME`):
 | Nova AI: Manage Skills / Manage Agents | Create and manage skills and agent modes |
 | Nova AI: MCP Servers | Status of your MCP servers; connect (sign in), reconnect, turn off |
 | Edit Selection with Nova | Rewrite the selection as you ask, shown as a diff first |
+| Nova AI: Choose Models | Pick the models for inline edits, semantic search and sub-agents from a list |
 | Nova AI: Set Up Browser Integration | Let Nova use your browser |
 | Nova AI: Open Global Memory / Open Project Memory | Edit Nova's memory |
 | Nova AI: Reveal Nova Folder | Open `~/.nova-ai` |
@@ -261,10 +266,12 @@ Everything lives in `~/.nova-ai` (change it with `nova.home` or `NOVA_AI_HOME`):
 | Nova AI: Manage Language Models | VS Code's model management |
 | Nova AI: Sign In / Sign Out | Connect or disconnect your API key |
 | Nova AI: Open Chat | Open VS Code Chat |
-| Nova AI: Open Settings | Nova AI settings |
+| Nova AI: Open Settings | The Nova Settings page |
 | Nova AI: Help | This page |
 
 ## Settings
+
+**Nova AI: Open Settings** opens the Nova Settings page: every Nova setting in sections (Chat › Agent, Sub-agents, Coding Agents, Context, Memory; Editor; Search › Code, Web; MCP & Tools; Developer), with a list of your models wherever a setting takes a model. **User** saves for you in every project, **Workspace** for this folder only (a workspace value wins; the User tab shows when one does). Changed settings are marked and have a **Reset**. The values are ordinary VS Code settings, also in `settings.json` and VS Code's own settings.
 
 | Setting | Default | |
 | --- | --- | --- |
@@ -274,6 +281,8 @@ Everything lives in `~/.nova-ai` (change it with `nova.home` or `NOVA_AI_HOME`):
 | `nova.mcp.enabled` | on | Connect the servers in your `mcp.json` files |
 | `nova.mcp.toolTimeoutSeconds` | 60 | Time limit for one MCP tool call |
 | `nova.agent.includeMcpTools` | on | Also offer MCP tools registered in VS Code |
+| `nova.index.enabled` | on | Semantic code search, when the gateway lists an embedding model |
+| `nova.index.model` | (first embedding model) | Embedding model for the search index |
 | `nova.inline.model` | (none) | Model for Edit Selection and Tab completions; empty turns them off |
 | `nova.inline.tabEnabled` | off | Ghost-text completions while you type |
 | `nova.inline.debounceMs` | 300 | Pause before a completion is requested |

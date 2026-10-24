@@ -44,6 +44,7 @@ Stuck or curious? Run **Nova AI: Help** for a full guide inside VS Code.
 - **Review every change**: edit cards show the changed lines. A strip above the input lists the files Nova touched, with **Keep** and **Undo** per file or for all; expand a file to keep or undo each change in it separately. The list survives a reload.
 - **Rewind**: the ⟲ button on a message rewinds to before it: the code (files Nova edited go back), the chat (the messages from there on go, the message returns to the input box to edit), or both. Commands Nova ran are not undone; Nova lists them before you choose.
 - **Stay in control**: choose how often Nova asks first with the permissions menu under the input (see [Modes](#modes-and-permissions)).
+- **Search code by meaning**: with an embedding model on your Nova gateway, Nova can find code by what it does ("where are sessions refreshed?"), not only by exact text. The index is built on the first search and kept up to date (`nova.index.*`).
 - **Search the web**: Nova looks up current information and cites its sources. No API key needed.
 - **Use your browser**: with the Nova AI Browser integration Nova can open pages and take screenshots in Chrome, Edge or Brave. Set it up with **Nova AI: Set Up Browser Integration** (it runs automatically on startup by default).
 - **Research in parallel**: for broad questions Nova can start up to a few research sub-agents. A strip above the input shows each one live; click an agent to watch what it does, or stop it.
@@ -133,18 +134,20 @@ Open the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`) and type **Nova AI**:
 | Add to Nova Chat | Send the editor selection (also in the editor context menu) |
 | Manage Skills / Manage Agents | Create and manage skills and agent modes |
 | Edit Selection with Nova | Rewrite the selection as you ask, shown as a diff first (also in the editor's context menu) |
+| Choose Models | Pick the models for inline edits, semantic search and sub-agents from a list instead of typing ids |
 | MCP Servers | Status of your MCP servers; connect (sign in), reconnect, turn off |
 | Open Global Memory / Open Project Memory | Edit Nova's memory |
 | Set Up Browser Integration | Let Nova use your browser |
 | Account and Models / Manage Account / Refresh Models | Connection and model list |
 | Sign In / Sign Out | Connect or disconnect your API key |
 | Reveal Nova Folder / Clean Up Projects | Open `~/.nova-ai`, remove data of deleted workspaces |
-| Manage Language Models / Open Chat / Open Settings | VS Code integration |
+| Open Settings | The Nova Settings page: every Nova setting in sections, models picked from a list, User or Workspace |
+| Manage Language Models / Open Chat | VS Code integration |
 | Help | The full in-editor guide |
 
 ## Settings
 
-Search for **Nova** in VS Code Settings. The ones you are most likely to want:
+Run **Nova AI: Open Settings** for the Nova Settings page: every setting in sections (Chat, Editor, Search, MCP & Tools, …), model settings as a list of your models, and a User / Workspace switch. They are ordinary VS Code settings, so you can also search for **Nova** in VS Code Settings or edit `settings.json`. The ones you are most likely to want:
 
 | Setting | Default | What it does |
 | --- | --- | --- |
@@ -154,6 +157,7 @@ Search for **Nova** in VS Code Settings. The ones you are most likely to want:
 | `nova.mcp.enabled` | on | Connect the servers in `mcp.json` (workspace servers only when trusted) |
 | `nova.mcp.toolTimeoutSeconds` | 60 | Time limit for one MCP tool call |
 | `nova.agent.includeMcpTools` | on | Also offer MCP tools registered in VS Code |
+| `nova.index.enabled` | on | Semantic code search, when the gateway lists an embedding model |
 | `nova.inline.model` | (none) | Model for Edit Selection and Tab completions; empty turns them off |
 | `nova.inline.tabEnabled` | off | Ghost-text completions while you type |
 | `nova.agent.subagents.*` | on | Research sub-agents: on/off, model, and limits on how many run |
@@ -180,7 +184,7 @@ Nova keeps its data in `~/.nova-ai`, readable only by you:
   skills/  agents/           your global skills and agents
   settings.json              your own permission rules
   mcp.json                   your MCP servers
-  projects/<name>-<hash>/    per workspace: memory, chat history, scratch files, coding agents' worktrees
+  projects/<name>-<hash>/    per workspace: memory, chat history, scratch files, coding agents' worktrees, search index
 ```
 
 A repository can also hold a `.nova-ai/` folder (rules, skills, agents) and a `NOVA.md` / `AGENTS.md` with team instructions. The `nova-ai` terminal app shares this folder, so memory, skills and chats carry over. The layout is documented in [docs/NOVA_HOME.md](docs/NOVA_HOME.md).

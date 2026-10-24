@@ -7,6 +7,8 @@ import { AgentsController } from '../agents/AgentsController';
 import type { SkillsCommand } from '../skills/protocol';
 import type { SkillPaths } from '../skills/SkillService';
 import { SkillsController } from '../skills/SkillsController';
+import { SettingsController } from '../settings/SettingsController';
+import type { SettingsCommand } from '../settings/protocol';
 import { Diagnostics } from '../core/diagnostics';
 import {
   COMMAND_MANAGE_MODELS,
@@ -36,7 +38,8 @@ const WEBVIEW_ENTRY = 'webview/index.html' as const;
 const HEAD_MARKER = '<!--nova:svelte-head-->';
 const BODY_MARKER = '<!--nova:svelte-body-->';
 
-export type Surface = 'sidebar' | 'editor' | 'skills' | 'agents';
+export type Surface = 'sidebar' | 'editor' | 'skills' | 'agents' | 'settings';
+export const SETTINGS_VIEW_TYPE = 'nova.settings';
 
 export const CHAT_PANEL_VIEW_TYPE = 'nova.chatPanel';
 export const SKILLS_VIEW_TYPE = 'nova.skills';
@@ -61,6 +64,8 @@ export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer
   private skills?: { panel: WebviewPanel; controller: SkillsController };
   private agentPaths?: () => AgentPaths;
   private agents?: { panel: WebviewPanel; controller: AgentsController };
+  private settings?: { panel: WebviewPanel; controller: SettingsController };
+  private createSettings?: (post: (message: unknown) => void) => SettingsController;
 
   public constructor(
     private readonly extensionUri: Uri,
@@ -88,6 +93,45 @@ export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer
   /** Where agents live, for the Agents page. */
   public useAgents(paths: () => AgentPaths): void {
     this.agentPaths = paths;
+  }
+
+  /** How to make the Settings page's controller (the extension knows the models and the settings). */
+  public useSettings(create: (post: (message: unknown) => void) => SettingsController): void {
+    this.createSettings = create;
+  }
+
+  /** The Nova Settings page (one editor tab). */
+  public async openSettings(): Promise<void> {
+    if (this.settings) {
+      this.settings.panel.reveal();
+      return;
+    }
+    await this.adoptSettingsPanel(window.createWebviewPanel(SETTINGS_VIEW_TYPE, 'Nova Settings', ViewColumn.Active, {
+      enableScripts: true,
+      localResourceRoots: this.resourceRoots()
+    }));
+  }
+
+  /** Restores the Settings tab after a window reload. */
+  public readonly settingsSerializer: WebviewPanelSerializer = {
+    deserializeWebviewPanel: (panel) => this.adoptSettingsPanel(panel)
+  };
+
+  private async adoptSettingsPanel(panel: WebviewPanel): Promise<void> {
+    if (!this.createSettings) {
+      panel.dispose();
+      return;
+    }
+    panel.iconPath = new ThemeIcon('settings-gear');
+    const controller = this.createSettings((message) => postSafely(panel.webview, message));
+    this.settings = { panel, controller };
+    panel.onDidDispose(() => {
+      controller.dispose();
+      if (this.settings?.panel === panel) {
+        this.settings = undefined;
+      }
+    });
+    await this.attach(panel.webview, 'settings');
   }
 
   /** The Agents page (one editor tab). */
@@ -193,6 +237,7 @@ export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer
     this.sidebarChat?.dispose();
     this.skills?.controller.dispose();
     this.agents?.controller.dispose();
+    this.settings?.controller.dispose();
   }
 
   public async resolveWebviewView(view: WebviewView): Promise<void> {
@@ -341,7 +386,8 @@ export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer
       ...(this.view ? [{ webview: this.view.webview, surface: 'sidebar' as const }] : []),
       ...[...this.panels.keys()].map((panel) => ({ webview: panel.webview, surface: 'editor' as const })),
       ...(this.skills ? [{ webview: this.skills.panel.webview, surface: 'skills' as const }] : []),
-      ...(this.agents ? [{ webview: this.agents.panel.webview, surface: 'agents' as const }] : [])
+      ...(this.agents ? [{ webview: this.agents.panel.webview, surface: 'agents' as const }] : []),
+      ...(this.settings ? [{ webview: this.settings.panel.webview, surface: 'settings' as const }] : [])
     ];
   }
 
@@ -382,6 +428,18 @@ export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer
           this.diagnostics.error('Nova skills action failed.', error);
           void window.showErrorMessage(toUserMessage(error));
           this.skills?.controller.refresh();
+        }
+      }
+      return;
+    }
+    if (message.command.startsWith('settings/')) {
+      if (this.settings?.panel.webview === source) {
+        try {
+          await this.settings.controller.handle(message as unknown as SettingsCommand);
+        } catch (error) {
+          this.diagnostics.error('Nova settings action failed.', error);
+          void window.showErrorMessage(toUserMessage(error));
+          void this.settings?.controller.refresh();
         }
       }
       return;

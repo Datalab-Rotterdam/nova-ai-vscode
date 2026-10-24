@@ -35,6 +35,7 @@ there), otherwise `~/.nova-ai`. Directories are created `0700`, files `0600`.
     cli-sessions/extension-import.json  CLI: panel chats already imported (see "Sessions")
     scratch/                    extension: scratch files (pruned after 7 days)
     worktrees/<id6>/            extension: git worktrees of coding agents (branch nova/<name>-<id6>)
+    index/                      extension: semantic search index (chunks.json + vectors.f32, rebuilt when the embedding model changes)
 <workspace>/.nova-ai/settings.json        team settings, committed
 <workspace>/.nova-ai/settings.local.json  personal settings, git-ignored
 <workspace>/.nova-ai/skills/<name>/SKILL.md  project skills, committed

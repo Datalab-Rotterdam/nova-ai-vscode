@@ -14,8 +14,8 @@ const SYSTEM = [
 
 export interface EditInPlaceDeps {
     client(): Promise<InlineClient | undefined>;
-    /** Models to choose from when `nova.inline.model` is not set yet. */
-    models(): Promise<ReadonlyArray<{ id: string; name: string }>>;
+    /** Asks for the inline model (`nova.inline.model`) when none is set yet; the chosen id, or undefined. */
+    chooseModel(): Promise<string | undefined>;
     proposed: ProposedContentProvider;
 }
 
@@ -40,7 +40,7 @@ export async function editSelection(deps: EditInPlaceDeps): Promise<void> {
     if (!instruction) {
         return;
     }
-    const model = inlineModel() ?? await chooseModel(deps);
+    const model = inlineModel() ?? await deps.chooseModel();
     const client = model ? await deps.client() : undefined;
     if (!model || !client) {
         if (model) {
@@ -107,21 +107,4 @@ export function buildEditPrompt(document: vscode.TextDocument, range: vscode.Ran
         '',
         `Instruction: ${instruction}`
     ].join('\n');
-}
-
-/** Asks for the inline model once and saves it in the user's settings. */
-async function chooseModel(deps: EditInPlaceDeps): Promise<string | undefined> {
-    const models = await deps.models();
-    if (!models.length) {
-        void vscode.window.showErrorMessage('No Nova models are available. Connect Nova AI first.');
-        return undefined;
-    }
-    const picked = await vscode.window.showQuickPick(models.map((model) => ({ label: model.name, description: model.id, id: model.id })), {
-        title: 'Model for inline edits',
-        placeHolder: 'A fast model works best; change it later in the setting nova.inline.model'
-    });
-    if (picked) {
-        await vscode.workspace.getConfiguration('nova').update('inline.model', picked.id, vscode.ConfigurationTarget.Global);
-    }
-    return picked?.id;
 }
