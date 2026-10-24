@@ -50,17 +50,7 @@ async function serverActions(mcp: McpService, server: McpServerStatus, files: { 
         switch (action) {
             case 'Connect (sign in)':
             case 'Sign in again':
-                await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Signing in to ${server.name} in your browser…`, cancellable: true }, async (_, token) => {
-                    const controller = new AbortController();
-                    token.onCancellationRequested(() => controller.abort());
-                    await mcp.signIn(server.name, {
-                        open: async (url) => {
-                            await vscode.env.openExternal(vscode.Uri.parse(url.toString()));
-                        },
-                        external: async (local) => (await vscode.env.asExternalUri(vscode.Uri.parse(local))).toString(),
-                        signal: controller.signal
-                    });
-                });
+                await signInWithBrowser(mcp, server.name);
                 void vscode.window.showInformationMessage(`Signed in to ${server.name}.`);
                 break;
             case 'Reconnect':
@@ -83,6 +73,21 @@ async function serverActions(mcp: McpService, server: McpServerStatus, files: { 
     } catch (error) {
         void vscode.window.showErrorMessage(`${server.name}: ${error instanceof Error ? error.message : String(error)}`);
     }
+}
+
+/** Signs in to a server in the browser, with a cancellable progress notification. */
+export async function signInWithBrowser(mcp: McpService, server: string): Promise<void> {
+    await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Signing in to ${server} in your browser…`, cancellable: true }, async (_, token) => {
+        const controller = new AbortController();
+        token.onCancellationRequested(() => controller.abort());
+        await mcp.signIn(server, {
+            open: async (url) => {
+                await vscode.env.openExternal(vscode.Uri.parse(url.toString()));
+            },
+            external: async (local) => (await vscode.env.asExternalUri(vscode.Uri.parse(local))).toString(),
+            signal: controller.signal
+        });
+    });
 }
 
 /** Opens a config file, creating it with an empty server list first; the user's file may hold tokens, so only they can read it. */

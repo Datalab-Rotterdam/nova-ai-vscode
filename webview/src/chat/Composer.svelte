@@ -74,7 +74,7 @@
   // Slash commands (/clear, /model, …) also work without a model.
   const canSend = $derived(
     Boolean(text.trim() || chat.attachments.length) &&
-      (Boolean(chat.modelId) || Boolean(parseSlashCommand(text))),
+      (Boolean(chat.modelId) || Boolean(parseSlashCommand(text, chat.commands))),
   );
 
   /*
@@ -87,7 +87,7 @@
   let mentionStart = $state(-1);
   /** The user arrowed through the file list: Enter then inserts, not sends. */
   let mentionNavigated = $state(false);
-  const suggestions = $derived(menuDismissed ? [] : suggestSlashCommands(text));
+  const suggestions = $derived(menuDismissed ? [] : suggestSlashCommands(text, chat.commands));
   const mentionOptions = $derived(
     mentionStart < 0 || menuDismissed
       ? []
@@ -508,6 +508,7 @@
                 >{/if}</span
             >
             <span class="compose-description">{command.description}</span>
+            {#if command.source}<span class="compose-source">{command.source === "file" ? "command" : command.source === "skill" ? "skill" : "MCP"}</span>{/if}
           </li>
         {/each}
       </ul>
@@ -919,6 +920,16 @@
   .compose-args,
   .compose-description {
     color: var(--nova-muted);
+  }
+
+  .compose-source {
+    flex: none;
+    margin-left: auto;
+    padding: 0 5px;
+    border: 1px solid var(--nova-subtle-border);
+    border-radius: 999px;
+    color: var(--nova-muted);
+    font-size: 0.8em;
   }
 
   .compose-description {

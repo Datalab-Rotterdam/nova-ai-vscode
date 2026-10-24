@@ -17,6 +17,7 @@ there), otherwise `~/.nova-ai`. Directories are created `0700`, files `0600`.
   memory/<name>.md              global memory notes
   skills/<name>/SKILL.md        global skills (see "Skills")
   agents/<name>.agent.md        global agents (see "Agents")
+  commands/<name>.md            global slash commands (see "Commands"; subfolders: ns:name)
   settings.json                 user settings: permission rules, default mode
   mcp.json                      user MCP servers (see "MCP servers")
   credentials.json              CLI only: API key + default model
@@ -37,6 +38,7 @@ there), otherwise `~/.nova-ai`. Directories are created `0700`, files `0600`.
 <workspace>/.nova-ai/settings.json        team settings, committed
 <workspace>/.nova-ai/settings.local.json  personal settings, git-ignored
 <workspace>/.nova-ai/skills/<name>/SKILL.md  project skills, committed
+<workspace>/.nova-ai/commands/<name>.md       project slash commands, committed
 <workspace>/NOVA.md             team instructions, committed, read-only for Nova
 <workspace>/AGENTS.md           team instructions, committed, read-only for Nova
 ```
@@ -355,6 +357,32 @@ nova-ai-cli carry. Its folder holds `.nova-bundled.json`:
   the version or the content hash no longer matches (an update, or a local edit).
   The `disabled` setting is kept, so a switched-off skill stays off after updates.
 - An installer never touches a skill folder without its own marker.
+
+## Commands
+
+Slash commands as markdown files, in Claude Code's format: the file's text is the
+prompt, sent as the user's message when they run `/<name> [arguments]`.
+
+```markdown
+---
+description: Write tests for a file      # shown in the slash menu
+argument-hint: <file>                    # shown after the name
+model: <model id>                        # optional: that model for this answer only
+---
+Write unit tests for $ARGUMENTS in the style of the existing tests.
+```
+
+- Folders, a later one replacing a command of the same name:
+  `~/.claude/commands` (only with the extension's `nova.skills.includeClaudeCodex`),
+  `~/.nova-ai/commands`, then per workspace `.claude/commands` (same setting) and
+  `.nova-ai/commands`.
+- The name is the file name without `.md`, lower-cased; a file in a subfolder is
+  `<folder>:<name>`. Names start with a letter or digit and use `[a-z0-9_:-]`.
+- `$ARGUMENTS` is everything after the name, `$1`…`$9` single words; a file
+  without placeholders gets the arguments appended after a blank line.
+- `allowed-tools` is read by Claude Code; Nova ignores it for now.
+- Built-in commands win a name clash. The extension also offers enabled skills as
+  `/<skill-name>` and MCP prompts as `/mcp__<server>__<prompt>`.
 
 ## Agents
 

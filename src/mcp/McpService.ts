@@ -8,11 +8,11 @@ import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
-import type { Tool } from '@modelcontextprotocol/sdk/types.js';
+import type { GetPromptResult, Prompt, Tool } from '@modelcontextprotocol/sdk/types.js';
 import { writePrivateFile } from '../storage/NovaHome';
 import { loadMcpServers, type McpScope, type McpServerConfig } from './config';
 import { NeedsAuthError, SecretOAuthProvider, type SecretStore } from './oauth';
-import { mcpToolName, type McpToolCaller, type McpToolEntry } from './tools';
+import { mcpToolName, type McpPromptEntry, type McpToolCaller, type McpToolEntry } from './tools';
 
 const CLIENT_INFO = { name: 'nova-ai-vscode', version: '1.0.0' };
 const STDERR_TAIL_CHARS = 2_000;
@@ -50,6 +50,7 @@ interface Connection {
     status: McpStatus;
     client?: Client;
     tools: McpToolEntry[];
+    prompts: McpPromptEntry[];
     error?: string;
     auth?: SecretOAuthProvider;
     opening?: Promise<void>;
@@ -103,7 +104,7 @@ export class McpService implements McpToolCaller, vscode.Disposable {
                     continue;
                 }
                 await existing?.client?.close().catch(() => undefined);
-                const connection: Connection = { config, status: disabled.has(config.name) ? 'disabled' : 'connecting', tools: [], stderr: '' };
+                const connection: Connection = { config, status: disabled.has(config.name) ? 'disabled' : 'connecting', tools: [], prompts: [], stderr: '' };
                 this.connections.set(config.name, connection);
                 if (connection.status !== 'disabled') {
                     opening.push(this.open(connection));
@@ -130,6 +131,20 @@ export class McpService implements McpToolCaller, vscode.Disposable {
     /** The tools of all connected servers. */
     public tools(): McpToolEntry[] {
         return [...this.connections.values()].filter((connection) => connection.status === 'connected').flatMap((connection) => connection.tools);
+    }
+
+    /** The prompts of all connected servers, for the slash command menu. */
+    public prompts(): McpPromptEntry[] {
+        return [...this.connections.values()].filter((connection) => connection.status === 'connected').flatMap((connection) => connection.prompts);
+    }
+
+    /** A prompt filled in with its arguments: the messages to send. */
+    public async getPrompt(server: string, name: string, args: Record<string, string>): Promise<GetPromptResult> {
+        const connection = this.connections.get(server);
+        if (!connection?.client) {
+            throw new Error(`MCP server "${server}" is not connected.`);
+        }
+        return connection.client.getPrompt({ name, arguments: args }, { timeout: this.options.timeoutMs() });
     }
 
     public statuses(): McpServerStatus[] {
@@ -214,6 +229,7 @@ export class McpService implements McpToolCaller, vscode.Disposable {
             await connection.client?.close().catch(() => undefined);
             connection.client = undefined;
             connection.tools = [];
+            connection.prompts = [];
             connection.error = undefined;
             connection.status = disabled ? 'disabled' : 'connecting';
             this.changed.fire();
@@ -260,12 +276,22 @@ export class McpService implements McpToolCaller, vscode.Disposable {
                                 this.changed.fire();
                             }
                         }
+                    },
+                    prompts: {
+                        onChanged: (error, prompts) => {
+                            if (!error && prompts && connection.client === client) {
+                                connection.prompts = toPromptEntries(config.name, prompts);
+                                this.changed.fire();
+                            }
+                        }
                     }
                 }
             });
             try {
                 await client.connect(transport);
                 connection.tools = toEntries(config.name, await listAllTools(client));
+                // Only servers that say they have prompts are asked; some others answer with an error.
+                connection.prompts = client.getServerCapabilities()?.prompts ? toPromptEntries(config.name, await listAllPrompts(client).catch(() => [])) : [];
                 connection.client = client;
                 connection.status = 'connected';
                 client.onclose = () => {
@@ -286,6 +312,7 @@ export class McpService implements McpToolCaller, vscode.Disposable {
             }
         }
         connection.tools = [];
+        connection.prompts = [];
         connection.status = isAuthError(lastError) ? 'needs-auth' : 'error';
         connection.error = isAuthError(lastError) ? new NeedsAuthError(config.name).message : errorMessage(lastError);
         this.options.log?.(`MCP server "${config.name}" did not connect.`, lastError);
@@ -329,6 +356,21 @@ export class McpService implements McpToolCaller, vscode.Disposable {
 
 function toEntries(server: string, tools: Tool[]): McpToolEntry[] {
     return tools.map((tool) => ({ server, name: mcpToolName(server, tool.name), tool }));
+}
+
+function toPromptEntries(server: string, prompts: Prompt[]): McpPromptEntry[] {
+    return prompts.map((prompt) => ({ server, name: mcpToolName(server, prompt.name), prompt }));
+}
+
+async function listAllPrompts(client: Client): Promise<Prompt[]> {
+    const prompts: Prompt[] = [];
+    let cursor: string | undefined;
+    do {
+        const page = await client.listPrompts(cursor ? { cursor } : undefined);
+        prompts.push(...page.prompts);
+        cursor = page.nextCursor;
+    } while (cursor);
+    return prompts;
 }
 
 async function listAllTools(client: Client): Promise<Tool[]> {

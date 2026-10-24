@@ -3,6 +3,8 @@
  * Type-only: the webview bundle imports this file, so it must not import `vscode`.
  */
 
+import type { SlashCommand } from './slashCommands';
+
 export type ChatItem =
     | {
         kind: 'user';
@@ -27,7 +29,7 @@ export type ChatItem =
     | { kind: 'thinking'; id: string; text: string; startedAt?: number; durationMs?: number; runId?: string }
     | ToolItem
     | QuestionItem
-    | { kind: 'notice'; id: string; text: string; tone: 'info' | 'warning' | 'error' };
+    | { kind: 'notice'; id: string; text: string; tone: 'info' | 'warning' | 'error'; action?: { label: string; id: string } };
 
 /** A question Nova asked with the ask_user tool. */
 export interface QuestionItem {
@@ -211,6 +213,8 @@ export interface ChatState {
     /** The agent (mode) of this chat and the ones to choose from. */
     agent: string;
     agents: AgentOption[];
+    /** Slash commands besides the built-ins: command files, skills and MCP prompts. */
+    commands: SlashCommand[];
     queue: QueuedMessage[];
     /** Nova's task list for the current work; empty when there is none or it was closed. */
     todos: TodoItem[];
@@ -300,6 +304,7 @@ export type ChatCommand =
     | { command: 'chat/skipQuestion'; itemId: string }
     | { command: 'chat/dismissTodos' }
     | { command: 'chat/stopAgent'; id: string }
+    | { command: 'chat/noticeAction'; id: string }
     | { command: 'chat/agentBranch'; id: string; action: 'review' | 'merge' | 'discard' | 'open' }
     | { command: 'chat/keepChange'; path?: string }
     | { command: 'chat/undoChange'; path?: string }

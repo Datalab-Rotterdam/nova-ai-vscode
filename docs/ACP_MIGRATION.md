@@ -127,6 +127,7 @@ Built on the extension's own agent (October 2026); each needs a place on ACP.
 | Panel feature | ACP agent today | Status / work |
 |---|---|---|
 | Hooks (`PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `SessionStart`, `Stop`; Claude Code's format, `src/hooks/HookService.ts`) | — | 🔴 (A) run them in the agent, where the tool calls happen; same settings key and semantics (`docs/NOVA_HOME.md`, "Hooks") |
+| Slash commands from markdown files, skills as `/name`, MCP prompts (`src/commands/`, `McpService.prompts`) | ACP `available_commands_update` | 🟡 the agent can announce file commands and skills itself; MCP prompts follow wherever the MCP servers end up (see Tools) |
 | `/commit`, `/review`, `/pr` (`src/git/`) | — | ✅ **stays in the extension**: git and `gh`/`glab` with one model answer; `/review` becomes a normal `session/prompt` with the diff attached |
 | Coding agents in their own git worktree (`start_coding_agent`, `src/git/worktrees.ts`) | — | 🟡 the worktree and branch handling (create, commit, review, merge, discard) stays in the extension; each agent becomes its own ACP session with `cwd` set to its worktree, so no tool rooting is needed. The tool that starts one has to be offered to the agent (an extension-provided tool over the MCP bridge) |
 

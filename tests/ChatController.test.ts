@@ -582,6 +582,51 @@ describe('ChatController', () => {
     expect(store.save.mock.calls.at(-1)?.[0].usageTotals).toEqual(totals);
   });
 
+  it('runs commands from files and MCP prompts as messages, and offers to sign in to MCP servers that need it', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'nova-cmd-'));
+    mkdirSync(join(root, 'nova', 'commands'), { recursive: true });
+    writeFileSync(join(root, 'nova', 'commands', 'explain.md'), '---\ndescription: Explain a file\nargument-hint: <file>\n---\nExplain $ARGUMENTS in two sentences.');
+    const mcp = {
+      ensureStarted: vi.fn(async () => undefined),
+      tools: () => [],
+      prompts: () => [{ server: 'docs', name: 'mcp__docs__summary', prompt: { name: 'summary', description: 'Summarize a topic', arguments: [{ name: 'topic', required: true }] } }],
+      getPrompt: vi.fn(async (_server: string, _name: string, args: Record<string, string>) => ({ messages: [{ role: 'user', content: { type: 'text', text: `Summarize ${args.topic}.` } }] })),
+      statuses: () => [{ name: 'linear', scope: 'user', type: 'http', status: 'needs-auth', tools: 0 }],
+      onDidChange: () => ({ dispose: () => undefined })
+    };
+    const signInMcp = vi.fn(async () => undefined);
+    const { controller, model } = setup([
+      [new vscode.LanguageModelTextPart('It explains.')],
+      [new vscode.LanguageModelTextPart('A summary.')]
+    ], 'autoReadOnly', {
+      mcp,
+      signInMcp,
+      commands: () => ({ home: root, novaHome: join(root, 'nova'), workspaceRoots: [], includeClaude: false })
+    });
+
+    expect(controller.getState().commands.map((command) => [command.name, command.source, command.args])).toEqual([
+      ['explain', 'file', '<file>'],
+      ['mcp__docs__summary', 'mcp', '<topic>']
+    ]);
+
+    await controller.handle({ command: 'chat/send', text: '/explain src/app.ts' });
+    await controller.handle({ command: 'chat/send', text: '/mcp__docs__summary release notes' });
+
+    const userTexts = controller.getState().items.filter((item) => item.kind === 'user').map((item) => item.text);
+    expect(userTexts).toEqual(['Explain src/app.ts in two sentences.', 'Summarize release notes.']);
+    expect(mcp.getPrompt).toHaveBeenCalledWith('docs', 'summary', { topic: 'release notes' });
+    expect(model.sendRequest).toHaveBeenCalledTimes(2);
+
+    // One sign-in notice for the chat, not one per message.
+    const notices = controller.getState().items.filter((item) => item.kind === 'notice' && item.action);
+    expect(notices).toHaveLength(1);
+    const notice = notices[0] as Extract<(typeof notices)[number], { kind: 'notice' }>;
+    expect(notice.action).toEqual({ label: 'Sign in', id: 'mcp-signin:linear' });
+    await controller.handle({ command: 'chat/noticeAction', id: notice.action!.id });
+    expect(signInMcp).toHaveBeenCalledWith('linear');
+    rmSync(root, { recursive: true, force: true });
+  });
+
   it('opens a saved chat', async () => {
     const { controller, store } = setup([]);
     store.load.mockResolvedValue({ id: 'saved', title: 'Saved chat', createdAt: 1, updatedAt: 1, items: [{ kind: 'user', id: 'u1', text: 'hi', attachments: [] }], messages: [] });

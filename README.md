@@ -84,7 +84,7 @@ On an approval card choose **Allow**, **Always allow** (saves a rule), **Allow a
 - Edit and resend an earlier message, or regenerate an answer and keep both versions.
 - Replies render Markdown, code, links (checked before they open) and LaTeX math, with copy buttons.
 - Thinking and tool calls fold into short, readable steps.
-- Type **`/`** for quick commands: `/clear`, `/compact`, `/model`, `/rename`, `/commit`, `/review`, `/pr`, `/help`.
+- Type **`/`** for quick commands: `/clear`, `/compact`, `/model`, `/rename`, `/commit`, `/review`, `/pr`, `/help`, plus your own commands, your skills (`/skill-name`) and the prompts of your MCP servers.
 - **Chats** (history button) lists every chat of the workspace with search, rename and delete. **Open Chat in Editor** moves a chat to its own tab, so several can run side by side.
 
 ### Make Nova yours
@@ -92,6 +92,15 @@ On an approval card choose **Allow**, **Always allow** (saves a rule), **Allow a
 - **Memory**: Nova remembers your preferences (global) and notes about the project, and reads `NOVA.md` or `AGENTS.md` in your repository for team instructions. It asks before changing memory.
 - **Skills**: reusable instructions (a folder with `SKILL.md`) that Nova loads when a task fits. Manage them with **Nova AI: Manage Skills**, globally or per project.
 - **Agents**: custom agent modes as markdown files, global or per project.
+- **Commands**: your own slash commands as markdown files in `~/.nova-ai/commands/` or the repository's `.nova-ai/commands/` (Claude Code's format, so `.claude/commands` works too with `nova.skills.includeClaudeCodex`). The file is the prompt; `$ARGUMENTS` is what you type after the command:
+
+  ```markdown
+  ---
+  description: Write tests for a file
+  argument-hint: <file>
+  ---
+  Write unit tests for $ARGUMENTS in the style of the existing tests, then run them.
+  ```
 - **Permission rules**: shared or personal allow/deny rules, in `.nova-ai/settings.json` and `.nova-ai/settings.local.json`:
 
   ```json

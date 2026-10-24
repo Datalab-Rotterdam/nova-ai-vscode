@@ -58,7 +58,7 @@ import {PermissionService} from './permissions/PermissionService';
 import {McpService} from './mcp/McpService';
 import {HookService} from './hooks/HookService';
 import {git, repoRoot} from './git/git';
-import {manageMcpServers} from './mcp/mcpCommand';
+import {manageMcpServers, signInWithBrowser} from './mcp/mcpCommand';
 import {setScratchRoot, toolRoot} from './agent/tools/workspacePaths';
 import {currentWorkspace, ensureDir, NovaHome, pruneOlderThan, type ProjectPaths, workspaceKey} from './storage/NovaHome';
 
@@ -149,7 +149,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                 agents: agentPaths,
                 mcp: mcpEnabled() ? mcp : undefined,
                 hooks,
-                worktrees: () => workspaceRoot() ? path.join(nova.project.dir, 'worktrees') : undefined
+                worktrees: () => workspaceRoot() ? path.join(nova.project.dir, 'worktrees') : undefined,
+                commands: () => ({
+                    home: os.homedir(),
+                    novaHome: nova.home.root,
+                    workspaceRoots: (vscode.workspace.workspaceFolders ?? []).filter((folder) => folder.uri.scheme === 'file').map((folder) => folder.uri.fsPath),
+                    includeClaude: vscode.workspace.getConfiguration('nova').get<boolean>('skills.includeClaudeCodex', false)
+                }),
+                signInMcp: (server) => signInWithBrowser(mcp, server)
             },
             { ...options, hub: chatHub }
         );
