@@ -65,7 +65,7 @@ Two separate build targets in one repo:
 
 ## Key patterns
 
-- `@datalabrotterdam/nova-sdk` is the only runtime dependency; all VS Code APIs are peer/dev
+- Runtime dependencies: `@datalabrotterdam/nova-sdk`, and `@datalabrotterdam/nova-ai-skills` (the Word, Excel, PowerPoint and PDF skills plus their installer, shared with nova-ai-cli; change them in [nova-ai-skills](https://github.com/Datalab-Rotterdam/nova-ai-skills), not here). `build:skills` copies the package to `out/nova-ai-skills`, and `extension.ts` installs from there because the bundled module cannot find its own folder. All VS Code APIs are peer/dev
 - `src/types/vscode-proposed.d.ts` — optional typings for the proposals in `enabledApiProposals`; proposals are only active in Insiders or for allowlisted extensions, so always go through `src/core/apiSupport.ts`
 - `resources/chat/` — contributed custom agent (`chatAgents`) and prompt files (`chatPromptFiles`)
 - Webview: Svelte 5 runes, codicons, colors only from `--vscode-*` variables (`webview/src/app.scss`); the document renders once and state updates arrive via `postMessage`

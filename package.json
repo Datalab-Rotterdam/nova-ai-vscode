@@ -905,7 +905,7 @@
     "pretest": "npm run compile"
   },
   "dependencies": {
-    "@datalabrotterdam/nova-ai-skills": "1.0.0-alpha.2",
+    "@datalabrotterdam/nova-ai-skills": "^1.0.1",
     "@datalabrotterdam/nova-sdk": "1.4.0-k8s.3",
     "@modelcontextprotocol/sdk": "^1.32.2"
   },
