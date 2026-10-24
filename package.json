@@ -788,7 +788,8 @@
   },
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('out', { recursive: true, force: true })\"",
-    "compile": "npm run clean && npm run build:webview && npm run typecheck && npm run build:extension",
+    "compile": "npm run clean && npm run build:webview && npm run typecheck && npm run build:extension && npm run build:skills",
+    "build:skills": "node -e \"require('node:fs').cpSync('node_modules/@datalabrotterdam/nova-ai-skills', 'out/nova-ai-skills', { recursive: true })\"",
     "build:extension": "esbuild src/extension.ts --bundle --platform=node --format=cjs --target=node22 --external:vscode --outfile=out/extension.js --sourcemap",
     "build:webview": "vite build --config vite.webview.config.mts",
     "dev:webview": "vite build --watch --config vite.webview.config.mts",
