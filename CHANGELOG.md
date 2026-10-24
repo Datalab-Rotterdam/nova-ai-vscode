@@ -1,3 +1,10 @@
+# [1.0.0-alpha.30](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.29...v1.0.0-alpha.30) (2026-10-24)
+
+
+### Features
+
+* **chat:** rewind to a message, keep or undo single hunks, changes survive a reload ([4dde503](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/4dde503ed8b177bb9e4591a22718feb24f0f10db))
+
 # [1.0.0-alpha.29](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.28...v1.0.0-alpha.29) (2026-10-24)
 
 
