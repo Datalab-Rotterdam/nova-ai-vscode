@@ -2889,9 +2889,10 @@ export class ChatController implements vscode.Disposable, ChatHistory {
             void vscode.window.showWarningMessage('This Nova chat could not be loaded.');
             return;
         }
-        const folder = vscode.workspace.workspaceFolders?.[0]?.uri;
+        // Without a folder the dialog would offer "Untitled": suggest the name in the home folder.
+        const folder = vscode.workspace.workspaceFolders?.[0]?.uri ?? vscode.Uri.file(nodeOs.homedir());
         const target = await vscode.window.showSaveDialog({
-            defaultUri: folder ? vscode.Uri.joinPath(folder, exportFileName(chat.title)) : undefined,
+            defaultUri: vscode.Uri.joinPath(folder, exportFileName(chat.title)),
             filters: { Markdown: ['md'] },
             saveLabel: 'Export chat'
         });
