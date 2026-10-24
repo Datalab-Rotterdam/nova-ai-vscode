@@ -341,6 +341,9 @@ export class ChatController implements vscode.Disposable, ChatHistory {
             case 'chat/delete':
                 await confirmAndDeleteChats(this, command.sessionIds);
                 break;
+            case 'chat/export':
+                await this.exportSession(command.sessionId);
+                break;
             case 'chat/setEffort':
                 this.session.effort = command.effort;
                 void this.persist();

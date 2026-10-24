@@ -271,6 +271,7 @@ export type ChatCommand =
     | { command: 'chat/open'; sessionId: string }
     | { command: 'chat/rename'; sessionId: string; title: string }
     | { command: 'chat/delete'; sessionIds: string[] }
+    | { command: 'chat/export'; sessionId: string }
     | { command: 'chat/selectModel'; modelId: string }
     | { command: 'chat/setEffort'; effort: string }
     | { command: 'chat/addFile' }

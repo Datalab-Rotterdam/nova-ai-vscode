@@ -2,6 +2,7 @@
     import {onMount, tick} from 'svelte';
     import type {SessionSummary} from '../../../src/panel/protocol';
     import {filterChats, formatAge, groupChats} from '../../../src/panel/chatGroups';
+    import DropdownMenu, {type MenuItem} from './DropdownMenu.svelte';
 
     let {sessions, openElsewhere = [], currentId, running, surface = 'sidebar', post, onClose}: {
         sessions: SessionSummary[];
@@ -68,6 +69,19 @@
     /** VS Code's native context menu for a row (see "webview/context" in package.json). */
     function menuContext(chat: SessionSummary): string {
         return JSON.stringify({webviewSection: 'novaChatRow', sessionId: chat.id, preventDefaultContextMenuItems: true});
+    }
+
+    function menuItems(chat: SessionSummary, current: boolean, elsewhere: boolean): MenuItem[] {
+        return [
+            ...(!current || surface === 'sidebar' ? [{
+                label: elsewhere ? 'Show where it is open' : surface === 'editor' ? 'Open in a new tab' : 'Open in editor',
+                icon: 'link-external',
+                onSelect: () => openInEditor(chat)
+            }] : []),
+            {label: 'Rename', icon: 'edit', hint: 'F2', onSelect: () => void startRename(chat)},
+            {label: 'Export as Markdown…', icon: 'export', onSelect: () => post({command: 'chat/export', sessionId: chat.id})},
+            {label: 'Delete', icon: 'trash', hint: 'Del', danger: true, onSelect: () => remove([chat.id])}
+        ];
     }
 
     function remove(ids: string[]) {
@@ -255,16 +269,7 @@
                                 <span class="age">{working ? 'working…' : current ? 'open' : elsewhere ? (surface === 'editor' ? 'open elsewhere' : 'in a tab') : formatAge(chat.updatedAt, now)}</span>
                             </button>
                             <span class="actions">
-                                {#if !current || surface === 'sidebar'}
-                                    <button
-                                        class="icon codicon codicon-link-external"
-                                        title={elsewhere ? 'Show where it is open' : surface === 'editor' ? 'Open in a new tab' : 'Open in editor'}
-                                        aria-label={`Open ${chat.title} in the editor`}
-                                        onclick={() => openInEditor(chat)}
-                                    ></button>
-                                {/if}
-                                <button class="icon codicon codicon-edit" title="Rename (F2)" aria-label={`Rename ${chat.title}`} onclick={() => startRename(chat)}></button>
-                                <button class="icon codicon codicon-trash" title="Delete" aria-label={`Delete ${chat.title}`} onclick={() => remove([chat.id])}></button>
+                                <DropdownMenu label={`Actions for ${chat.title || 'Untitled chat'}`} items={menuItems(chat, current, elsewhere)} />
                             </span>
                         {/if}
                     </div>
