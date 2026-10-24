@@ -1,3 +1,17 @@
+# [1.0.0-alpha.35](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.34...v1.0.0-alpha.35) (2026-10-24)
+
+
+### Bug Fixes
+
+* suggest the chat's file name when no folder is open ([34ba230](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/34ba230e597bdc40cdf51fc44c4050b2b9d1366e))
+
+
+### Features
+
+* chat row actions in a dropdown menu, with Export ([af91fe2](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/af91fe28a33e1e8814338ac1f4b7f80ac58a1ec0))
+* export a chat as Markdown ([0f3b2b6](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/0f3b2b6609d5a07ba5fadb994aa6fd270f53382d))
+* name an exported chat after its title, details in front matter ([8fe2428](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/8fe2428e26a56e46bf3d6d01558c9e0cafaecdd4))
+
 # [1.0.0-alpha.34](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.33...v1.0.0-alpha.34) (2026-10-24)
 
 
