@@ -105,6 +105,7 @@ Legend: ✅ the ACP agent already does this · 🟡 small change · 🔴 new wor
 | `todo_write` | `update_plan` (ACP `plan`) | ✅ different name, same feature; alias for rules |
 | `find_files` (glob) | — | ✅ (A) workspace-confined; `node_modules`, `.git` and build output skipped (`.gitignore` is not read) |
 | `fetch_url` | — | ✅ (A) always asks unless a rule allows the URL; same-site redirects only |
+| `semantic_search` (embeddings index in `projects/<key>/index`, `src/index/CodeIndex.ts`) | — | 🟡 move the index into the agent (same folder and format) or offer it over the MCP bridge |
 | `get_diagnostics` (VS Code problems) | — | 🔴 editor-only: provided by the extension's MCP bridge (below) |
 | VS Code MCP tools (`mcp_*`, `nova.agent.includeMcpTools`) | agent connects MCP servers given in `session/new` | 🔴 MCP bridge (below) |
 | MCP servers from `.mcp.json` / `.nova-ai/settings.json` | ✅ agent reads them (trusted workspaces) | ✅ |

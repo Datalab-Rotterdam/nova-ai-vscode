@@ -14,6 +14,8 @@ import { agentsFolder } from '../agents/AgentsController';
 import { agentAllowsTool, findAgent, listAgents, type AgentDefinition, type AgentPaths } from '../agents/AgentService';
 import type { HookEvent, HookOutcome, HookService } from '../hooks/HookService';
 import type { McpService } from '../mcp/McpService';
+import type { CodeIndex } from '../index/CodeIndex';
+import { createSemanticSearchTool } from '../agent/tools/semanticSearchTool';
 import { createMcpTool } from '../mcp/tools';
 import type { MemoryService } from '../memory/MemoryService';
 import { type PermissionService, suggestRule } from '../permissions/PermissionService';
@@ -128,7 +130,7 @@ interface TrackedChange {
 /** Tools rendered by their own UI instead of a tool card. */
 const INTERACTION_TOOLS = new Set(['todo_write', 'ask_user']);
 /** What a research sub-agent may use: reading, searching, the web and commands; never edits. */
-const SUBAGENT_TOOLS = new Set(['read_file', 'list_dir', 'find_files', 'search_text', 'get_diagnostics', 'fetch_url', 'web_search', 'run_command']);
+const SUBAGENT_TOOLS = new Set(['read_file', 'list_dir', 'find_files', 'search_text', 'semantic_search', 'get_diagnostics', 'fetch_url', 'web_search', 'run_command']);
 /** What a coding agent may use in its worktree; diagnostics only cover the open workspace. */
 const CODING_AGENT_TOOLS = new Set(['read_file', 'list_dir', 'find_files', 'search_text', 'edit_file', 'create_file', 'run_command', 'fetch_url', 'web_search']);
 
@@ -234,7 +236,7 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         private readonly proposedContent: ProposedContentProvider,
         private readonly diagnostics: Diagnostics,
         private post: (event: ChatEvent) => void,
-        private readonly services: { memory?: MemoryService; permissions?: PermissionService; skillPaths?: () => SkillPaths; agents?: () => AgentPaths; mcp?: McpService; hooks?: HookService; worktrees?: () => string | undefined; commands?: () => CommandPaths; signInMcp?: (server: string) => Promise<void> } = {},
+        private readonly services: { memory?: MemoryService; permissions?: PermissionService; skillPaths?: () => SkillPaths; agents?: () => AgentPaths; mcp?: McpService; hooks?: HookService; worktrees?: () => string | undefined; commands?: () => CommandPaths; signInMcp?: (server: string) => Promise<void>; codeIndex?: CodeIndex } = {},
         private readonly options: ChatControllerOptions = {}
     ) {
         this.rememberLast = options.rememberLast ?? true;
@@ -1158,7 +1160,7 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         const repo = subagentSettings.codingAgents && !agent.readOnly && agentAllowsTool(agent, START_CODING_AGENT_TOOL) && this.services.worktrees?.()
             ? await repoRoot(workspaceFolders()[0]?.uri.fsPath ?? '').catch(() => undefined)
             : undefined;
-        const tools = availableTools(this.services.memory, this.interactionHost(), skills, subagentsOn ? this.subagentHost(agent) : undefined, this.services.mcp, repo ? this.codingAgentHost(agent, repo) : undefined)
+        const tools = availableTools(this.services.memory, this.interactionHost(), skills, subagentsOn ? this.subagentHost(agent) : undefined, this.services.mcp, repo ? this.codingAgentHost(agent, repo) : undefined, await this.searchTools())
             .filter((tool) => agentAllowsTool(agent, tool.info.name, tool.mcp) && (!agent.readOnly || tool.readOnly));
         let assistantItem: Extract<ChatItem, { kind: 'assistant' }> | undefined;
         let thinkingItem: Extract<ChatItem, { kind: 'thinking' }> | undefined;
@@ -1816,7 +1818,8 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         // Same limits as the main agent's mode: a read-only mode gives read-only agents, and no mode lends an agent more than it has itself.
         const allowed = worktree ? CODING_AGENT_TOOLS : SUBAGENT_TOOLS;
         const maxRounds = worktree ? settings.codingRounds : settings.maxRounds;
-        const tools = availableTools()
+        // The index covers the open workspace, not a coding agent's worktree: research agents only.
+        const tools = availableTools(undefined, undefined, [], undefined, undefined, undefined, worktree ? [] : await this.searchTools())
             .filter((tool) => allowed.has(tool.info.name) && agentAllowsTool(agent, tool.info.name, false) && (!agent.readOnly || tool.readOnly));
         const own = new vscode.CancellationTokenSource();
         this.subagentRuns.set(id, own);
@@ -2515,6 +2518,12 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         }
     }
 
+    /** semantic_search, when the workspace has an embedding model to index with. */
+    private async searchTools(): Promise<Array<NovaTool<never>>> {
+        const index = this.services.codeIndex;
+        return index && await index.available().catch(() => false) ? [createSemanticSearchTool(index)] : [];
+    }
+
     private commandCache?: { at: number; commands: SlashCommand[] };
     /** A model id for the next answer only (a command file's `model`). */
     private oneRunModel?: string;
@@ -3002,7 +3011,7 @@ interface AvailableTool {
  * VS Code, which can run without a chat request. A server both know is used through Nova's
  * client, which honours its read-only hints and keeps its connection.
  */
-function availableTools(memory?: MemoryService, interaction?: InteractionHost, skills: readonly Skill[] = [], subagents?: SubagentHost, mcpService?: McpService, codingAgents?: CodingAgentHost): AvailableTool[] {
+function availableTools(memory?: MemoryService, interaction?: InteractionHost, skills: readonly Skill[] = [], subagents?: SubagentHost, mcpService?: McpService, codingAgents?: CodingAgentHost, extra: ReadonlyArray<NovaTool<never>> = []): AvailableTool[] {
     const webSearchEnabled = vscode.workspace.getConfiguration('nova.webSearch').get<boolean>('enabled', true);
     const novaTools = [
         ...BUILT_IN_TOOLS.filter((tool) => tool.name !== 'web_search' || webSearchEnabled),
@@ -3010,7 +3019,8 @@ function availableTools(memory?: MemoryService, interaction?: InteractionHost, s
         ...(interaction ? createInteractionTools(interaction) : []),
         ...(memory?.isEnabled() ? createMemoryTools(memory) : []),
         ...(subagents ? [createSubagentTool(subagents)] : []),
-        ...(codingAgents ? [createCodingAgentTool(codingAgents)] : [])
+        ...(codingAgents ? [createCodingAgentTool(codingAgents)] : []),
+        ...extra
     ];
     const ownMcp = mcpService?.tools() ?? [];
     const toAvailable = (tool: NovaTool<never>, mcp: boolean): AvailableTool => ({

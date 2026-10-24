@@ -58,6 +58,7 @@ import {MemoryService, type MemoryScope} from './memory/MemoryService';
 import {PermissionService} from './permissions/PermissionService';
 import {McpService} from './mcp/McpService';
 import {HookService} from './hooks/HookService';
+import {CodeIndex, type EmbeddingClient} from './index/CodeIndex';
 import {editSelection} from './inline/editInPlace';
 import {InlineCompletionProvider} from './inline/completionProvider';
 import type {InlineClient} from './inline/inlineModel';
@@ -116,6 +117,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     const mcpEnabled = () => vscode.workspace.getConfiguration('nova').get<boolean>('mcp.enabled', true);
 
     const proposedContent = new ProposedContentProvider();
+    // Semantic search over the workspace, when the gateway lists an embedding model.
+    const codeIndex = new CodeIndex({
+        client: async () => await sessionService.createClient() as unknown as EmbeddingClient | undefined,
+        dir: () => workspaceRoot() ? nova.project.index : undefined,
+        log: (message, error) => diagnostics.error(message, error)
+    });
     // Inline edits and completions use the Nova client directly: one non-streaming answer each.
     const inlineClient = async () => await sessionService.createClient() as unknown as InlineClient | undefined;
     // Skill folders and settings (docs/NOVA_HOME.md, "Skills"), read fresh on every use.
@@ -162,7 +169,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                     workspaceRoots: (vscode.workspace.workspaceFolders ?? []).filter((folder) => folder.uri.scheme === 'file').map((folder) => folder.uri.fsPath),
                     includeClaude: vscode.workspace.getConfiguration('nova').get<boolean>('skills.includeClaudeCodex', false)
                 }),
-                signInMcp: (server) => signInWithBrowser(mcp, server)
+                signInMcp: (server) => signInWithBrowser(mcp, server),
+                codeIndex
             },
             { ...options, hub: chatHub }
         );

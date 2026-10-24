@@ -98,6 +98,10 @@ Both menus show only their icon when the input box is too narrow for the labels.
 
 On an approval card: **Allow** runs it once, **Always allow** saves a rule to `.nova-ai/settings.local.json`, **Allow all** allows every tool call in this chat, **Reject** tells Nova to try something else. Edit cards can open the proposed diff first.
 
+### Semantic code search
+
+When your Nova gateway lists an embedding model, Nova gets a `semantic_search` tool: it finds code by meaning ("where are login sessions refreshed?", "retry logic for HTTP calls") instead of by exact text, and uses `search_text` for names and strings. The first search builds an index of the workspace in `~/.nova-ai/projects/<project>/index` (up to 5,000 files, skipping `node_modules`, build output, binaries and files over 200 KB), which can take a while in a large project; later searches only re-index files that changed. Your code is sent to Nova's embedding model for this, like code Nova reads in a chat. Turn it off with `nova.index.enabled`, or pick the model with `nova.index.model`.
+
 ### Research sub-agents
 
 For broad questions Nova can start research sub-agents that explore the project in parallel. A strip above the input shows each agent (state, tool calls, tokens, time). Click an agent to watch what it does, or stop it with its stop button. Turn them off or limit them with `nova.agent.subagents.*`.
@@ -274,6 +278,8 @@ Everything lives in `~/.nova-ai` (change it with `nova.home` or `NOVA_AI_HOME`):
 | `nova.mcp.enabled` | on | Connect the servers in your `mcp.json` files |
 | `nova.mcp.toolTimeoutSeconds` | 60 | Time limit for one MCP tool call |
 | `nova.agent.includeMcpTools` | on | Also offer MCP tools registered in VS Code |
+| `nova.index.enabled` | on | Semantic code search, when the gateway lists an embedding model |
+| `nova.index.model` | (first embedding model) | Embedding model for the search index |
 | `nova.inline.model` | (none) | Model for Edit Selection and Tab completions; empty turns them off |
 | `nova.inline.tabEnabled` | off | Ghost-text completions while you type |
 | `nova.inline.debounceMs` | 300 | Pause before a completion is requested |

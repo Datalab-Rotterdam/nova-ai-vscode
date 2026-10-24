@@ -698,6 +698,16 @@
             "default": false,
             "markdownDescription": "Also load skills from the `.claude/skills` and `.codex/skills` folders (in your home folder and in workspaces). `.agents` and Nova's own skills folders are always loaded."
           },
+          "nova.index.enabled": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Offer Nova semantic code search (`semantic_search`): find code by meaning. Only when the gateway lists an embedding model (or `nova.index.model` is set). The first search builds an index in `~/.nova-ai/projects/<project>/index`; your code is sent to Nova's embedding model for it, like code Nova reads in a chat."
+          },
+          "nova.index.model": {
+            "type": "string",
+            "default": "",
+            "markdownDescription": "Embedding model for semantic search. Empty: the first model with the `embedding` capability."
+          },
           "nova.inline.model": {
             "type": "string",
             "default": "",
