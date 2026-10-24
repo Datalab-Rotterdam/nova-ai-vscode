@@ -7,7 +7,12 @@ export class Disposable {
   public dispose(): void {
     this.fn();
   }
+  public static from(...items: Array<{ dispose(): unknown }>): Disposable {
+    return new Disposable(() => items.forEach((item) => item.dispose()));
+  }
 }
+
+export enum ProgressLocation { SourceControl = 1, Window = 10, Notification = 15 }
 
 export class EventEmitter<T> {
   private listeners = new Set<Listener<T>>();
@@ -167,6 +172,7 @@ export const window = {
   showQuickPick: async (_items: unknown, _options?: unknown) => undefined as unknown[],
   showOpenDialog: async (_options?: unknown) => undefined as unknown[] | undefined,
   showTextDocument: async () => undefined,
+  withProgress: async <T>(_options: unknown, task: (progress: { report(value: unknown): void }) => Promise<T>): Promise<T> => task({ report: () => undefined }),
   registerWebviewViewProvider: () => new Disposable()
 };
 
