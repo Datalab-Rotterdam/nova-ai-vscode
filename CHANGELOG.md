@@ -1,3 +1,10 @@
+# [1.0.0-alpha.34](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.33...v1.0.0-alpha.34) (2026-10-24)
+
+
+### Features
+
+* **browser:** ship the host from @datalabrotterdam/nova-ai-browser-host ([340023c](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/340023ce04d60f9d7178437035a0a2e2bd8f445e))
+
 # [1.0.0-alpha.33](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.32...v1.0.0-alpha.33) (2026-10-24)
 
 
