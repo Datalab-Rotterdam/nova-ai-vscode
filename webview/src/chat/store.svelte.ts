@@ -46,6 +46,12 @@ export function createChatStore() {
             case 'chat/totals':
                 state.totals = event.totals;
                 break;
+            case 'chat/changeHunks':
+                state.hunks = { ...state.hunks, [event.path]: event.hunks };
+                break;
+            case 'chat/draft':
+                state.draft = { text: event.text, at: Date.now() };
+                break;
             case 'chat/attachments':
                 state.attachments = event.attachments;
                 break;

@@ -9,35 +9,7 @@ const CONTEXT_LINES = 3;
  * Common prefix and suffix are skipped first, so typical small edits stay cheap.
  */
 export function diffLines(original: string, proposed: string, maxLines = 400): { lines: DiffLine[]; added: number; removed: number; truncated: boolean } {
-    const before = splitLines(original);
-    const after = splitLines(proposed);
-
-    let start = 0;
-    while (start < before.length && start < after.length && before[start] === after[start]) {
-        start++;
-    }
-    let end = 0;
-    while (end < before.length - start && end < after.length - start
-        && before[before.length - 1 - end] === after[after.length - 1 - end]) {
-        end++;
-    }
-
-    const ops: Array<{ type: 'context' | 'add' | 'del'; text: string; oldNo?: number; newNo?: number }> = [];
-    for (let index = 0; index < start; index++) {
-        ops.push({ type: 'context', text: before[index], oldNo: index + 1, newNo: index + 1 });
-    }
-    for (const op of diffMiddle(before.slice(start, before.length - end), after.slice(start, after.length - end))) {
-        ops.push({
-            ...op,
-            oldNo: op.oldIndex === undefined ? undefined : start + op.oldIndex + 1,
-            newNo: op.newIndex === undefined ? undefined : start + op.newIndex + 1
-        });
-    }
-    for (let index = 0; index < end; index++) {
-        const oldIndex = before.length - end + index;
-        const newIndex = after.length - end + index;
-        ops.push({ type: 'context', text: before[oldIndex], oldNo: oldIndex + 1, newNo: newIndex + 1 });
-    }
+    const ops = diffOps(original, proposed);
 
     const added = ops.filter((op) => op.type === 'add').length;
     const removed = ops.filter((op) => op.type === 'del').length;
@@ -69,6 +41,109 @@ export function diffLines(original: string, proposed: string, maxLines = 400): {
     }
 
     return { lines: lines.slice(0, maxLines), added, removed, truncated: lines.length > maxLines };
+}
+
+type DiffOp = { type: 'context' | 'add' | 'del'; text: string; oldNo?: number; newNo?: number };
+
+/** Every line of both texts as context, removed or added, with 1-based line numbers. */
+function diffOps(original: string, proposed: string): DiffOp[] {
+    const before = splitLines(original);
+    const after = splitLines(proposed);
+
+    let start = 0;
+    while (start < before.length && start < after.length && before[start] === after[start]) {
+        start++;
+    }
+    let end = 0;
+    while (end < before.length - start && end < after.length - start
+        && before[before.length - 1 - end] === after[after.length - 1 - end]) {
+        end++;
+    }
+
+    const ops: DiffOp[] = [];
+    for (let index = 0; index < start; index++) {
+        ops.push({ type: 'context', text: before[index], oldNo: index + 1, newNo: index + 1 });
+    }
+    for (const op of diffMiddle(before.slice(start, before.length - end), after.slice(start, after.length - end))) {
+        ops.push({
+            ...op,
+            oldNo: op.oldIndex === undefined ? undefined : start + op.oldIndex + 1,
+            newNo: op.newIndex === undefined ? undefined : start + op.newIndex + 1
+        });
+    }
+    for (let index = 0; index < end; index++) {
+        const oldIndex = before.length - end + index;
+        const newIndex = after.length - end + index;
+        ops.push({ type: 'context', text: before[oldIndex], oldNo: oldIndex + 1, newNo: newIndex + 1 });
+    }
+
+    return ops;
+}
+
+/** One run of changed lines: lines removed from the old text and/or added in the new one. */
+export interface Hunk {
+    /** 0-based line where the change starts in the old text (where lines are inserted, for a pure insert). */
+    oldStart: number;
+    /** The same in the new text. */
+    newStart: number;
+    removed: string[];
+    added: string[];
+}
+
+/** The changes from `original` to `proposed` as separate hunks, so each can be kept or undone. */
+export function diffHunks(original: string, proposed: string): Hunk[] {
+    const hunks: Hunk[] = [];
+    let oldLine = 0;
+    let newLine = 0;
+    let current: Hunk | undefined;
+    for (const op of diffOps(original, proposed)) {
+        if (op.type === 'context') {
+            current = undefined;
+            oldLine++;
+            newLine++;
+            continue;
+        }
+        if (!current) {
+            current = { oldStart: oldLine, newStart: newLine, removed: [], added: [] };
+            hunks.push(current);
+        }
+        if (op.type === 'del') {
+            current.removed.push(op.text);
+            oldLine++;
+        } else {
+            current.added.push(op.text);
+            newLine++;
+        }
+    }
+    return hunks;
+}
+
+/** `original` with one hunk of the change applied: keeping that hunk. */
+export function applyHunk(original: string, hunk: Hunk): string {
+    return replaceLines(original, hunk.oldStart, hunk.removed.length, hunk.added);
+}
+
+/** `proposed` with one hunk of the change taken back: undoing that hunk. */
+export function revertHunk(proposed: string, hunk: Hunk): string {
+    return replaceLines(proposed, hunk.newStart, hunk.added.length, hunk.removed);
+}
+
+/** A hunk as diff rows with line numbers, for showing it on its own. */
+export function hunkLines(hunk: Hunk): DiffLine[] {
+    return [
+        { type: 'hunk', text: `@@ -${hunk.oldStart + 1} +${hunk.newStart + 1} @@` },
+        ...hunk.removed.map((text, index): DiffLine => ({ type: 'del', text, oldNo: hunk.oldStart + index + 1 })),
+        ...hunk.added.map((text, index): DiffLine => ({ type: 'add', text, newNo: hunk.newStart + index + 1 }))
+    ];
+}
+
+/** Replaces `count` lines at `start`, keeping the text's line endings and final newline. */
+function replaceLines(text: string, start: number, count: number, lines: readonly string[]): string {
+    const eol = text.includes('\r\n') ? '\r\n' : '\n';
+    const all = splitLines(text);
+    all.splice(start, count, ...lines);
+    const finalNewline = text ? text.endsWith('\n') : true;
+    return all.length ? all.join(eol) + (finalNewline ? eol : '') : '';
 }
 
 /** First old/new line number in the hunk starting at `start` (the line before it for pure inserts/deletes). */

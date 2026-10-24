@@ -466,6 +466,12 @@
                         onclick={() =>
                           post({ command: "chat/regenerate", itemId: item.id })}
                       ></button>
+                      <button
+                        class="edit-button codicon codicon-history"
+                        title="Rewind to before this message (code, chat or both)"
+                        aria-label="Rewind to before this message"
+                        onclick={() => post({ command: "chat/rewind", itemId: item.id })}
+                      ></button>
                     </div>
                     {#if versions.length > 1}
                       <div class="versions" aria-label="Answer versions">
@@ -643,7 +649,7 @@
       </div>
 
       {#if chat.changes?.length}
-        <ChangesStrip changes={chat.changes} {post} />
+        <ChangesStrip changes={chat.changes} hunks={chat.hunks ?? {}} {post} />
       {/if}
       {#if latestAgents.length}
         <SubagentStrip agents={latestAgents} items={chat.items} {post} />

@@ -35,6 +35,28 @@ export interface StoredSession {
     subagents?: SubagentState[];
     /** Tokens and cost of the chat so far. */
     usageTotals?: UsageTotals;
+    /** Files Nova changed in the chat that wait for Keep or Undo. */
+    changes?: StoredChange[];
+    /** Per user message: each file as it was before that answer first changed it (rewind). */
+    checkpoints?: Record<string, CheckpointFile[]>;
+    /** Per user message: the commands its answer ran; rewind cannot undo those. */
+    commandsRan?: Record<string, string[]>;
+}
+
+export interface StoredChange {
+    path: string;
+    /** Absolute path. */
+    file: string;
+    baseline: string;
+    current: string;
+    created: boolean;
+}
+
+export interface CheckpointFile {
+    path: string;
+    file: string;
+    /** Content before the answer's first edit; null when the answer created the file; undefined when too large to keep. */
+    before?: string | null;
 }
 
 const INDEX_FILE = 'index.json';

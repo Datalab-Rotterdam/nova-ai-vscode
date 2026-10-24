@@ -1,9 +1,19 @@
 <script lang="ts">
-    import type {FileChange} from '../../../src/panel/protocol';
+    import type {DiffLine, FileChange} from '../../../src/panel/protocol';
+    import DiffView from './DiffView.svelte';
 
-    let {changes, post}: { changes: FileChange[]; post: (message: Record<string, unknown>) => void } = $props();
+    let {changes, hunks, post}: { changes: FileChange[]; hunks: Record<string, DiffLine[][]>; post: (message: Record<string, unknown>) => void } = $props();
 
     let expanded = $state(false);
+    /** Files whose hunks are shown, to keep or undo them one by one. */
+    let open = $state<Record<string, boolean>>({});
+
+    function toggleHunks(path: string) {
+        open[path] = !open[path];
+        if (open[path]) {
+            post({command: 'chat/changeHunks', path});
+        }
+    }
     const added = $derived(changes.reduce((total, change) => total + change.added, 0));
     const removed = $derived(changes.reduce((total, change) => total + change.removed, 0));
 
@@ -34,6 +44,8 @@
         <ul>
             {#each changes as change (change.path)}
                 <li>
+                    <button class={`icon codicon codicon-chevron-${open[change.path] ? 'down' : 'right'}`} title="Show the changes to keep or undo them one by one"
+                            aria-expanded={!!open[change.path]} aria-label={`Show changes in ${change.path}`} onclick={() => toggleHunks(change.path)}></button>
                     <button class="file" onclick={() => post({command: 'chat/openChangeDiff', path: change.path})} title={`Open diff of ${change.path}`}>
                         <span class="codicon codicon-{change.created ? 'new-file' : 'file'}" aria-hidden="true"></span>
                         <span class="name">{name(change.path)}</span>
@@ -44,12 +56,41 @@
                     <button class="icon codicon codicon-check" title="Keep" aria-label={`Keep changes to ${change.path}`} onclick={() => post({command: 'chat/keepChange', path: change.path})}></button>
                     <button class="icon codicon codicon-discard" title={change.created ? 'Undo (delete file)' : 'Undo'} aria-label={`Undo changes to ${change.path}`} onclick={() => post({command: 'chat/undoChange', path: change.path})}></button>
                 </li>
+                {#if open[change.path]}
+                    {#each hunks[change.path] ?? [] as hunk, index (`${change.path}:${index}:${hunk[0]?.text}`)}
+                        <li class="hunk">
+                            <div class="hunk-diff"><DiffView lines={hunk} collapsedLines={8}/></div>
+                            <div class="hunk-actions">
+                                <button class="icon codicon codicon-check" title="Keep this change" aria-label="Keep this change"
+                                        onclick={() => post({command: 'chat/keepHunk', path: change.path, index})}></button>
+                                <button class="icon codicon codicon-discard" title="Undo this change" aria-label="Undo this change"
+                                        onclick={() => post({command: 'chat/undoHunk', path: change.path, index})}></button>
+                            </div>
+                        </li>
+                    {/each}
+                {/if}
             {/each}
         </ul>
     {/if}
 </section>
 
 <style lang="scss">
+  .changes li.hunk {
+    align-items: flex-start;
+    padding-left: 22px;
+  }
+
+  .hunk-diff {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .hunk-actions {
+    flex: none;
+    display: flex;
+    flex-direction: column;
+  }
+
   .changes {
     flex: none;
     margin: 0 10px 6px;
