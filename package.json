@@ -890,7 +890,8 @@
   },
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('out', { recursive: true, force: true })\"",
-    "compile": "npm run clean && npm run build:webview && npm run typecheck && npm run build:extension && npm run build:skills",
+    "compile": "npm run clean && npm run build:webview && npm run typecheck && npm run build:extension && npm run build:skills && npm run build:browser-host",
+    "build:browser-host": "node -e \"require('node:fs').cpSync('node_modules/@datalabrotterdam/nova-ai-browser-host', 'out/browser-host', { recursive: true })\"",
     "build:skills": "node -e \"require('node:fs').cpSync('node_modules/@datalabrotterdam/nova-ai-skills', 'out/nova-ai-skills', { recursive: true })\"",
     "build:extension": "esbuild src/extension.ts --bundle --platform=node --format=cjs --target=node22 --external:vscode --outfile=out/extension.js --sourcemap",
     "build:webview": "vite build --config vite.webview.config.mts",
@@ -905,6 +906,7 @@
     "pretest": "npm run compile"
   },
   "dependencies": {
+    "@datalabrotterdam/nova-ai-browser-host": "^1.0.0",
     "@datalabrotterdam/nova-ai-skills": "^1.0.1",
     "@datalabrotterdam/nova-sdk": "1.4.0-k8s.3",
     "@modelcontextprotocol/sdk": "^1.32.2"
