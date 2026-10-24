@@ -141,12 +141,13 @@ Open the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`) and type **Nova AI**:
 | Account and Models / Manage Account / Refresh Models | Connection and model list |
 | Sign In / Sign Out | Connect or disconnect your API key |
 | Reveal Nova Folder / Clean Up Projects | Open `~/.nova-ai`, remove data of deleted workspaces |
-| Manage Language Models / Open Chat / Open Settings | VS Code integration |
+| Open Settings | The Nova Settings page: every Nova setting in sections, models picked from a list, User or Workspace |
+| Manage Language Models / Open Chat | VS Code integration |
 | Help | The full in-editor guide |
 
 ## Settings
 
-Search for **Nova** in VS Code Settings. The ones you are most likely to want:
+Run **Nova AI: Open Settings** for the Nova Settings page: every setting in sections (Chat, Editor, Search, MCP & Tools, …), model settings as a list of your models, and a User / Workspace switch. They are ordinary VS Code settings, so you can also search for **Nova** in VS Code Settings or edit `settings.json`. The ones you are most likely to want:
 
 | Setting | Default | What it does |
 | --- | --- | --- |

@@ -266,10 +266,12 @@ Everything lives in `~/.nova-ai` (change it with `nova.home` or `NOVA_AI_HOME`):
 | Nova AI: Manage Language Models | VS Code's model management |
 | Nova AI: Sign In / Sign Out | Connect or disconnect your API key |
 | Nova AI: Open Chat | Open VS Code Chat |
-| Nova AI: Open Settings | Nova AI settings |
+| Nova AI: Open Settings | The Nova Settings page |
 | Nova AI: Help | This page |
 
 ## Settings
+
+**Nova AI: Open Settings** opens the Nova Settings page: every Nova setting in sections (Chat › Agent, Sub-agents, Coding Agents, Context, Memory; Editor; Search › Code, Web; MCP & Tools; Developer), with a list of your models wherever a setting takes a model. **User** saves for you in every project, **Workspace** for this folder only (a workspace value wins; the User tab shows when one does). Changed settings are marked and have a **Reset**. The values are ordinary VS Code settings, also in `settings.json` and VS Code's own settings.
 
 | Setting | Default | |
 | --- | --- | --- |

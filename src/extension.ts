@@ -40,7 +40,8 @@ import {SessionService} from './services/SessionService';
 import {toUserMessage} from './core/errors';
 import type {LanguageModelInfo} from './core/types';
 import {StatusBar} from './status/StatusBar';
-import {AGENTS_VIEW_TYPE, CHAT_PANEL_VIEW_TYPE, SKILLS_VIEW_TYPE, ViewProvider, type SignInResult} from './views';
+import {AGENTS_VIEW_TYPE, CHAT_PANEL_VIEW_TYPE, SETTINGS_VIEW_TYPE, SKILLS_VIEW_TYPE, ViewProvider, type SignInResult} from './views';
+import {SettingsController} from './settings/SettingsController';
 import type {SkillPaths} from './skills/SkillService';
 import type {AgentPaths} from './agents/AgentService';
 import * as os from 'node:os';
@@ -151,6 +152,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         projectDir: nova.project.dir
     });
     sidebarProvider.useAgents(agentPaths);
+    // The Settings page: the settings this extension contributes, with model settings as lists of the models.
+    sidebarProvider.useSettings((post) => new SettingsController(
+        () => context.extension.packageJSON.contributes.configuration,
+        listModels,
+        post,
+        modelProvider.onDidChangeLanguageModelChatInformation
+    ));
     const chatHub = new ChatHub();
     // One controller per chat surface (the sidebar, each editor tab), all sharing the store.
     sidebarProvider.useChats((post, options) => {
@@ -358,8 +366,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             }
         }),
         vscode.commands.registerCommand(COMMAND_OPEN_SETTINGS, async () => {
-            await vscode.commands.executeCommand('workbench.action.openSettings', '@ext:datalabrotterdam.nova-ai-vscode');
+            await sidebarProvider.openSettings();
         }),
+        vscode.window.registerWebviewPanelSerializer(SETTINGS_VIEW_TYPE, sidebarProvider.settingsSerializer),
         vscode.workspace.onDidChangeConfiguration(async (event) => {
             if (!['nova.developer.parseModelCapabilities', 'nova.models.editTools', 'nova.context.defaultContextWindow'].some((key) => event.affectsConfiguration(key))) {
                 return;
