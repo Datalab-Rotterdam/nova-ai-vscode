@@ -4,10 +4,29 @@ import { visibleChatItems } from './steps';
 /**
  * A chat as Markdown, to hand to a colleague or attach to an issue: the messages, answers,
  * questions and notices of the versions the chat follows, and one line per tool call.
- * Thinking and sub-agent steps are left out. Pure, so it can be tested without VS Code.
+ * Thinking and sub-agent steps are left out. The chat's details go in YAML front matter.
+ * Pure, so it can be tested without VS Code.
  */
-export function chatToMarkdown(chat: { title: string; items: readonly ChatItem[]; modelId?: string }, exportedAt = new Date()): string {
-    const lines = [`# ${chat.title}`, '', `_Exported from Nova AI on ${exportedAt.toISOString().slice(0, 10)}${chat.modelId ? ` · ${chat.modelId}` : ''}_`];
+export function chatToMarkdown(
+    chat: { title: string; items: readonly ChatItem[]; modelId?: string; createdAt?: number; updatedAt?: number },
+    exportedAt = new Date()
+): string {
+    // JSON strings are valid YAML scalars, so titles with colons or quotes stay intact.
+    const meta: Array<[string, string | number | undefined]> = [
+        ['title', JSON.stringify(chat.title)],
+        ['model', chat.modelId && JSON.stringify(chat.modelId)],
+        ['created', chat.createdAt && new Date(chat.createdAt).toISOString()],
+        ['updated', chat.updatedAt && new Date(chat.updatedAt).toISOString()],
+        ['exported', exportedAt.toISOString()],
+        ['source', '"Nova AI"']
+    ];
+    const lines = [
+        '---',
+        ...meta.filter(([, value]) => value).map(([key, value]) => `${key}: ${value}`),
+        '---',
+        '',
+        `# ${chat.title}`
+    ];
     let speaker: 'user' | 'nova' | undefined;
     const say = (who: 'user' | 'nova', text: string) => {
         if (speaker !== who) {
@@ -44,7 +63,9 @@ export function chatToMarkdown(chat: { title: string; items: readonly ChatItem[]
     return lines.join('\n') + '\n';
 }
 
-/** A file name for the chat's title. */
+/** The chat's title as a file name: only characters no file name may hold are dropped. */
 export function exportFileName(title: string): string {
-    return `${title.replace(/[\\/:*?"<>|\s]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || 'chat'}.md`;
+    // eslint-disable-next-line no-control-regex
+    const name = title.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ').replace(/\s+/g, ' ').replace(/^[\s.]+|[\s.]+$/g, '').slice(0, 200);
+    return `${name || 'chat'}.md`;
 }

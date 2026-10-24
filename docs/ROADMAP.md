@@ -19,7 +19,7 @@ lands.
 | **Semantic code search** | #24 | `semantic_search` with the gateway's embedding model. The index lives in `projects/<key>/index` and updates incrementally. |
 | **Nova Settings page** | #24 | All settings in grouped sections, models picked from a list, User or Workspace scope. Also adds **Nova AI: Choose Models**. |
 | **CLI reads `mcp.json`** | nova-ai-cli | `~/.nova-ai/mcp.json` in every workspace, `.nova-ai/mcp.json` in a trusted one, same merge order as the extension. `${VAR}` expands in the CLI too. |
-| **Exporting chats** | | **Export as Markdown…** in a chat's menu on the Chats page. The versions the chat follows, one line per tool call; thinking and sub-agent steps are left out. No share link yet. |
+| **Exporting chats** | | **Export as Markdown…** in a chat's menu on the Chats page. The file is named after the chat, with its details in YAML front matter. The versions the chat follows, one line per tool call; thinking and sub-agent steps are left out. No share link yet. |
 | **CLI parity, partly** | nova-ai-cli | The CLI reads command files and supports autopilot and hooks. Its `rules.ts` understands `mcp__server__*`. |
 
 ## Still to do

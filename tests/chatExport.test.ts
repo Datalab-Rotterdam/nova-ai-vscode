@@ -21,8 +21,17 @@ describe('chatExport', () => {
             tool('c3', { runId: 'u3', status: 'error', title: 'Edit b.ts' }),
             { kind: 'notice', id: 'n1', text: 'Rate limited', tone: 'warning' }
         ];
-        expect(chatToMarkdown({ title: 'Bug hunt', items, modelId: 'nova-1' }, new Date('2026-10-24T12:00:00Z'))).toBe([
-            '# Bug hunt', '', '_Exported from Nova AI on 2026-10-24 · nova-1_',
+        const chat = { title: 'Bug: "hunt"', items, modelId: 'nova-1', createdAt: Date.parse('2026-10-23T09:00:00Z'), updatedAt: Date.parse('2026-10-24T11:00:00Z') };
+        expect(chatToMarkdown(chat, new Date('2026-10-24T12:00:00Z'))).toBe([
+            '---',
+            'title: "Bug: \\"hunt\\""',
+            'model: "nova-1"',
+            'created: 2026-10-23T09:00:00.000Z',
+            'updated: 2026-10-24T11:00:00.000Z',
+            'exported: 2026-10-24T12:00:00.000Z',
+            'source: "Nova AI"',
+            '---',
+            '', '# Bug: "hunt"',
             '', '## You', '', 'Fix the bug\n\n_Attached: a.ts_',
             '', '## Nova', '', '> 🔧 Read src/a.ts', '', 'Fixed.',
             '', '## You', '', 'New question',
@@ -32,7 +41,8 @@ describe('chatExport', () => {
     });
 
     it('makes a safe file name', () => {
-        expect(exportFileName('Fix: a/b "bug"?')).toBe('Fix-a-b-bug.md');
+        expect(exportFileName('Fix the login bug')).toBe('Fix the login bug.md');
+        expect(exportFileName('Fix: a/b "bug"?')).toBe('Fix a b bug.md');
         expect(exportFileName('???')).toBe('chat.md');
     });
 });
