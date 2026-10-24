@@ -1,3 +1,10 @@
+# [1.0.0-alpha.33](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.32...v1.0.0-alpha.33) (2026-10-24)
+
+
+### Features
+
+* **skills:** ship the document skills from @datalabrotterdam/nova-ai-skills ([127c12b](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/127c12b1fdb953b38573015a8f92d3b72f8be672))
+
 # [1.0.0-alpha.32](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.31...v1.0.0-alpha.32) (2026-10-24)
 
 
