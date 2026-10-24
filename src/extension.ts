@@ -48,13 +48,14 @@ import * as os from 'node:os';
 import {registerAgentParticipant} from './chat/AgentParticipant';
 import {registerVsCodeTools} from './agent/tools/vscodeTools';
 import {registerBrowserSetup} from './browser/BrowserSetup';
-import {installBundledSkills} from './skills/bundledSkills';
+import {installSkills} from '@datalabrotterdam/nova-ai-skills';
 import {openHelp} from './core/help';
 import {ChatController} from './panel/ChatController';
 import {PROPOSED_SCHEME, ProposedContentProvider} from './panel/ProposedContentProvider';
 import {SessionStore} from './panel/SessionStore';
 import {confirmAndDeleteChats, promptRenameChat, searchChats} from './panel/chatSearch';
 import {ChatHub} from './panel/ChatHub';
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {MemoryService, type MemoryScope} from './memory/MemoryService';
 import {PermissionService} from './permissions/PermissionService';
@@ -141,8 +142,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         sharedFolders: vscode.workspace.getConfiguration('nova').get<boolean>('skills.includeClaudeCodex', false) ? ['.agents', '.claude', '.codex'] : ['.agents']
     });
     sidebarProvider.useSkills(skillPaths);
-    // Skills this extension ships (reading PDF, Word, Excel and PowerPoint files) go into the skills folder.
-    void installBundledSkills(path.join(context.extensionPath, 'resources', 'skills'), nova.home.root, String(context.extension.packageJSON.version))
+    // The skills every Nova app ships (PDF, Word, Excel and PowerPoint files), from @datalabrotterdam/nova-ai-skills:
+    // the build copies the package to out/nova-ai-skills, because the bundled module cannot find its own folder.
+    const skillsPackage = path.join(context.extensionPath, 'out', 'nova-ai-skills');
+    void fs.promises.readFile(path.join(skillsPackage, 'package.json'), 'utf8')
+        .then((json) => installSkills(nova.home.root, { sourceDir: path.join(skillsPackage, 'skills'), version: (JSON.parse(json) as { version: string }).version }))
         .then((names) => names.length && diagnostics.info('Bundled skills installed.', names))
         .catch((error: unknown) => diagnostics.error('Bundled skills could not be installed.', error));
     // Agent files: built in with the extension, then ~/.nova-ai/agents and the project's agents.
