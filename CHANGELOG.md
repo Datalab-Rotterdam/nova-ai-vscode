@@ -1,3 +1,10 @@
+# [1.0.0-alpha.38](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.37...v1.0.0-alpha.38) (2026-10-25)
+
+
+### Bug Fixes
+
+* read browser screenshots from ~/.nova-ai/browser ([4242860](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/424286082abe041258428d9633be5999de966586))
+
 # [1.0.0-alpha.37](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.36...v1.0.0-alpha.37) (2026-10-25)
 
 
