@@ -27,6 +27,7 @@ import {
   COMMAND_REFRESH_MODELS,
   COMMAND_SIGN_IN,
   COMMAND_SIGN_OUT,
+  NOVA_SECONDARY_VIEW_ID,
   NOVA_SIDEBAR_VIEW_ID,
   NOVA_VIEW_CONTAINER_ID
 } from '../core/constants';
@@ -58,15 +59,16 @@ export const AGENTS_VIEW_TYPE = 'nova.agents';
 export type ChatFactory = (post: (event: ChatEvent) => void, options: ChatControllerOptions) => ChatController;
 
 /**
- * Hosts the Nova UI in the sidebar view and in editor tabs. The sidebar shows one chat at
- * a time; every editor tab has a chat of its own (its own controller), so several chats
+ * Hosts the Nova UI in the sidebar views and in editor tabs. Each sidebar (left and right) shows
+ * one chat at a time; every editor tab has a chat of its own (its own controller), so several chats
  * can be open, and running, side by side. A chat is open in one place only (see ChatHub).
  */
 export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer, Disposable {
-  /** The sidebar view in use: left or right; both show the one sidebar chat. */
+  /** The sidebar view in use: left or right. */
   private view?: WebviewView;
   private readonly views = new Set<WebviewView>();
-  private sidebarChat?: ChatController;
+  /** Each sidebar view (left, right) has a chat of its own, keyed by view id. */
+  private readonly sidebarChats = new Map<string, ChatController>();
   private readonly panels = new Map<WebviewPanel, ChatController>();
   /** The editor tab the user used last; undefined: the sidebar. Commands go there. */
   private lastActivePanel?: WebviewPanel;
@@ -97,7 +99,19 @@ export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer
   /** Sets how chats are created and creates the sidebar's. */
   public useChats(createChat: ChatFactory): void {
     this.createChat = createChat;
-    this.sidebarChat = this.newSidebarChat(undefined);
+    // Only the left sidebar reopens the last chat after a reload; the right one starts empty.
+    this.sidebarChats.set(NOVA_SIDEBAR_VIEW_ID, this.newSidebarChat(NOVA_SIDEBAR_VIEW_ID, undefined));
+    this.sidebarChats.set(NOVA_SECONDARY_VIEW_ID, this.newSidebarChat(NOVA_SECONDARY_VIEW_ID, null));
+  }
+
+  /** The id of the sidebar view in use. */
+  private get slot(): string {
+    return this.view?.viewType ?? NOVA_SIDEBAR_VIEW_ID;
+  }
+
+  /** The chat of the sidebar view in use. */
+  private get sidebarChat(): ChatController | undefined {
+    return this.sidebarChats.get(this.slot);
   }
 
   /** Where skills live, for the Skills page. */
@@ -219,7 +233,9 @@ export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer
       panel.dispose();
     }
     this.panels.clear();
-    this.sidebarChat?.dispose();
+    for (const controller of this.sidebarChats.values()) {
+      controller.dispose();
+    }
     this.customize?.skills.dispose();
     this.customize?.agents.dispose();
     this.customize?.settings.dispose();
@@ -241,21 +257,18 @@ export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer
         this.view = view;
         void this.refresh();
         // The page may have been rebuilt while hidden: send the chat again.
-        void this.sidebarChat?.handle({ command: 'chat/ready' });
+        void this.sidebarChats.get(view.viewType)?.handle({ command: 'chat/ready' });
       }
     });
     await this.attach(view.webview, 'sidebar');
   }
 
   /**
-   * Makes the sidebar view the user works in the one chat events go to.
-   * ponytail: only the view in use gets live chat events; the other catches up when used. Mirror both if they must stream at once.
+   * Makes the sidebar view the user works in the one that menus and toasts address; each view
+   * keeps getting the events of its own chat.
    */
   private use(view: WebviewView): void {
-    if (this.view !== view) {
-      this.view = view;
-      void this.sidebarChat?.handle({ command: 'chat/ready' });
-    }
+    this.view = view;
   }
 
   /** Shows a sidebar view, left or right (by default the one in use), and puts it in use. */
@@ -285,23 +298,28 @@ export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer
    * "Open in Editor" from the sidebar: its chat moves to a new tab, running reply and all,
    * and the sidebar starts a new chat. An empty sidebar chat just opens a new tab.
    */
-  public async openInEditor(): Promise<void> {
-    const moving = this.sidebar;
+  public async openInEditor(slot = this.slot): Promise<void> {
+    const moving = this.sidebarChats.get(slot);
+    if (!moving) {
+      return;
+    }
     if (moving.isEmpty) {
       await this.openNewTab(null);
       return;
     }
-    this.sidebarChat = this.newSidebarChat(null);
+    const fresh = this.newSidebarChat(slot, null);
+    this.sidebarChats.set(slot, fresh);
     await moving.forgetLast();
     await this.adoptPanel(this.createPanel(moving.title), () => moving);
-    await this.sidebarChat.handle({ command: 'chat/ready' });
+    await fresh.handle({ command: 'chat/ready' });
   }
 
   /** Opens a chat (or a new one) in an editor tab; a chat open elsewhere is shown there. */
   public async openChatInEditor(sessionId: string): Promise<void> {
     const owner = this.ownerOf(sessionId);
-    if (owner === this.sidebarChat) {
-      await this.openInEditor();
+    const slot = [...this.sidebarChats].find(([, controller]) => controller === owner)?.[0];
+    if (slot) {
+      await this.openInEditor(slot);
     } else if (owner) {
       await owner.reveal();
     } else {
@@ -342,16 +360,30 @@ export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer
     return this.createChat;
   }
 
-  private newSidebarChat(initialSessionId: string | null | undefined): ChatController {
-    return this.chatFactory()(this.sidebarPost, {
-      rememberLast: true,
+  private newSidebarChat(slot: string, initialSessionId: string | null | undefined): ChatController {
+    return this.chatFactory()(this.sidebarPost(slot), {
+      rememberLast: slot === NOVA_SIDEBAR_VIEW_ID,
       initialSessionId,
-      reveal: () => this.revealSidebar(),
+      reveal: () => this.revealSlot(slot),
       takeOver: (requester, owner) => this.takeOver(requester, owner)
     });
   }
 
-  private readonly sidebarPost = (event: ChatEvent) => this.view && postSafely(this.view.webview, event);
+  /** How a sidebar chat reaches its view. */
+  private sidebarPost(slot: string): (event: ChatEvent) => void {
+    return (event) => {
+      const view = [...this.views].find((candidate) => candidate.viewType === slot);
+      if (view) {
+        postSafely(view.webview, event);
+      }
+    };
+  }
+
+  /** Shows one sidebar view with its chat. */
+  private async revealSlot(slot: string): Promise<void> {
+    await this.focusSidebar(slot);
+    await this.showInSidebar('chat');
+  }
 
   /**
    * Opening a chat that another place shows moves it to the place that asked, running reply and
@@ -366,17 +398,17 @@ export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer
       return;
     }
     // Free the old place first, so closing its tab does not stop the moving chat.
-    const freshSidebar = from === 'sidebar' ? this.newSidebarChat(null) : undefined;
-    if (freshSidebar) {
+    const freshSidebar = typeof from === 'string' ? this.newSidebarChat(from, null) : undefined;
+    if (freshSidebar && typeof from === 'string') {
       await owner.forgetLast();
-      this.sidebarChat = freshSidebar;
-    } else if (from !== 'sidebar') {
+      this.sidebarChats.set(from, freshSidebar);
+    } else if (typeof from !== 'string') {
       this.panels.delete(from);
       from.dispose();
     }
-    if (to === 'sidebar') {
-      this.sidebarChat = owner;
-      owner.moveTo(this.sidebarPost, { reveal: () => this.revealSidebar(), onTitle: undefined, rememberLast: true });
+    if (typeof to === 'string') {
+      this.sidebarChats.set(to, owner);
+      owner.moveTo(this.sidebarPost(to), { reveal: () => this.revealSlot(to), onTitle: undefined, rememberLast: to === NOVA_SIDEBAR_VIEW_ID });
     } else {
       const wiring = this.panelWiring(to);
       this.panels.set(to, owner);
@@ -387,9 +419,11 @@ export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer
     await freshSidebar?.handle({ command: 'chat/ready' });
   }
 
-  private placeOf(controller: ChatController): 'sidebar' | WebviewPanel | undefined {
-    if (controller === this.sidebarChat) {
-      return 'sidebar';
+  /** The sidebar view id or the tab a chat is shown in. */
+  private placeOf(controller: ChatController): string | WebviewPanel | undefined {
+    const slot = [...this.sidebarChats].find(([, candidate]) => candidate === controller)?.[0];
+    if (slot) {
+      return slot;
     }
     return [...this.panels].find(([, candidate]) => candidate === controller)?.[0];
   }
@@ -409,7 +443,7 @@ export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer
   }
 
   private ownerOf(sessionId: string): ChatController | undefined {
-    return [this.sidebarChat, ...this.panels.values()].find((controller) => controller?.currentSessionId === sessionId);
+    return [...this.sidebarChats.values(), ...this.panels.values()].find((controller) => controller?.currentSessionId === sessionId);
   }
 
   private createPanel(title: string, column: ViewColumn = ViewColumn.Active): WebviewPanel {
@@ -427,7 +461,7 @@ export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer
     };
     const { post, reveal, onTitle } = this.panelWiring(panel);
     const controller = chatFor(post, { rememberLast: false, reveal, onTitle, takeOver: (requester, owner) => this.takeOver(requester, owner) });
-    if (controller === this.sidebarChat || [...this.panels.values()].includes(controller)) {
+    if ([...this.sidebarChats.values()].includes(controller) || [...this.panels.values()].includes(controller)) {
       throw new Error('A Nova chat cannot be shown twice.');
     }
     // A chat handed over from the sidebar keeps running; point it at this tab.
@@ -462,8 +496,9 @@ export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer
   }
 
   private chatOf(webview: Webview): ChatController | undefined {
-    if ([...this.views].some((view) => view.webview === webview)) {
-      return this.sidebarChat;
+    const view = [...this.views].find((candidate) => candidate.webview === webview);
+    if (view) {
+      return this.sidebarChats.get(view.viewType);
     }
     for (const [panel, controller] of this.panels) {
       if (panel.webview === webview) {

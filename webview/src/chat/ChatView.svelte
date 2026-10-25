@@ -349,7 +349,7 @@
     <div class="conversation" inert={chatsOpen}>
       <div class="items-wrap">
         <div class="items" bind:this={list} role="log" aria-live="polite">
-          <div class="content" bind:this={content}>
+          <div class="content" class:pet={chat.pet} bind:this={content}>
             {#if !scoped.length}
               <div class="empty">
                 <span class="codicon codicon-sparkle" aria-hidden="true"></span>
@@ -764,6 +764,11 @@
     flex-direction: column;
     gap: 10px;
     padding: 12px;
+  }
+
+  /* Room for the pet floating over the bottom right, so the last message can scroll clear of it. */
+  .content.pet {
+    padding-bottom: 72px;
   }
 
   .jump {

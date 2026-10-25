@@ -6,7 +6,7 @@
       "ES2022",
       "DOM"
     ],
-    "moduleResolution": "node",
+    "moduleResolution": "bundler",
     "outDir": "out",
     "rootDir": "src",
     "sourceMap": true,

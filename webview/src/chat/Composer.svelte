@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { untrack } from "svelte";
+  import "./nova-pet.js";
   import { compactTokens, formatCost } from "./usage";
   import type { ChatState } from "../../../src/panel/protocol";
   import { nextAgentId } from "../../../src/panel/agentModes";
@@ -26,6 +28,73 @@
     $props();
 
   let text = $state("");
+
+  // The pet: dragged anywhere while held, then it falls back onto the composer where it was let go sideways.
+  let petBox: HTMLElement | undefined = $state();
+  let petRight = $state(18);
+  let wrapWidth = $state(0);
+  let petWidth = $state(0);
+  // Never past the chat bar's corners, also when the panel gets narrower; the saved value is kept,
+  // so the pet goes back to it when the panel widens again.
+  const shownRight = $derived(
+    Math.min(Math.max(petRight, 0), Math.max(0, wrapWidth - petWidth)),
+  );
+  let dx = $state(0);
+  let dy = $state(0);
+  let drag: { x: number; y: number; right: number } | null = $state(null);
+  let fall = 0;
+  // Follows the saved setting, but not at the end of a drag: that would put back the old value
+  // before the new one is saved.
+  $effect(() => {
+    const saved = chat.petRight ?? 18;
+    if (!untrack(() => drag)) {
+      petRight = saved;
+    }
+  });
+  function grab(event: PointerEvent) {
+    cancelAnimationFrame(fall);
+    petBox?.setPointerCapture(event.pointerId);
+    // Keeps the offset when it is grabbed mid-fall.
+    drag = { x: event.clientX - dx, y: event.clientY - dy, right: shownRight };
+  }
+  function move(event: PointerEvent) {
+    if (!drag || !petBox) {
+      return;
+    }
+    const rect = petBox.getBoundingClientRect();
+    const nextX = event.clientX - drag.x;
+    const nextY = event.clientY - drag.y;
+    // Stays inside the window.
+    dx = Math.min(Math.max(nextX, dx - rect.left), dx + innerWidth - rect.right);
+    dy = Math.min(Math.max(nextY, dy - rect.top), dy + innerHeight - rect.bottom);
+  }
+  function drop() {
+    if (!drag) {
+      return;
+    }
+    // Sideways stays: the offset becomes the new distance from the right edge.
+    petRight = Math.min(Math.max(shownRight - dx, 0), Math.max(0, wrapWidth - petWidth));
+    dx = 0;
+    drag = null;
+    if (petRight !== chat.petRight) {
+      post({ command: "chat/petMoved", right: petRight });
+    }
+    // Gravity: speeds up and lands without a bounce.
+    let vy = 0;
+    let last = performance.now();
+    const step = (now: number) => {
+      const dt = Math.min(0.05, (now - last) / 1000);
+      last = now;
+      vy += 2400 * dt;
+      dy += vy * dt;
+      if (dy >= 0) {
+        dy = 0;
+        return;
+      }
+      fall = requestAnimationFrame(step);
+    };
+    fall = requestAnimationFrame(step);
+  }
   // A rewound message comes back here to edit and send again.
   $effect(() => {
     if (chat.draft) {
@@ -431,7 +500,27 @@
   });
 </script>
 
-<div class="composer-wrap" class:running={chat.running}>
+<div class="composer-wrap" class:running={chat.running} bind:clientWidth={wrapWidth}>
+{#if chat.pet}
+  <div
+    class="pet"
+    class:dragging={drag !== null}
+    bind:this={petBox}
+    style:right="{shownRight}px"
+    bind:clientWidth={petWidth}
+    style:transform="translate({dx}px, {dy}px)"
+    onpointerdown={grab}
+    onpointermove={move}
+    onpointerup={drop}
+    onpointercancel={drop}
+  >
+    <nova-pet
+      size="72"
+      theme="auto"
+      state={chat.running ? "thinking" : questionPending ? "listening" : "idle"}
+    ></nova-pet>
+  </div>
+{/if}
   {#if chat.queue.length}
     <ul class="queue" aria-label="Waiting messages">
       {#each chat.queue as item (item.id)}
@@ -747,6 +836,21 @@
    * radial glow (::before) and a slowly orbiting conic gradient (::after) fade in behind
    * the composer. Isolation keeps both above the panel background but below the composer.
    */
+  .pet {
+    /* Floats over the messages above the box; the chat adds room under them (ChatView). */
+    position: absolute;
+    bottom: calc(100% - 6px);
+    z-index: 2;
+    display: flex;
+    cursor: grab;
+    touch-action: none;
+    user-select: none;
+
+    &.dragging {
+      cursor: grabbing;
+    }
+  }
+
   .composer-wrap {
     --nova-glow-angle: 0deg;
     position: relative;

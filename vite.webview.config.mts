@@ -23,11 +23,11 @@ export default defineConfig({
     }
   },
   build: {
-    outDir: path.resolve(__dirname, 'out', 'webview'),
+    outDir: path.resolve(import.meta.dirname, 'out', 'webview'),
     emptyOutDir: true,
     manifest: true,
     rollupOptions: {
-      input: path.resolve(__dirname, 'webview', 'index.html')
+      input: path.resolve(import.meta.dirname, 'webview', 'index.html')
     }
   }
 });
