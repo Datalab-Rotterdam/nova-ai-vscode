@@ -1,3 +1,10 @@
+# [1.0.0-alpha.37](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.36...v1.0.0-alpha.37) (2026-10-25)
+
+
+### Bug Fixes
+
+* clip full-height views so the page itself never scrolls ([8aca2e4](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/8aca2e434cf7c240fdd05e7bc13badfd1096a6a0))
+
 # [1.0.0-alpha.36](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.35...v1.0.0-alpha.36) (2026-10-24)
 
 
