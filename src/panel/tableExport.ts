@@ -88,7 +88,7 @@ export function zip(files: { name: string; data: Uint8Array }[]): Uint8Array {
 
 const escapeXml = (value: string) =>
     // Control characters other than tab and newline are not allowed in XML.
-    value.replace(/[^\t\n\r -퟿-�]/g, '').replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
+    value.replace(/[^\t\n\r -\uD7FF\uE000-\uFFFD]/g, '').replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
 
 /** A numeric cell is a plain number, so Excel can sum it; "007" and "1,5" stay text. */
 const NUMBER = /^-?(?:0|[1-9]\d{0,14})(?:\.\d+)?$/;

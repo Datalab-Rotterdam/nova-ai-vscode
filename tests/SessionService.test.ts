@@ -24,11 +24,11 @@ describe('SessionService', () => {
   });
 
   it('stores a validated key and account summary on sign-in', async () => {
-    mockNovaAI.mockImplementation(() => ({
+    mockNovaAI.mockImplementation(function () { return {
       baseUrl: 'https://api.example.test/v1',
       providers: { list: vi.fn().mockResolvedValue({ data: [{ name: 'Nova Runtime' }] }) },
       models: { list: vi.fn().mockResolvedValue({ data: [{ id: 'nova-pro', created: 1, owned_by: 'nova' }] }) }
-    }));
+    }; });
 
     const service = new SessionService(
       { secrets, globalState },
@@ -44,11 +44,11 @@ describe('SessionService', () => {
   });
 
   it('clears state on sign-out', async () => {
-    mockNovaAI.mockImplementation(() => ({
+    mockNovaAI.mockImplementation(function () { return {
       baseUrl: 'https://api.example.test/v1',
       providers: { list: vi.fn().mockResolvedValue({ data: [{ name: 'Nova Runtime' }] }) },
       models: { list: vi.fn().mockResolvedValue({ data: [{ id: 'nova-pro', created: 1, owned_by: 'nova' }] }) }
-    }));
+    }; });
 
     const service = new SessionService(
       { secrets, globalState },
@@ -65,11 +65,11 @@ describe('SessionService', () => {
   });
 
   it('marks stored sessions as degraded when validation fails', async () => {
-    mockNovaAI.mockImplementation(() => ({
+    mockNovaAI.mockImplementation(function () { return {
       baseUrl: 'https://api.example.test/v1',
       providers: { list: vi.fn().mockRejectedValue(new Error('Invalid token: expired key')) },
       models: { list: vi.fn().mockResolvedValue({ data: [] }) }
-    }));
+    }; });
 
     const service = new SessionService(
       { secrets, globalState },
