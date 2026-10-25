@@ -675,8 +675,10 @@
 </section>
 
 <style lang="scss">
+  /* Clip, not scroll: the composer's glow reaches below the view and would scroll the page. */
   .chat {
     height: 100vh;
+    overflow: clip;
     display: flex;
     flex-direction: column;
   }

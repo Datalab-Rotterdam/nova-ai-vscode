@@ -179,6 +179,7 @@
     display: flex;
     flex-direction: column;
     height: 100vh;
+    overflow: clip;
     background: var(--vscode-editor-background);
     color: var(--vscode-foreground);
   }
