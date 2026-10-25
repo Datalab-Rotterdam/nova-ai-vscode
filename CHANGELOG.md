@@ -1,3 +1,10 @@
+# [1.0.0-alpha.40](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.39...v1.0.0-alpha.40) (2026-10-25)
+
+
+### Features
+
+* Nova pet above the composer, separate chats per sidebar ([0b9dbe8](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/0b9dbe8d06286e7c670928b22734eab914b91a0f))
+
 # [1.0.0-alpha.39](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.38...v1.0.0-alpha.39) (2026-10-25)
 
 
