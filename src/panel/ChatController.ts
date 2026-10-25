@@ -244,6 +244,11 @@ export class ChatController implements vscode.Disposable, ChatHistory {
     ) {
         this.rememberLast = options.rememberLast ?? true;
         this.disposables.push(this.modelProvider.onDidChangeLanguageModelChatInformation(() => void this.refreshModels().then(() => this.postState())));
+        // The pet shows or hides as soon as its setting changes.
+        const petChanged = vscode.workspace.onDidChangeConfiguration?.((event) => (event.affectsConfiguration('nova.chat.pet') || event.affectsConfiguration('nova.chat.petRight')) && this.postState());
+        if (petChanged) {
+            this.disposables.push(petChanged);
+        }
         // New and edited agents show in the mode menu at once, not on the next state update.
         const agentPaths = this.services.agents?.();
         for (const folder of agentPaths ? [agentsFolder(agentPaths, 'global'), agentsFolder(agentPaths, 'project')] : []) {
@@ -480,6 +485,11 @@ export class ChatController implements vscode.Disposable, ChatHistory {
             case 'chat/manageAgents':
                 await vscode.commands.executeCommand(COMMAND_MANAGE_AGENTS);
                 break;
+            case 'chat/petMoved':
+                if (Number.isFinite(command.right)) {
+                    await vscode.workspace.getConfiguration('nova').update('chat.petRight', Math.max(0, Math.round(command.right)), vscode.ConfigurationTarget.Global);
+                }
+                break;
             case 'chat/setApprovalMode':
                 await vscode.workspace.getConfiguration('nova').update('agent.approvalMode', command.mode, vscode.ConfigurationTarget.Global);
                 this.postState();
@@ -693,7 +703,9 @@ export class ChatController implements vscode.Disposable, ChatHistory {
             todos: this.session.todos ?? [],
             changes: this.changesView(),
             subagents: this.session.subagents ?? [],
-            fileOptions: this.fileOptions()
+            fileOptions: this.fileOptions(),
+            pet: vscode.workspace.getConfiguration('nova').get<boolean>('chat.pet', false),
+            petRight: vscode.workspace.getConfiguration('nova').get<number>('chat.petRight', 18)
         };
     }
 

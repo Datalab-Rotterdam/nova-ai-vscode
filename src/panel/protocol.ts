@@ -228,6 +228,10 @@ export interface ChatState {
     subagents: SubagentState[];
     /** Workspace files offered by `@` in the composer, newest-touched first. */
     fileOptions: string[];
+    /** Show the Nova pet above the composer (`nova.chat.pet`). */
+    pet: boolean;
+    /** Distance of the pet from the right edge, in pixels (`nova.chat.petRight`). */
+    petRight: number;
 }
 
 export type ApprovalMode = 'ask' | 'autoReadOnly' | 'autoAll';
@@ -291,6 +295,8 @@ export type ChatCommand =
     | { command: 'chat/openLink'; href: string; text: string }
     /** A code block of an answer, opened as an untitled file in an editor. */
     | { command: 'chat/openSnippet'; code: string; language: string }
+    /** The pet was dragged and dropped: its new distance from the right edge. */
+    | { command: 'chat/petMoved'; right: number }
     /** A table of an answer, saved as a CSV or Excel file (the extension asks where). */
     | { command: 'chat/exportTable'; format: 'csv' | 'xlsx'; rows: string[][] }
     | { command: 'chat/setApprovalMode'; mode: ApprovalMode }

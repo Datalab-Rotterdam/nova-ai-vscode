@@ -942,6 +942,19 @@
         "title": "Developer",
         "order": 11,
         "properties": {
+          "nova.chat.pet": {
+            "type": "boolean",
+            "default": false,
+            "markdownDescription": "Show the Nova pet above the chat box. It looks busy while Nova works and rests when it is done.",
+            "order": 0
+          },
+          "nova.chat.petRight": {
+            "type": "number",
+            "default": 18,
+            "minimum": 0,
+            "markdownDescription": "Distance of the Nova pet from the right edge of the chat, in pixels. Drag the pet sideways to change it; reset this setting to put it back in the right corner.",
+            "order": 0
+          },
           "nova.chat.rewriteAssistantIdentity": {
             "type": "boolean",
             "default": true,
