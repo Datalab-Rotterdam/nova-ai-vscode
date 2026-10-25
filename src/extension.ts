@@ -60,6 +60,7 @@ import {installSkills} from '@datalabrotterdam/nova-ai-skills';
 import {openHelp} from './core/help';
 import {ChatController, listToolCatalog} from './panel/ChatController';
 import {ToolsController} from './tools/ToolsController';
+import {HooksController} from './hooks/HooksController';
 import {PROPOSED_SCHEME, ProposedContentProvider} from './panel/ProposedContentProvider';
 import {SessionStore} from './panel/SessionStore';
 import {confirmAndDeleteChats, promptRenameChat, searchChats} from './panel/chatSearch';
@@ -181,6 +182,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         post,
         mcp.onDidChange
     ));
+    sidebarProvider.useHooks((post) => new HooksController(permissions, () => listToolCatalog(memory, mcp), post));
     sidebarProvider.useMcp((post) => new McpController(mcp, () => ({ user: nova.home.mcpConfig, project: projectMcpConfig(), projectOthers: workspaceRoot() ? [path.join(workspaceRoot()!, '.mcp.json')] : [] }), post));
     const chatHub = new ChatHub();
     // One controller per chat surface (the sidebar, each editor tab), all sharing the store.

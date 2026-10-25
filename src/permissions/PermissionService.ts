@@ -132,19 +132,27 @@ export class PermissionService {
         return merged;
     }
 
-    /** The settings files in order: the user's, the private project file, then the workspace's two. */
-    private async sources(): Promise<Array<{ settings: NovaSettings; workspace: boolean }>> {
+    /**
+     * The settings files in order: the user's, the private project file, then the workspace's
+     * two. `workspace`: in the repository, so only trusted in a trusted workspace.
+     */
+    public settingsFiles(): Array<{ file: string; workspace: boolean; kind: 'user' | 'project' | 'shared' | 'local' }> {
         const root = this.workspaceRoot();
         const project = this.projectSettings();
-        const files: Array<[string | undefined, boolean]> = [
-            [this.globalSettings, false],
-            [project, false],
-            [root && path.join(root, '.nova-ai', 'settings.json'), true],
-            [root && path.join(root, '.nova-ai', 'settings.local.json'), true]
+        return [
+            { file: this.globalSettings, workspace: false, kind: 'user' as const },
+            ...(project ? [{ file: project, workspace: false, kind: 'project' as const }] : []),
+            ...(root ? [
+                { file: path.join(root, '.nova-ai', 'settings.json'), workspace: true, kind: 'shared' as const },
+                { file: path.join(root, '.nova-ai', 'settings.local.json'), workspace: true, kind: 'local' as const }
+            ] : [])
         ];
+    }
+
+    private async sources(): Promise<Array<{ settings: NovaSettings; workspace: boolean }>> {
         const sources: Array<{ settings: NovaSettings; workspace: boolean }> = [];
-        for (const [file, workspace] of files) {
-            const settings = file ? await readSettings(file) : undefined;
+        for (const { file, workspace } of this.settingsFiles()) {
+            const settings = await readSettings(file);
             if (settings) {
                 sources.push({ settings, workspace });
             }
@@ -180,7 +188,7 @@ function list(value: unknown): string[] {
     return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
 }
 
-async function readSettings(file: string): Promise<NovaSettings | undefined> {
+export async function readSettings(file: string): Promise<NovaSettings | undefined> {
     try {
         const parsed = JSON.parse(await fs.readFile(file, 'utf8')) as unknown;
         return typeof parsed === 'object' && parsed !== null ? parsed as NovaSettings : undefined;

@@ -13,14 +13,26 @@ import { runShell } from '../agent/tools/terminalTool';
  * A hook gets the event as JSON on stdin. Exit code 2 blocks (stderr says why); exit 0 may
  * print JSON (`decision`, `reason`, `hookSpecificOutput`); any other exit code is a warning.
  */
-export type HookEvent = 'PreToolUse' | 'PostToolUse' | 'UserPromptSubmit' | 'Stop' | 'SessionStart';
+export type HookEvent = 'SessionStart' | 'UserPromptSubmit' | 'PreToolUse' | 'PostToolUse' | 'PreCompact' | 'SubagentStart' | 'SubagentStop' | 'Stop';
+
+/** The events in the order they happen, for the Hooks page. `tool`: a matcher picks the tools. */
+export const HOOK_EVENTS: ReadonlyArray<{ name: HookEvent; description: string; tool?: true }> = [
+    { name: 'SessionStart', description: 'Before the first message of a chat. Its output is added as context.' },
+    { name: 'UserPromptSubmit', description: 'When you send a prompt. Can block it or add context.' },
+    { name: 'PreToolUse', description: 'Before Nova uses a tool. Can block or approve the call.', tool: true },
+    { name: 'PostToolUse', description: 'After a tool succeeded. Can give Nova feedback on the result.', tool: true },
+    { name: 'PreCompact', description: 'Before the conversation is compacted into a summary.' },
+    { name: 'SubagentStart', description: 'When a sub-agent starts. Its output is added to the agent\'s task.' },
+    { name: 'SubagentStop', description: 'When a sub-agent is done. Can send it back to work.' },
+    { name: 'Stop', description: 'When Nova is done answering. Can send it back to work.' }
+];
 
 export interface HookOutcome {
     /** Why the hook blocked: the tool call, the prompt, or stopping. */
     block?: string;
     /** A PreToolUse hook approved the call: no approval card. */
     allow?: boolean;
-    /** Text for the model: plain stdout of UserPromptSubmit/SessionStart hooks, or `additionalContext`. */
+    /** Text for the model: plain stdout of UserPromptSubmit/SessionStart/SubagentStart hooks, or `additionalContext`. */
     context?: string;
     /** Hooks that failed without blocking, for the user. */
     warnings: string[];
@@ -89,7 +101,7 @@ export class HookService {
                     if (decision.context) {
                         context.push(decision.context);
                     }
-                } else if (result.stdout && (event === 'UserPromptSubmit' || event === 'SessionStart')) {
+                } else if (result.stdout && (event === 'UserPromptSubmit' || event === 'SessionStart' || event === 'SubagentStart')) {
                     context.push(result.stdout);
                 }
             }

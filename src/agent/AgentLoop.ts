@@ -13,6 +13,8 @@ export interface AgentLoopHost {
     thinking?(value: string, id: string): void;
     toolCall?(call: vscode.LanguageModelToolCallPart): void;
     toolResult?(call: vscode.LanguageModelToolCallPart, result: vscode.LanguageModelToolResult | undefined, error?: string): void;
+    /** Just before older turns are summarized (PreCompact hooks). */
+    beforeCompact?(): Promise<void>;
     compacted?(stage: Exclude<CompactionStage, 'none'>): void;
     /** Prompt tokens reported for a request in this run. */
     /** Tokens of one request; `cachedTokens` is the part of the prompt the provider served from its cache. */
@@ -211,7 +213,10 @@ async function compact(
             budget,
             threshold,
             pinned: request.pinned,
-            summarize: async (transcript) => (summary = await summarize(model, transcript, budget, token))
+            summarize: async (transcript) => {
+                await host.beforeCompact?.();
+                return (summary = await summarize(model, transcript, budget, token));
+            }
         },
         tokenCalibration.ratio(model.id)
     );

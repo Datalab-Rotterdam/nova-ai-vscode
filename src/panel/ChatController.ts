@@ -1013,6 +1013,7 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         const ratio = tokenCalibration.ratio(model.id);
         const before = estimateMessagesTokens(this.messages, ratio);
         try {
+            await this.runHooks('PreCompact', { trigger: 'manual', custom_instructions: focus }, running.token);
             const summary = (await summarize(model, buildTranscript(this.messages), model.maxInputTokens, running.token, focus || undefined)).trim();
             if (running.token.isCancellationRequested) {
                 this.notice('info', 'Stopped. The conversation was not compacted.');
@@ -1214,6 +1215,7 @@ export class ChatController implements vscode.Disposable, ChatHistory {
                     thinkingItem.text += delta;
                     this.post({ type: 'chat/textDelta', itemId: thinkingItem.id, delta });
                 },
+                beforeCompact: async () => void await this.runHooks('PreCompact', { trigger: 'auto', custom_instructions: '' }, running.token),
                 compacted: (stage) => this.forgetMessagePositions() ?? this.addItem({
                     kind: 'notice',
                     id: randomUUID(),
@@ -1897,7 +1899,25 @@ export class ChatController implements vscode.Disposable, ChatHistory {
                     touch();
                 }
             }, own.token);
-            const result = await (worktree ? withToolRoot(worktree.path, loop) : loop());
+            // Hooks run where the agent works, like its tools: in a coding agent's worktree.
+            const work = async () => {
+                const started = await this.runHooks('SubagentStart', { agent_id: id, prompt: task.prompt }, own.token);
+                if (started.context) {
+                    messages.push(vscode.LanguageModelChatMessage.User(started.context));
+                }
+                let result = await loop();
+                // Like a Stop hook, a SubagentStop hook can send the agent back to work a few times.
+                for (let round = 0; round < MAX_STOP_HOOK_ROUNDS && !result.hitRoundLimit && !own.token.isCancellationRequested; round++) {
+                    const stop = await this.runHooks('SubagentStop', { agent_id: id, stop_hook_active: round > 0 }, own.token);
+                    if (!stop.block || own.token.isCancellationRequested) {
+                        break;
+                    }
+                    messages.push(vscode.LanguageModelChatMessage.User(`A SubagentStop hook did not let you finish yet:\n${stop.block}\nContinue the task.`));
+                    result = await loop();
+                }
+                return result;
+            };
+            const result = await (worktree ? withToolRoot(worktree.path, work) : work());
             state.tokens = result.promptTokens + result.completionTokens || state.tokens;
             const stopped = own.token.isCancellationRequested;
             state.status = stopped ? 'stopped' : 'done';

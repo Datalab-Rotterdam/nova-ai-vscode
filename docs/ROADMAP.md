@@ -9,7 +9,7 @@ lands.
 | Feature | PR | Notes |
 |---|---|---|
 | **Own MCP client with OAuth** | #14 | stdio, Streamable HTTP and SSE. Config in `~/.nova-ai/mcp.json`, `.mcp.json` and `.nova-ai/mcp.json`. Sign-in uses dynamic client registration and a loopback redirect; tokens go to Secret Storage. **Nova AI: MCP Servers** manages the servers. |
-| **Hooks** (Claude Code format) | #15 | PreToolUse, PostToolUse, UserPromptSubmit, SessionStart and Stop. Exit code 2 blocks. Workspace hooks run only in a trusted workspace. |
+| **Hooks** (Claude Code format) | #15 | PreToolUse, PostToolUse, UserPromptSubmit, SessionStart and Stop; in the extension also PreCompact, SubagentStart and SubagentStop. Exit code 2 blocks. Workspace hooks run only in a trusted workspace. A Customizations › Hooks page adds and deletes them. |
 | **Git commands** | #16 | `/commit`, `/review`, and `/pr` (alias `/mr`). `/pr` uses `gh` or `glab`, otherwise opens the host's compare page. |
 | **Background coding agents** | #17 | `start_coding_agent` runs each agent on its own branch and git worktree. When it is done you can Review, Merge or Discard. Agents survive the end of the answer; after a reload they show as *interrupted*. |
 | **Cost and usage** | #20 | Tokens and cost per chat and per agent, computed from the model's price. Also fixes the price label (the gateway sends `inputCostPer1M`). |

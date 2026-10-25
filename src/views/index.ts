@@ -12,6 +12,8 @@ import type { McpCommand } from '../mcp/protocol';
 import type { McpController } from '../mcp/McpController';
 import type { ToolsCommand } from '../tools/protocol';
 import type { ToolsController } from '../tools/ToolsController';
+import type { HooksCommand } from '../hooks/protocol';
+import type { HooksController } from '../hooks/HooksController';
 import { SettingsController } from '../settings/SettingsController';
 import type { SettingsCommand } from '../settings/protocol';
 import { Diagnostics } from '../core/diagnostics';
@@ -74,7 +76,8 @@ export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer
   private agentPaths?: () => AgentPaths;
   private createMcp?: (post: (message: unknown) => void) => McpController;
   private createTools?: (post: (message: unknown) => void) => ToolsController;
-  private customize?: { panel: WebviewPanel; tools?: ToolsController; mcp?: McpController; skills: SkillsController; agents: AgentsController; settings: SettingsController };
+  private createHooks?: (post: (message: unknown) => void) => HooksController;
+  private customize?: { panel: WebviewPanel; tools?: ToolsController; mcp?: McpController; hooks?: HooksController; skills: SkillsController; agents: AgentsController; settings: SettingsController };
   /** The section to show when the page is ready. */
   private pendingSection?: CustomizeSection;
   private createSettings?: (post: (message: unknown) => void) => SettingsController;
@@ -122,6 +125,11 @@ export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer
     this.createTools = create;
   }
 
+  /** How to make the Hooks section's controller (the extension knows the settings files and the tools). */
+  public useHooks(create: (post: (message: unknown) => void) => HooksController): void {
+    this.createHooks = create;
+  }
+
   /** The Customizations page (one editor tab): skills, agents and settings in one place. */
   public async openCustomize(section?: CustomizeSection): Promise<void> {
     this.pendingSection = section;
@@ -165,12 +173,14 @@ export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer
     const settings = this.createSettings(post);
     const tools = this.createTools?.(post);
     const mcp = this.createMcp?.(post);
-    this.customize = { panel, tools, mcp, skills, agents, settings };
+    const hooks = this.createHooks?.(post);
+    this.customize = { panel, tools, mcp, hooks, skills, agents, settings };
     panel.onDidChangeViewState(() => {
       if (panel.visible) {
         skills.refresh();
         agents.refresh();
         void tools?.refresh();
+        void hooks?.refresh();
       }
     });
     panel.onDidDispose(() => {
@@ -179,6 +189,7 @@ export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer
       settings.dispose();
       tools?.dispose();
       mcp?.dispose();
+      hooks?.dispose();
       if (this.customize?.panel === panel) {
         this.customize = undefined;
       }
@@ -483,7 +494,7 @@ export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer
       await this.handleCustomize(message, this.customize);
       return;
     }
-    if (/^(tools|mcp|skills|settings|agents|customize)\//.test(message.command)) {
+    if (/^(tools|mcp|skills|settings|agents|hooks|customize)\//.test(message.command)) {
       return;
     }
     const sidebarView = [...this.views].find((view) => view.webview === source);
@@ -578,6 +589,9 @@ export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer
         case 'agents':
           await page.agents.handle(message as unknown as AgentsCommand);
           break;
+        case 'hooks':
+          await page.hooks?.handle(message as unknown as HooksCommand);
+          break;
         case 'settings':
           await page.settings.handle(message as unknown as SettingsCommand);
           break;
@@ -595,6 +609,7 @@ export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer
       void page.settings.refresh();
       void page.tools?.refresh();
       page.mcp?.refresh();
+      void page.hooks?.refresh();
     }
   }
 

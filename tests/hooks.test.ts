@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { CancellationTokenSource } from 'vscode';
 import { runShell } from '../src/agent/tools/terminalTool';
+import { addHook, listHooks, removeHook, scriptCommand } from '../src/hooks/config';
 import { HookService, matchingCommands } from '../src/hooks/HookService';
 import { PermissionService } from '../src/permissions/PermissionService';
 
@@ -90,5 +91,52 @@ describe('hooks', () => {
         expect(matchingCommands(await permissions.hooks(), 'Stop').map((hook) => hook.command)).toEqual(['user']);
         trusted = true;
         expect(matchingCommands(await permissions.hooks(), 'Stop').map((hook) => hook.command)).toEqual(['user', 'team']);
+    });
+});
+
+describe('hooks config', () => {
+    it('adds hooks to the group with the same matcher and removes them again', () => {
+        const settings: Record<string, unknown> = { permissions: { allow: ['read_file'] } };
+        addHook(settings, 'PreToolUse', 'run_command', 'a.sh');
+        addHook(settings, 'PreToolUse', 'run_command', 'b.sh');
+        addHook(settings, 'PreToolUse', undefined, 'c.sh');
+        addHook(settings, 'SubagentStop', undefined, 'd.sh');
+        expect(settings.hooks).toEqual({
+            PreToolUse: [
+                { matcher: 'run_command', hooks: [{ type: 'command', command: 'a.sh' }, { type: 'command', command: 'b.sh' }] },
+                { hooks: [{ type: 'command', command: 'c.sh' }] }
+            ],
+            SubagentStop: [{ hooks: [{ type: 'command', command: 'd.sh' }] }]
+        });
+        expect(listHooks(settings).map((hook) => [hook.event, hook.matcher, hook.command, hook.group, hook.index])).toEqual([
+            ['PreToolUse', 'run_command', 'a.sh', 0, 0],
+            ['PreToolUse', 'run_command', 'b.sh', 0, 1],
+            ['PreToolUse', undefined, 'c.sh', 1, 0],
+            ['SubagentStop', undefined, 'd.sh', 0, 0]
+        ]);
+        // The new events run like the others; matchers only apply to tool events.
+        expect(matchingCommands(settings.hooks as Record<string, unknown[]>, 'SubagentStop')).toEqual([{ command: 'd.sh', timeout: 60 }]);
+
+        removeHook(settings, 'PreToolUse', 1, 0);
+        removeHook(settings, 'SubagentStop', 0, 0);
+        removeHook(settings, 'PreToolUse', 0, 0);
+        expect(settings.hooks).toEqual({ PreToolUse: [{ matcher: 'run_command', hooks: [{ type: 'command', command: 'b.sh' }] }] });
+        removeHook(settings, 'PreToolUse', 0, 0);
+        expect(settings).toEqual({ permissions: { allow: ['read_file'] } });
+        expect(() => removeHook(settings, 'PreToolUse', 0, 0)).toThrow();
+    });
+
+    it('runs a script with its interpreter, relative to the workspace', () => {
+        const root = path.join(dir, 'repo');
+        expect(scriptCommand(path.join(root, 'hooks', 'check.sh'), root, 'darwin')).toBe('bash hooks/check.sh');
+        expect(scriptCommand(path.join(root, 'check.py'), root, 'darwin')).toBe('python3 check.py');
+        expect(scriptCommand(path.join(root, 'tools', 'guard'), root, 'darwin')).toBe('./tools/guard');
+        expect(scriptCommand(path.join(root, 'my hooks', 'a.js'), root, 'darwin')).toBe('node "my hooks/a.js"');
+        expect(scriptCommand('/elsewhere/guard', root, 'darwin')).toBe('/elsewhere/guard');
+    });
+
+    it('lists only command hooks', () => {
+        expect(listHooks({ hooks: { Stop: [{ hooks: [{ type: 'prompt', prompt: 'x' }, { command: 'ok.sh', timeout: 5 }] }], Bad: 'x' } }))
+            .toEqual([{ event: 'Stop', command: 'ok.sh', timeout: 5, group: 0, index: 1 }]);
     });
 });

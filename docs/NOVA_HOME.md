@@ -120,7 +120,16 @@ client); each product keeps the key.
 
 - Events: `PreToolUse` (before the approval card), `PostToolUse` (after the
   tool ran), `UserPromptSubmit`, `SessionStart` (before a chat's first
-  message), `Stop` (the agent wants to finish).
+  message), `Stop` (the agent wants to finish). The extension also runs
+  `PreCompact` (before a summary is written; `trigger` is `manual` for
+  `/compact` or `auto`, plus `custom_instructions`; it can't block),
+  `SubagentStart` (`agent_id`, `prompt`; stdout is added to the agent's task)
+  and `SubagentStop` (`agent_id`, `stop_hook_active`; exit code 2 sends the
+  sub-agent back to work, at most three times). Sub-agents' tool calls run
+  the tool hooks too.
+- The extension's **Customizations › Hooks** page lists the hooks of every
+  settings file and adds or deletes them. New workspace hooks go to the
+  shared `.nova-ai/settings.json`, new user hooks to `~/.nova-ai/settings.json`.
 - `matcher` (tool events only) is a regular expression over the whole tool
   name; it also matches Claude Code's names (`Bash`, `Read`, `Edit`, `Write`,
   `Glob`, `Grep`, `LS`, `WebFetch`, `WebSearch`, `TodoWrite`) for each

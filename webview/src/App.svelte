@@ -4,6 +4,8 @@
     import ChatView from './chat/ChatView.svelte';
     import AgentsPage from './agents/AgentsPage.svelte';
     import SkillsPage from './skills/SkillsPage.svelte';
+    import HooksPage from './hooks/HooksPage.svelte';
+    import type {HooksPageData} from '../../src/hooks/protocol';
     import SettingsPage from './settings/SettingsPage.svelte';
     import McpPage from './mcp/McpPage.svelte';
     import type {McpPageData} from '../../src/mcp/protocol';
@@ -43,6 +45,7 @@
         customizePage?.show('tools');
     };
     let agents = $state<AgentsPageData | undefined>();
+    let hooks = $state<HooksPageData | undefined>();
 
     // The editor theme's token colors, as --nova-syn-<role> variables for code in answers.
     $effect(() => {
@@ -70,6 +73,8 @@
                 tools = (message as unknown as { data: ToolsPageData }).data;
             } else if (message.type === 'agents') {
                 agents = (message as unknown as { data: AgentsPageData }).data;
+            } else if (message.type === 'hooks') {
+                hooks = (message as unknown as { data: HooksPageData }).data;
             } else if (message.type.startsWith('chat/')) {
                 chat.apply(message as ChatEvent);
                 if (message.type === 'chat/state') {
@@ -109,6 +114,7 @@
             post({command: 'mcp/ready'});
             post({command: 'skills/ready'});
             post({command: 'agents/ready'});
+            post({command: 'hooks/ready'});
             post({command: 'settings/ready'});
             return () => window.removeEventListener('message', onMessage);
         }
@@ -145,6 +151,9 @@
 {#snippet AgentsSection()}
     <AgentsPage data={agents} {post}/>
 {/snippet}
+{#snippet HooksSection()}
+    <HooksPage data={hooks} {post}/>
+{/snippet}
 {#snippet SkillsSection()}
     <SkillsPage data={skills} {post}/>
 {/snippet}
@@ -159,6 +168,7 @@
         {id: 'mcp', label: 'MCP Servers', icon: 'server', count: mcp?.servers.length, body: McpSection},
         {id: 'agents', label: 'Agents', icon: 'robot', count: agents?.agents.length, body: AgentsSection},
         {id: 'skills', label: 'Skills', icon: 'book', count: skills?.skills.length, body: SkillsSection},
+        {id: 'hooks', label: 'Hooks', icon: 'zap', count: hooks?.hooks.length, body: HooksSection},
         {id: 'settings', label: 'Settings', icon: 'settings-gear', body: SettingsSection}
     ]}/>
 {:else if view === 'chat' && chat.state}
