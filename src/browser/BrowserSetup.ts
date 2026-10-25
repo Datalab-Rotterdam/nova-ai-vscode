@@ -7,7 +7,7 @@ import type { Diagnostics } from '../core/diagnostics';
  * Browser integration, set up the way Claude Code does it for its Chrome extension: this
  * extension ships the Nova AI Browser host (@datalabrotterdam/nova-ai-browser-host, copied to
  * out/browser-host by the build) and registers it on startup. The host's own installer copies itself to
- * ~/.nova-ai-browser/host/<version>/, writes a wrapper and the browsers' native messaging
+ * ~/.nova-ai/browser/host/<version>/, writes a wrapper and the browsers' native messaging
  * manifests, and installs the nova-browser skill into Nova's skills folder. It changes nothing
  * when everything is current and never replaces a newer host (nova-ai-cli ships one too).
  */

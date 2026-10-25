@@ -1,9 +1,11 @@
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { lineStats, replaceSnippet } from '../src/agent/tools/editTools';
 import { runShell } from '../src/agent/tools/terminalTool';
 import { outputParts, ToolInputError } from '../src/agent/tools/types';
-import { readFileTool } from '../src/agent/tools/readTools';
+import { browserScreenshots, readFileTool } from '../src/agent/tools/readTools';
 import { resolveWorkspacePath } from '../src/agent/tools/workspacePaths';
 import { closeDanglingToolCalls } from '../src/panel/ChatController';
 import { fromStoredMessages, toStoredMessages } from '../src/panel/SessionStore';
@@ -140,7 +142,7 @@ describe('read_file and images', () => {
     (vscode.workspace as unknown as MutableWorkspace).workspaceFolders = [
       { name: 'app', uri: vscode.Uri.file('/repo/app'), index: 0 }
     ];
-    process.env.NOVA_AI_BROWSER_HOME = '/home/me/.nova-ai-browser';
+    process.env.NOVA_AI_BROWSER_HOME = '/home/me/.nova-ai/browser';
     vi.spyOn(vscode.workspace, 'fs', 'get').mockReturnValue({ readFile: async () => new Uint8Array([1, 2, 3]) } as never);
   });
 
@@ -166,10 +168,15 @@ describe('read_file and images', () => {
   });
 
   it('opens browser screenshots, outside the workspace, but nothing else there', async () => {
-    const shot = '/home/me/.nova-ai-browser/screenshots/shot-1.png';
+    const shot = '/home/me/.nova-ai/browser/screenshots/shot-1.png';
     expect(await read(shot)).toMatchObject({ images: [{ mimeType: 'image/png' }] });
-    await expect(read('/home/me/.nova-ai-browser/screenshots/notes.txt')).rejects.toThrow(/outside the workspace/);
-    await expect(read('/home/me/.nova-ai-browser/hosts/1.png')).rejects.toThrow(/outside the workspace/);
-    await expect(read('/home/me/.nova-ai-browser/screenshots/../hosts/1.png')).rejects.toThrow(/outside the workspace/);
+    await expect(read('/home/me/.nova-ai/browser/screenshots/notes.txt')).rejects.toThrow(/outside the workspace/);
+    await expect(read('/home/me/.nova-ai/browser/hosts/1.png')).rejects.toThrow(/outside the workspace/);
+    await expect(read('/home/me/.nova-ai/browser/screenshots/../hosts/1.png')).rejects.toThrow(/outside the workspace/);
+  });
+
+  it('finds browser screenshots in ~/.nova-ai/browser by default', async () => {
+    delete process.env.NOVA_AI_BROWSER_HOME;
+    expect(browserScreenshots()).toBe(path.join(os.homedir(), '.nova-ai', 'browser', 'screenshots'));
   });
 });

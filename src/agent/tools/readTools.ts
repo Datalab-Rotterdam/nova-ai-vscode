@@ -34,7 +34,7 @@ const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
  * `[image saved: …]`). Outside the workspace, so `read_file` allows images there explicitly.
  */
 export function browserScreenshots(): string {
-    return path.join(process.env.NOVA_AI_BROWSER_HOME || path.join(os.homedir(), '.nova-ai-browser'), 'screenshots');
+    return path.join(process.env.NOVA_AI_BROWSER_HOME || path.join(os.homedir(), '.nova-ai', 'browser'), 'screenshots');
 }
 
 /** A workspace path, or an image in the browser's screenshots folder. */
