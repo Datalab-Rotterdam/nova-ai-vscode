@@ -1,3 +1,12 @@
+# [1.0.0-alpha.39](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.38...v1.0.0-alpha.39) (2026-10-25)
+
+
+### Features
+
+* Hooks page in Customizations, PreCompact and Subagent hooks ([1c15855](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/1c15855164d69491ff6cc7d8c9079bc1d1d9fb73))
+* Nova in both sidebars, editor toolbar chat, Customizations pages ([845def9](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/845def9df1546611897da3c5f11f0458a36a2fbb))
+* opening a chat open elsewhere moves it here ([d45eddb](https://github.com/Datalab-Rotterdam/nova-ai-vscode/commit/d45eddb4234222a1c0c3cda9252e7b2ba0fa5cf4))
+
 # [1.0.0-alpha.38](https://github.com/Datalab-Rotterdam/nova-ai-vscode/compare/v1.0.0-alpha.37...v1.0.0-alpha.38) (2026-10-25)
 
 
