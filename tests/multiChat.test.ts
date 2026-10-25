@@ -90,6 +90,19 @@ describe('several chats at once (sidebar and editor tabs)', () => {
         expect(tab.controller.getState().openElsewhere).toEqual(['b']);
     });
 
+    it('with takeOver, opening a chat shown elsewhere moves it here instead of revealing it', async () => {
+        const { make } = world([saved('a', 'Alpha')]);
+        const takeOver = vi.fn(async () => undefined);
+        const sidebar = make({ takeOver });
+        const tab = make({ rememberLast: false, initialSessionId: 'a' });
+        await tab.controller.handle({ command: 'chat/ready' });
+        await sidebar.controller.handle({ command: 'chat/ready' });
+
+        expect(await sidebar.controller.openSession('a')).toBe(true);
+        expect(takeOver).toHaveBeenCalledWith(sidebar.controller, tab.controller);
+        expect(tab.reveal).not.toHaveBeenCalled();
+    });
+
     it('a restored tab does not take the chat the sidebar already shows, and tabs do not become "last"', async () => {
         const { make, workspaceState } = world([saved('a', 'Alpha')], 'a');
         const sidebar = make();

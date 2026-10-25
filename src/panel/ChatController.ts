@@ -115,6 +115,8 @@ export interface ChatControllerOptions {
     reveal?: () => Promise<void> | void;
     /** The chat's title changed (editor tabs show it). */
     onTitle?: (title: string) => void;
+    /** Opening a chat another place shows: move `owner` here. Without it, that place is revealed. */
+    takeOver?: (requester: ChatController, owner: ChatController) => Promise<void>;
 }
 const MAX_CARD_DIFF_LINES = 400;
 /** Autopilot works until it is done; this only stops a model that loops forever. */
@@ -287,12 +289,13 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         this.options.hub?.remove(this);
     }
 
-    /** Sends this chat's events to another webview (the chat moved to an editor tab) and resyncs it. */
-    public moveTo(post: (event: ChatEvent) => void, options: Pick<ChatControllerOptions, 'reveal' | 'onTitle'>): void {
+    /** Sends this chat's events to another webview (the chat moved to another tab or the sidebar) and resyncs it. */
+    public moveTo(post: (event: ChatEvent) => void, options: Pick<ChatControllerOptions, 'reveal' | 'onTitle' | 'rememberLast'>): void {
         this.post = post;
-        this.rememberLast = false;
+        this.rememberLast = options.rememberLast ?? false;
         this.options.reveal = options.reveal;
         this.options.onTitle = options.onTitle;
+        void this.rememberAsLast();
         this.postState();
     }
 
@@ -2863,13 +2866,18 @@ export class ChatController implements vscode.Disposable, ChatHistory {
             return true;
         }
         const owner = this.options.hub?.ownerOf(sessionId, this);
-        if (owner) {
+        if (owner && !this.options.takeOver) {
             await owner.reveal();
             return false;
         }
         if (this.running) {
             void vscode.window.showInformationMessage('Nova is still working in this chat. Stop it first, then open another chat.');
             return false;
+        }
+        if (owner) {
+            // The chat moves here, running reply and all; this controller makes way.
+            await this.options.takeOver!(this, owner);
+            return true;
         }
         const session = await this.store.load(sessionId);
         if (!session) {

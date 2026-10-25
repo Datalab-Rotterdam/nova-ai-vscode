@@ -332,11 +332,69 @@ export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer
   }
 
   private newSidebarChat(initialSessionId: string | null | undefined): ChatController {
-    return this.chatFactory()((event) => this.view && postSafely(this.view.webview, event), {
+    return this.chatFactory()(this.sidebarPost, {
       rememberLast: true,
       initialSessionId,
-      reveal: () => this.revealSidebar()
+      reveal: () => this.revealSidebar(),
+      takeOver: (requester, owner) => this.takeOver(requester, owner)
     });
+  }
+
+  private readonly sidebarPost = (event: ChatEvent) => this.view && postSafely(this.view.webview, event);
+
+  /**
+   * Opening a chat that another place shows moves it to the place that asked, running reply and
+   * all. The asking place's own chat (idle; ChatController checks) makes way; a sidebar the
+   * chat leaves starts a new chat, an editor tab it leaves closes.
+   */
+  private async takeOver(requester: ChatController, owner: ChatController): Promise<void> {
+    const from = this.placeOf(owner);
+    const to = this.placeOf(requester);
+    if (!from || !to) {
+      await owner.reveal();
+      return;
+    }
+    // Free the old place first, so closing its tab does not stop the moving chat.
+    const freshSidebar = from === 'sidebar' ? this.newSidebarChat(null) : undefined;
+    if (freshSidebar) {
+      await owner.forgetLast();
+      this.sidebarChat = freshSidebar;
+    } else if (from !== 'sidebar') {
+      this.panels.delete(from);
+      from.dispose();
+    }
+    if (to === 'sidebar') {
+      this.sidebarChat = owner;
+      owner.moveTo(this.sidebarPost, { reveal: () => this.revealSidebar(), onTitle: undefined, rememberLast: true });
+    } else {
+      const wiring = this.panelWiring(to);
+      this.panels.set(to, owner);
+      owner.moveTo(wiring.post, { reveal: wiring.reveal, onTitle: wiring.onTitle });
+      wiring.onTitle(owner.title);
+    }
+    requester.dispose();
+    await freshSidebar?.handle({ command: 'chat/ready' });
+  }
+
+  private placeOf(controller: ChatController): 'sidebar' | WebviewPanel | undefined {
+    if (controller === this.sidebarChat) {
+      return 'sidebar';
+    }
+    return [...this.panels].find(([, candidate]) => candidate === controller)?.[0];
+  }
+
+  /** How a tab's chat reaches it: events, showing the tab, and its title. */
+  private panelWiring(panel: WebviewPanel): { post: (event: ChatEvent) => void; reveal: () => void; onTitle: (title: string) => void } {
+    return {
+      post: (event) => postSafely(panel.webview, event),
+      reveal: () => panel.reveal(),
+      onTitle: (title) => {
+        const next = title || 'New chat';
+        if (panel.title !== next) {
+          panel.title = next;
+        }
+      }
+    };
   }
 
   private ownerOf(sessionId: string): ChatController | undefined {
@@ -356,15 +414,8 @@ export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer
       light: Uri.joinPath(this.extensionUri, 'resources', 'nova-dark.svg'),
       dark: Uri.joinPath(this.extensionUri, 'resources', 'favicon.svg')
     };
-    const post = (event: ChatEvent) => postSafely(panel.webview, event);
-    const reveal = () => panel.reveal();
-    const onTitle = (title: string) => {
-      const next = title || 'New chat';
-      if (panel.title !== next) {
-        panel.title = next;
-      }
-    };
-    const controller = chatFor(post, { rememberLast: false, reveal, onTitle });
+    const { post, reveal, onTitle } = this.panelWiring(panel);
+    const controller = chatFor(post, { rememberLast: false, reveal, onTitle, takeOver: (requester, owner) => this.takeOver(requester, owner) });
     if (controller === this.sidebarChat || [...this.panels.values()].includes(controller)) {
       throw new Error('A Nova chat cannot be shown twice.');
     }
@@ -378,12 +429,14 @@ export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer
       }
     });
     panel.onDidDispose(() => {
+      // The tab's chat now: a chat that moved in replaced it; one that moved out is gone from the map.
+      const current = this.panels.get(panel);
       this.panels.delete(panel);
       if (this.lastActivePanel === panel) {
         this.lastActivePanel = undefined;
       }
       // A running reply is stopped; what it produced so far is saved.
-      controller.dispose();
+      current?.dispose();
     });
     onTitle(controller.title);
     await this.attach(panel.webview, 'editor');
