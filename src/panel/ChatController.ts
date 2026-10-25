@@ -1164,8 +1164,9 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         const repo = subagentSettings.codingAgents && !agent.readOnly && agentAllowsTool(agent, START_CODING_AGENT_TOOL) && this.services.worktrees?.()
             ? await repoRoot(workspaceFolders()[0]?.uri.fsPath ?? '').catch(() => undefined)
             : undefined;
+        const disabledTools = await this.services.permissions?.disabledTools() ?? new Set<string>();
         const tools = availableTools(this.services.memory, this.interactionHost(), skills, subagentsOn ? this.subagentHost(agent) : undefined, this.services.mcp, repo ? this.codingAgentHost(agent, repo) : undefined, await this.searchTools())
-            .filter((tool) => agentAllowsTool(agent, tool.info.name, tool.mcp) && (!agent.readOnly || tool.readOnly));
+            .filter((tool) => !disabledTools.has(tool.info.name) && agentAllowsTool(agent, tool.info.name, tool.mcp) && (!agent.readOnly || tool.readOnly));
         let assistantItem: Extract<ChatItem, { kind: 'assistant' }> | undefined;
         let thinkingItem: Extract<ChatItem, { kind: 'thinking' }> | undefined;
         this.activeThinking = undefined;
@@ -1823,8 +1824,9 @@ export class ChatController implements vscode.Disposable, ChatHistory {
         const allowed = worktree ? CODING_AGENT_TOOLS : SUBAGENT_TOOLS;
         const maxRounds = worktree ? settings.codingRounds : settings.maxRounds;
         // The index covers the open workspace, not a coding agent's worktree: research agents only.
+        const disabledTools = await this.services.permissions?.disabledTools() ?? new Set<string>();
         const tools = availableTools(undefined, undefined, [], undefined, undefined, undefined, worktree ? [] : await this.searchTools())
-            .filter((tool) => allowed.has(tool.info.name) && agentAllowsTool(agent, tool.info.name, false) && (!agent.readOnly || tool.readOnly));
+            .filter((tool) => !disabledTools.has(tool.info.name) && allowed.has(tool.info.name) && agentAllowsTool(agent, tool.info.name, false) && (!agent.readOnly || tool.readOnly));
         const own = new vscode.CancellationTokenSource();
         this.subagentRuns.set(id, own);
         const link = parent.onCancellationRequested(() => own.cancel());
@@ -3076,7 +3078,68 @@ function availableTools(memory?: MemoryService, interaction?: InteractionHost, s
             .filter((tool) => tool.name.startsWith('mcp_') && ![...ownServers].some((prefix) => tool.name.startsWith(prefix)))
             .map((info) => ({ info, readOnly: false, mcp: true }))
         : [];
-    return [...builtIn, ...vscodeMcp];
+    const vscodeTools = vscode.workspace.getConfiguration('nova').get<boolean>('agent.includeVscodeTools', true)
+        ? vscode.lm.tools.flatMap((info) => {
+            const known = VSCODE_TOOLS.get(info.name);
+            return known ? [{ info, readOnly: known.readOnly, mcp: false }] : [];
+        })
+        : [];
+    return [...builtIn, ...vscodeMcp, ...vscodeTools];
+}
+
+/**
+ * VS Code's own tools worth offering, by group on the Tools page (read-only ones, then the rest).
+ * Left out because Nova has its own: files, search, edits, terminal, web fetch, memory, subagents.
+ */
+const VSCODE_TOOL_GROUPS: ReadonlyArray<readonly [group: string, description: string, readOnly: readonly string[], other: readonly string[]]> = [
+    ['VS Code', 'Navigate code, manage extensions, and run built-in VS Code commands.',
+        ['vscode_listCodeUsages', 'copilot_searchWorkspaceSymbols', 'copilot_getVSCodeAPI'], ['vscode_renameSymbol', 'copilot_runVscodeCommand', 'copilot_installExtension']],
+    ['Tasks and Problems', 'Create and run tasks and inspect workspace problems.', ['get_task_output', 'copilot_getErrors'], ['run_task', 'create_and_run_task']],
+    ['Integrated Browser', 'Open, navigate, and inspect pages in the built-in browser.', ['read_page', 'screenshot_page', 'list_browser_pages'],
+        ['open_browser_page', 'navigate_page', 'click_element', 'type_in_page', 'hover_element', 'drag_element', 'handle_dialog', 'run_playwright_code']],
+    ['Tests', 'Find and run the tests of the workspace.', ['copilot_findTestFiles'], ['runTests']],
+    ['Jupyter Notebooks', 'Create and edit Jupyter notebooks and run their cells.', ['copilot_getNotebookSummary', 'copilot_readNotebookCellOutput', 'notebook_list_packages'],
+        ['copilot_createNewJupyterNotebook', 'copilot_editNotebook', 'copilot_runNotebookCell', 'configure_notebook', 'restart_notebook_kernel', 'notebook_install_packages']]
+];
+const VSCODE_TOOLS = new Map<string, { group: string; description: string; readOnly: boolean }>(VSCODE_TOOL_GROUPS.flatMap(([group, description, readOnly, other]) => [
+    ...readOnly.map((name) => [name, { group, description, readOnly: true }] as const),
+    ...other.map((name) => [name, { group, description, readOnly: false }] as const)
+]));
+
+/** Nova's own tools by group on the Tools page. */
+const NOVA_TOOL_GROUPS: ReadonlyArray<readonly [group: string, description: string, names: readonly string[]]> = [
+    ['Files and Search', 'Read, search, create and edit files in the workspace.', ['read_file', 'list_dir', 'find_files', 'search_text', 'get_diagnostics', 'edit_file', 'create_file', 'semantic_search']],
+    ['Terminal', 'Run commands in the workspace.', ['run_command']],
+    ['Web', 'Fetch pages and search the web.', ['fetch_url', 'web_search']],
+    ['Memory', 'Remember facts between chats.', ['memory_read', 'memory_write']]
+];
+
+/** One tool for the Tools page: where it comes from and whether it only reads. */
+export interface ToolCatalogEntry {
+    name: string;
+    description: string;
+    readOnly: boolean;
+    /** Top level: "Built-in Tools", "VS Code Tools" or "Connected Sources". */
+    category: string;
+    /** Second level: "Terminal", "Integrated Browser", an MCP server. */
+    group: string;
+    groupDescription: string;
+}
+
+/** Every tool the chat can offer without a running chat (the tools a chat adds for itself, such as ask and todo, are left out). */
+export function listToolCatalog(memory?: MemoryService, mcpService?: McpService): ToolCatalogEntry[] {
+    return availableTools(memory, undefined, [], undefined, mcpService).map((tool): ToolCatalogEntry => {
+        const base = { name: tool.info.name, description: tool.info.description, readOnly: tool.readOnly };
+        const vscodeTool = VSCODE_TOOLS.get(tool.info.name);
+        if (vscodeTool) {
+            return { ...base, category: 'VS Code Tools', group: vscodeTool.group, groupDescription: vscodeTool.description };
+        }
+        if (tool.mcp) {
+            return { ...base, category: 'Connected Sources', group: /^mcp__(.+?)__/.exec(tool.info.name)?.[1] ?? tool.info.name.split('_')[1] ?? 'MCP', groupDescription: 'Tools of an MCP server.' };
+        }
+        const nova = NOVA_TOOL_GROUPS.find(([, , names]) => names.includes(tool.info.name));
+        return { ...base, category: 'Built-in Tools', group: nova?.[0] ?? 'Other', groupDescription: nova?.[1] ?? 'More tools of Nova.' };
+    });
 }
 
 function toModelOption(model: LanguageModelInfo): ChatModelOption {

@@ -1,29 +1,49 @@
 <script lang="ts">
     import type {Snippet} from 'svelte';
 
-    /** One skill or agent: a card with a title row, description, optional extras and actions. */
-    let {name, icon, description, location, dimmed = false, badges, extra, actions}: {
+    /** One tool, skill or agent: a card that folds open to its full text, notes and actions. */
+    let {name, icon, description, location, note, dimmed = false, open: initiallyOpen = false, forceOpen = false, badges, control, extra, actions}: {
         name: string;
         /** Codicon name before the title. */
         icon?: string;
         description: string;
         location?: string;
+        /** A warning that stays visible when the card is folded. */
+        note?: string;
         dimmed?: boolean;
+        /** Open at first; the reader can fold it. */
+        open?: boolean;
+        /** Stays open, for example while a search is typed. */
+        forceOpen?: boolean;
         badges?: Snippet;
+        /** A switch at the right of the header. */
+        control?: Snippet;
         extra?: Snippet;
         actions?: Snippet;
     } = $props();
+
+    let open = $state(false);
+    $effect.pre(() => {
+        open = initiallyOpen;
+    });
+    const expanded = $derived(open || forceOpen);
+    const hasMore = $derived(Boolean(extra || actions || location));
 </script>
 
-<article class:dimmed>
-    <div class="title">
-        {#if icon}<span class={`codicon codicon-${icon} icon`} aria-hidden="true"></span>{/if}
-        <strong>{name}</strong>
-        {#if badges}{@render badges()}{/if}
+<article class:dimmed class:expanded>
+    <div class="row">
+        <button class="head" aria-expanded={expanded} onclick={() => open = !expanded}>
+            <span class="codicon codicon-chevron-{expanded ? 'down' : 'right'} chevron" aria-hidden="true"></span>
+            {#if icon}<span class={`codicon codicon-${icon} icon`} aria-hidden="true"></span>{/if}
+            <strong>{name}</strong>
+            {#if badges}{@render badges()}{/if}
+        </button>
+        {#if control}<div class="control">{@render control()}</div>{/if}
     </div>
-    <p class="description">{description}</p>
-    {#if extra}{@render extra()}{/if}
-    {#if location || actions}
+    <p class="description" class:clamped={!expanded}>{description}</p>
+    {#if note}<p class="manage-note">{note}</p>{/if}
+    {#if expanded && hasMore}
+        {#if extra}{@render extra()}{/if}
         <div class="actions">
             {#if location}<span class="location" title={location}>{location}</span>{/if}
             {#if actions}{@render actions()}{/if}
@@ -33,6 +53,7 @@
 
 <style lang="scss">
   article {
+    min-width: 0;
     padding: 10px 12px;
     border: 1px solid var(--vscode-settings-headerBorder, var(--nova-border));
     border-radius: 4px;
@@ -47,15 +68,44 @@
     }
   }
 
-  .title {
+  .row {
     display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .head {
+    display: flex;
+    flex: 1;
     flex-wrap: wrap;
     align-items: center;
     gap: 6px;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
 
     strong {
       font-weight: 600;
     }
+
+    &:focus-visible {
+      outline: 1px solid var(--nova-focus);
+      outline-offset: 2px;
+    }
+  }
+
+  .chevron {
+    color: var(--nova-muted);
+  }
+
+  .control {
+    display: flex;
+    flex: none;
   }
 
   .icon {
@@ -63,8 +113,14 @@
   }
 
   .description {
-    margin: 4px 0 0;
+    margin: 4px 0 0 22px;
     color: var(--vscode-descriptionForeground);
+
+    &.clamped {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
   }
 
   .actions {
@@ -72,7 +128,7 @@
     flex-wrap: wrap;
     align-items: center;
     gap: 2px 12px;
-    margin-top: 8px;
+    margin: 8px 0 0 22px;
     font-size: 0.9em;
   }
 

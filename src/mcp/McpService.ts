@@ -28,6 +28,8 @@ export interface McpServerStatus {
     error?: string;
     /** HTTP servers: whether Nova holds OAuth tokens for it. */
     signedIn?: boolean;
+    /** The command line, or the address without its query (it may hold a key). */
+    target?: string;
 }
 
 export interface McpServiceOptions {
@@ -155,6 +157,7 @@ export class McpService implements McpToolCaller, vscode.Disposable {
                 type: connection.config.type,
                 status: connection.status,
                 tools: connection.tools.length,
+                target: describeTarget(connection.config),
                 error: connection.error ? connection.stderr ? `${connection.error}\n${connection.stderr}` : connection.error : undefined,
                 ...(connection.auth ? { signedIn: connection.auth.hasTokens } : {})
             })),
@@ -265,7 +268,7 @@ export class McpService implements McpToolCaller, vscode.Disposable {
         const auth = config.type === 'stdio' ? undefined : connection.auth ?? this.authFor(connection);
         await auth?.load();
         const transports = this.options.transports?.(config, auth) ?? this.defaultTransports(connection, auth);
-        let lastError: unknown;
+        const errors: unknown[] = [];
         for (const transport of transports) {
             const client = new Client(CLIENT_INFO, {
                 listChanged: {
@@ -304,7 +307,7 @@ export class McpService implements McpToolCaller, vscode.Disposable {
                 };
                 return;
             } catch (error) {
-                lastError = error;
+                errors.push(error);
                 await client.close().catch(() => undefined);
                 if (isAuthError(error)) {
                     break;
@@ -313,9 +316,13 @@ export class McpService implements McpToolCaller, vscode.Disposable {
         }
         connection.tools = [];
         connection.prompts = [];
+        const lastError = errors[errors.length - 1];
         connection.status = isAuthError(lastError) ? 'needs-auth' : 'error';
-        connection.error = isAuthError(lastError) ? new NeedsAuthError(config.name).message : errorMessage(lastError);
-        this.options.log?.(`MCP server "${config.name}" did not connect.`, lastError);
+        connection.error = isAuthError(lastError)
+            ? new NeedsAuthError(config.name).message
+            // The first transport is the one that matters (Streamable HTTP); the fallback's error alone would hide why it failed.
+            : errors.length > 1 ? `${errorMessage(errors[0])}\nThen the SSE fallback failed: ${errorMessage(lastError)}` : errorMessage(lastError);
+        this.options.log?.(`MCP server "${config.name}" did not connect.`, errors.length > 1 ? errors : lastError);
     }
 
     /** stdio; or Streamable HTTP with SSE as fallback (nova-ai-next `connect`), or SSE alone. */
@@ -351,6 +358,18 @@ export class McpService implements McpToolCaller, vscode.Disposable {
         const file = this.options.settingsFile();
         const value = file ? (await readJson(file)).disabledMcpServers : undefined;
         return Array.isArray(value) ? value.filter((name): name is string => typeof name === 'string') : [];
+    }
+}
+
+function describeTarget(config: McpServerConfig): string {
+    if (config.type === 'stdio') {
+        return [config.command, ...config.args].join(' ');
+    }
+    try {
+        const url = new URL(config.url);
+        return `${url.origin}${url.pathname}`;
+    } catch {
+        return config.url;
     }
 }
 

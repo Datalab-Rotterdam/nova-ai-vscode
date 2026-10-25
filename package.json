@@ -34,6 +34,9 @@
   "activationEvents": [
     "onStartupFinished",
     "onView:nova.sidebar",
+    "onView:nova.secondary",
+    "onCommand:nova.openSecondary",
+    "onCommand:nova.newChatInEditor",
     "onChatParticipant:nova-ai.nova",
     "onCommand:nova.manage",
     "onCommand:nova.signIn",
@@ -41,11 +44,13 @@
     "onCommand:nova.refreshModels",
     "onCommand:nova.openChat",
     "onCommand:nova.openSettings",
+    "onCommand:nova.openCustomizations",
     "onCommand:nova.newChat",
     "onCommand:nova.focusChat",
     "onCommand:nova.addSelectionToChat",
     "onCommand:nova.openChatInEditor",
     "onWebviewPanel:nova.chatPanel",
+    "onWebviewPanel:nova.customize",
     "onWebviewPanel:nova.skills",
     "onWebviewPanel:nova.agents",
     "onWebviewPanel:nova.settings",
@@ -240,6 +245,12 @@
         "category": "Nova AI"
       },
       {
+        "command": "nova.openCustomizations",
+        "title": "Nova AI: Customizations",
+        "category": "Nova AI",
+        "icon": "$(settings-gear)"
+      },
+      {
         "command": "nova.openSettings",
         "title": "Nova AI: Open Settings",
         "category": "Nova AI",
@@ -260,6 +271,44 @@
       {
         "command": "nova.focusChat",
         "title": "Nova AI: Open Nova Chat",
+        "category": "Nova AI"
+      },
+      {
+        "command": "nova.newChat.primary",
+        "title": "Nova AI: New Chat",
+        "category": "Nova AI",
+        "icon": "$(add)"
+      },
+      {
+        "command": "nova.showHistory.primary",
+        "title": "Nova AI: Chats",
+        "category": "Nova AI",
+        "icon": "$(history)"
+      },
+      {
+        "command": "nova.newChat.secondary",
+        "title": "Nova AI: New Chat",
+        "category": "Nova AI",
+        "icon": "$(add)"
+      },
+      {
+        "command": "nova.showHistory.secondary",
+        "title": "Nova AI: Chats",
+        "category": "Nova AI",
+        "icon": "$(history)"
+      },
+      {
+        "command": "nova.newChatInEditor",
+        "title": "Nova AI: New Chat in Editor",
+        "category": "Nova AI",
+        "icon": {
+          "light": "resources/nova-dark.svg",
+          "dark": "resources/favicon.svg"
+        }
+      },
+      {
+        "command": "nova.openSecondary",
+        "title": "Nova AI: Open Nova in Secondary Side Bar",
         "category": "Nova AI"
       },
       {
@@ -386,75 +435,77 @@
       }
     ],
     "menus": {
+      "editor/title": [
+        {
+          "command": "nova.newChatInEditor",
+          "when": "nova.signedIn",
+          "group": "navigation@100"
+        }
+      ],
       "view/title": [
         {
-          "command": "nova.newChat",
+          "command": "nova.newChat.primary",
           "when": "view == nova.sidebar && nova.signedIn",
           "group": "navigation@1"
         },
         {
-          "command": "nova.showHistory",
+          "command": "nova.showHistory.primary",
           "when": "view == nova.sidebar && nova.signedIn",
           "group": "navigation@2"
         },
         {
+          "command": "nova.newChat.secondary",
+          "when": "view == nova.secondary && nova.signedIn",
+          "group": "navigation@1"
+        },
+        {
+          "command": "nova.showHistory.secondary",
+          "when": "view == nova.secondary && nova.signedIn",
+          "group": "navigation@2"
+        },
+        {
           "command": "nova.openChatInEditor",
-          "when": "view == nova.sidebar && nova.signedIn",
+          "when": "view =~ /^nova\\.(sidebar|secondary)$/ && nova.signedIn",
           "group": "navigation@3"
         },
         {
           "command": "nova.manageModels",
-          "when": "view == nova.sidebar && nova.signedIn",
+          "when": "view =~ /^nova\\.(sidebar|secondary)$/ && nova.signedIn",
           "group": "1_models@1"
         },
         {
           "command": "nova.refreshModels",
-          "when": "view == nova.sidebar && nova.signedIn",
+          "when": "view =~ /^nova\\.(sidebar|secondary)$/ && nova.signedIn",
           "group": "1_models@2"
         },
         {
           "command": "nova.openProjectMemory",
-          "when": "view == nova.sidebar && nova.signedIn",
+          "when": "view =~ /^nova\\.(sidebar|secondary)$/ && nova.signedIn",
           "group": "2_memory@1"
         },
         {
           "command": "nova.openGlobalMemory",
-          "when": "view == nova.sidebar && nova.signedIn",
+          "when": "view =~ /^nova\\.(sidebar|secondary)$/ && nova.signedIn",
           "group": "2_memory@2"
         },
         {
           "command": "nova.revealHome",
-          "when": "view == nova.sidebar && nova.signedIn",
+          "when": "view =~ /^nova\\.(sidebar|secondary)$/ && nova.signedIn",
           "group": "2_memory@3"
         },
         {
-          "command": "nova.openSettings",
-          "when": "view == nova.sidebar",
+          "command": "nova.openCustomizations",
+          "when": "view =~ /^nova\\.(sidebar|secondary)$/",
           "group": "3_settings@1"
         },
         {
           "command": "nova.signOut",
-          "when": "view == nova.sidebar && nova.signedIn",
+          "when": "view =~ /^nova\\.(sidebar|secondary)$/ && nova.signedIn",
           "group": "3_settings@2"
         },
         {
-          "command": "nova.manageSkills",
-          "when": "view == nova.sidebar",
-          "group": "2_memory@4"
-        },
-        {
-          "command": "nova.manageAgents",
-          "when": "view == nova.sidebar",
-          "group": "2_memory@5"
-        },
-        {
-          "command": "nova.manageMcpServers",
-          "when": "view == nova.sidebar",
-          "group": "2_memory@6"
-        },
-        {
           "command": "nova.showHelp",
-          "when": "view == nova.sidebar",
+          "when": "view =~ /^nova\\.(sidebar|secondary)$/",
           "group": "4_help@1"
         }
       ],
@@ -471,6 +522,22 @@
         }
       ],
       "commandPalette": [
+        {
+          "command": "nova.newChat.primary",
+          "when": "false"
+        },
+        {
+          "command": "nova.showHistory.primary",
+          "when": "false"
+        },
+        {
+          "command": "nova.newChat.secondary",
+          "when": "false"
+        },
+        {
+          "command": "nova.showHistory.secondary",
+          "when": "false"
+        },
         {
           "command": "nova.addSelectionToChat",
           "when": "nova.signedIn && editorIsOpen"
@@ -539,6 +606,13 @@
           "title": "Nova AI",
           "icon": "resources/favicon.svg"
         }
+      ],
+      "secondarySidebar": [
+        {
+          "id": "novaSecondary",
+          "title": "Nova AI",
+          "icon": "resources/favicon.svg"
+        }
       ]
     },
     "views": {
@@ -546,6 +620,13 @@
         {
           "type": "webview",
           "id": "nova.sidebar",
+          "name": ""
+        }
+      ],
+      "novaSecondary": [
+        {
+          "type": "webview",
+          "id": "nova.secondary",
           "name": ""
         }
       ]
@@ -835,6 +916,12 @@
             "default": true,
             "markdownDescription": "Offer MCP server tools registered in VS Code to the Nova chat.",
             "order": 3
+          },
+          "nova.agent.includeVscodeTools": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Offer VS Code's own tools to the Nova chat: integrated browser, tasks and problems, code usages and rename, tests, notebooks.",
+            "order": 4
           },
           "nova.skills.includeClaudeCodex": {
             "type": "boolean",

@@ -1,21 +1,19 @@
 <script lang="ts">
     import {onMount, type Snippet} from 'svelte';
 
-    /** Shared frame of the Skills and Agents pages: search, scope tabs, actions and a scrolling list. */
-    let {noun, query = $bindable(''), found, tabs, scope, onScope, onCreate, createLabel, canCreate = true, onOpenFolder, summary, children}: {
+    /** Shared frame of the Tools, Skills and Agents pages: title, description, search and a scrolling list of sections. */
+    let {title, description, noun, query = $bindable(''), found, tabs, scope, onScope, summary, children}: {
+        title: string;
+        description: string;
         /** Plural, for the search box: "skills". */
         noun: string;
         query?: string;
         /** Matches while a search is typed. */
         found: number;
-        tabs: Array<{id: string; label: string; disabled?: boolean; title?: string}>;
-        scope: string;
-        onScope: (id: string) => void;
-        onCreate: () => void;
-        createLabel: string;
-        canCreate?: boolean;
-        /** Without it the folder button is hidden (nothing to open for built-in items). */
-        onOpenFolder?: () => void;
+        /** Optional switch under the search box (the Tools page: User or Project). */
+        tabs?: Array<{id: string; label: string; disabled?: boolean; title?: string}>;
+        scope?: string;
+        onScope?: (id: string) => void;
         summary?: Snippet;
         children: Snippet;
     } = $props();
@@ -38,38 +36,28 @@
 <svelte:window onkeydown={onKey}/>
 
 <div class="page">
-    <header>
-        <div class="search">
-            <span class="codicon codicon-search" aria-hidden="true"></span>
-            <input bind:this={search} bind:value={query} type="text" placeholder={`Search ${noun}`} aria-label={`Search ${noun}`}/>
-            {#if query}
-                <span class="count">{found} found</span>
-                <button class="clear codicon codicon-close" title="Clear search" aria-label="Clear search" onclick={() => { query = ''; search?.focus(); }}></button>
-            {/if}
-        </div>
-        <div class="bar">
-            <div class="tabs" role="tablist" aria-label="Scope">
-                {#each tabs as tab (tab.id)}
-                    <button role="tab" class:active={scope === tab.id} aria-selected={scope === tab.id} disabled={tab.disabled} title={tab.title} onclick={() => onScope(tab.id)}>{tab.label}</button>
-                {/each}
-            </div>
-            <span class="spacer"></span>
-            {#if onOpenFolder}
-                <button class="button secondary" onclick={onOpenFolder} disabled={!canCreate}>
-                    <span class="codicon codicon-folder-opened" aria-hidden="true"></span> Open Folder
-                </button>
-            {/if}
-            {#if canCreate || !onOpenFolder}
-                <button class="button primary" onclick={onCreate} disabled={!canCreate}>
-                    <span class="codicon codicon-add" aria-hidden="true"></span> {createLabel}
-                </button>
-            {/if}
-        </div>
-        {#if summary}<div class="summary">{@render summary()}</div>{/if}
-    </header>
-
     <main>
         <div class="column">
+            <header>
+                <h1>{title}</h1>
+                <p class="description">{description}</p>
+                <div class="search">
+                    <span class="codicon codicon-search" aria-hidden="true"></span>
+                    <input bind:this={search} bind:value={query} type="text" placeholder={`Search ${noun}`} aria-label={`Search ${noun}`}/>
+                    {#if query}
+                        <span class="count">{found} found</span>
+                        <button class="clear codicon codicon-close" title="Clear search" aria-label="Clear search" onclick={() => { query = ''; search?.focus(); }}></button>
+                    {/if}
+                </div>
+                {#if tabs}
+                    <div class="tabs" role="tablist" aria-label="Scope">
+                        {#each tabs as tab (tab.id)}
+                            <button role="tab" class:active={scope === tab.id} aria-selected={scope === tab.id} disabled={tab.disabled} title={tab.title} onclick={() => onScope?.(tab.id)}>{tab.label}</button>
+                        {/each}
+                    </div>
+                {/if}
+                {#if summary}<div class="summary">{@render summary()}</div>{/if}
+            </header>
             {@render children()}
         </div>
     </main>
@@ -77,25 +65,43 @@
 
 <style lang="scss">
   .page {
-    display: flex;
-    flex-direction: column;
     height: 100vh;
     overflow: clip;
     background: var(--vscode-editor-background);
     color: var(--vscode-foreground);
   }
 
+  main {
+    height: 100%;
+    overflow: hidden auto;
+    padding: 24px 24px 48px;
+  }
+
+  .column {
+    min-width: 0;
+    max-width: 900px;
+    margin: 0 auto;
+  }
+
   header {
-    flex: none;
-    padding: 16px 24px 0;
-    border-bottom: 1px solid var(--vscode-settings-headerBorder, var(--nova-border));
+    margin-bottom: 16px;
+  }
+
+  h1 {
+    margin: 0 0 4px;
+    font-size: 1.6em;
+    font-weight: 600;
+  }
+
+  .description {
+    margin: 0 0 16px;
+    color: var(--vscode-descriptionForeground, var(--nova-muted));
   }
 
   .search {
     display: flex;
     align-items: center;
     gap: 8px;
-    max-width: 900px;
     padding: 0 8px;
     border: 1px solid var(--vscode-settings-textInputBorder, var(--nova-input-border));
     border-radius: 2px;
@@ -140,18 +146,11 @@
     }
   }
 
-  .bar {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 8px 12px;
-    max-width: 900px;
-    margin-top: 12px;
-  }
-
   .tabs {
     display: flex;
     gap: 4px;
+    margin-top: 12px;
+    border-bottom: 1px solid var(--vscode-settings-headerBorder, var(--nova-border));
 
     button {
       padding: 4px 10px 8px;
@@ -175,60 +174,9 @@
     }
   }
 
-  .spacer {
-    flex: 1;
-  }
-
-  .button {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    margin-bottom: 6px;
-    padding: 4px 10px;
-    border: 1px solid var(--nova-button-border);
-    border-radius: 2px;
-    font: inherit;
-    cursor: pointer;
-
-    &:disabled {
-      opacity: 0.5;
-      cursor: default;
-    }
-
-    &.primary {
-      background: var(--nova-button-bg);
-      color: var(--nova-button-fg);
-
-      &:hover:not(:disabled) {
-        background: var(--nova-button-hover);
-      }
-    }
-
-    &.secondary {
-      background: var(--nova-secondary-bg);
-      color: var(--nova-secondary-fg);
-
-      &:hover:not(:disabled) {
-        background: var(--nova-secondary-hover);
-      }
-    }
-  }
-
   .summary {
-    max-width: 900px;
-    padding-bottom: 8px;
+    margin-top: 10px;
     color: var(--nova-muted);
     font-size: 0.9em;
-  }
-
-  main {
-    flex: 1 1 auto;
-    min-height: 0;
-    overflow-y: auto;
-    padding: 8px 24px 40px;
-  }
-
-  .column {
-    max-width: 900px;
   }
 </style>

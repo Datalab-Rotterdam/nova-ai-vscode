@@ -7,6 +7,11 @@ import { AgentsController } from '../agents/AgentsController';
 import type { SkillsCommand } from '../skills/protocol';
 import type { SkillPaths } from '../skills/SkillService';
 import { SkillsController } from '../skills/SkillsController';
+import type { CustomizeSection } from './sections';
+import type { McpCommand } from '../mcp/protocol';
+import type { McpController } from '../mcp/McpController';
+import type { ToolsCommand } from '../tools/protocol';
+import type { ToolsController } from '../tools/ToolsController';
 import { SettingsController } from '../settings/SettingsController';
 import type { SettingsCommand } from '../settings/protocol';
 import { Diagnostics } from '../core/diagnostics';
@@ -38,7 +43,10 @@ const WEBVIEW_ENTRY = 'webview/index.html' as const;
 const HEAD_MARKER = '<!--nova:svelte-head-->';
 const BODY_MARKER = '<!--nova:svelte-body-->';
 
-export type Surface = 'sidebar' | 'editor' | 'skills' | 'agents' | 'settings';
+export type { CustomizeSection };
+export type Surface = 'sidebar' | 'editor' | 'customize';
+export const CUSTOMIZE_VIEW_TYPE = 'nova.customize';
+/** Tabs of earlier versions; they reopen as the Customizations page. */
 export const SETTINGS_VIEW_TYPE = 'nova.settings';
 
 export const CHAT_PANEL_VIEW_TYPE = 'nova.chatPanel';
@@ -53,7 +61,9 @@ export type ChatFactory = (post: (event: ChatEvent) => void, options: ChatContro
  * can be open, and running, side by side. A chat is open in one place only (see ChatHub).
  */
 export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer, Disposable {
+  /** The sidebar view in use: left or right; both show the one sidebar chat. */
   private view?: WebviewView;
+  private readonly views = new Set<WebviewView>();
   private sidebarChat?: ChatController;
   private readonly panels = new Map<WebviewPanel, ChatController>();
   /** The editor tab the user used last; undefined: the sidebar. Commands go there. */
@@ -61,10 +71,12 @@ export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer
   private createChat?: ChatFactory;
   private readonly profiles = new ProfileService();
   private skillPaths?: () => SkillPaths;
-  private skills?: { panel: WebviewPanel; controller: SkillsController };
   private agentPaths?: () => AgentPaths;
-  private agents?: { panel: WebviewPanel; controller: AgentsController };
-  private settings?: { panel: WebviewPanel; controller: SettingsController };
+  private createMcp?: (post: (message: unknown) => void) => McpController;
+  private createTools?: (post: (message: unknown) => void) => ToolsController;
+  private customize?: { panel: WebviewPanel; tools?: ToolsController; mcp?: McpController; skills: SkillsController; agents: AgentsController; settings: SettingsController };
+  /** The section to show when the page is ready. */
+  private pendingSection?: CustomizeSection;
   private createSettings?: (post: (message: unknown) => void) => SettingsController;
 
   public constructor(
@@ -100,116 +112,78 @@ export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer
     this.createSettings = create;
   }
 
-  /** The Nova Settings page (one editor tab). */
-  public async openSettings(): Promise<void> {
-    if (this.settings) {
-      this.settings.panel.reveal();
+  /** How to make the MCP Servers section's controller. */
+  public useMcp(create: (post: (message: unknown) => void) => McpController): void {
+    this.createMcp = create;
+  }
+
+  /** How to make the Tools section's controller (the extension knows the tools and the permissions). */
+  public useTools(create: (post: (message: unknown) => void) => ToolsController): void {
+    this.createTools = create;
+  }
+
+  /** The Customizations page (one editor tab): skills, agents and settings in one place. */
+  public async openCustomize(section?: CustomizeSection): Promise<void> {
+    this.pendingSection = section;
+    if (this.customize) {
+      this.customize.panel.reveal();
+      this.showSection();
       return;
     }
-    await this.adoptSettingsPanel(window.createWebviewPanel(SETTINGS_VIEW_TYPE, 'Nova Settings', ViewColumn.Active, {
+    await this.adoptCustomizePanel(window.createWebviewPanel(CUSTOMIZE_VIEW_TYPE, 'Nova Customizations', ViewColumn.Active, {
       enableScripts: true,
       localResourceRoots: this.resourceRoots()
     }));
   }
 
-  /** Restores the Settings tab after a window reload. */
-  public readonly settingsSerializer: WebviewPanelSerializer = {
-    deserializeWebviewPanel: (panel) => this.adoptSettingsPanel(panel)
+  /** Restores the Customizations tab, or a tab of an earlier version, after a window reload. */
+  public readonly customizeSerializer: WebviewPanelSerializer = {
+    deserializeWebviewPanel: (panel) => this.adoptCustomizePanel(panel)
   };
 
-  private async adoptSettingsPanel(panel: WebviewPanel): Promise<void> {
-    if (!this.createSettings) {
+  private showSection(): void {
+    if (this.customize && this.pendingSection) {
+      void postSafely(this.customize.panel.webview, { type: 'customize/section', section: this.pendingSection });
+      this.pendingSection = undefined;
+    }
+  }
+
+  private async adoptCustomizePanel(panel: WebviewPanel): Promise<void> {
+    if (!this.createSettings || !this.skillPaths || !this.agentPaths) {
+      panel.dispose();
+      return;
+    }
+    if (this.customize) {
+      // One page only: a restored duplicate closes.
       panel.dispose();
       return;
     }
     panel.iconPath = new ThemeIcon('settings-gear');
-    const controller = this.createSettings((message) => postSafely(panel.webview, message));
-    this.settings = { panel, controller };
-    panel.onDidDispose(() => {
-      controller.dispose();
-      if (this.settings?.panel === panel) {
-        this.settings = undefined;
-      }
-    });
-    await this.attach(panel.webview, 'settings');
-  }
-
-  /** The Agents page (one editor tab). */
-  public async openAgents(): Promise<void> {
-    if (this.agents) {
-      this.agents.panel.reveal();
-      return;
-    }
-    await this.adoptAgentsPanel(window.createWebviewPanel(AGENTS_VIEW_TYPE, 'Nova Agents', ViewColumn.Active, {
-      enableScripts: true,
-      localResourceRoots: this.resourceRoots()
-    }));
-  }
-
-  /** Restores the Agents tab after a window reload. */
-  public readonly agentsSerializer: WebviewPanelSerializer = {
-    deserializeWebviewPanel: (panel) => this.adoptAgentsPanel(panel)
-  };
-
-  private async adoptAgentsPanel(panel: WebviewPanel): Promise<void> {
-    if (!this.agentPaths) {
-      panel.dispose();
-      return;
-    }
-    panel.iconPath = new ThemeIcon('robot');
-    const controller = new AgentsController(this.agentPaths, (message) => postSafely(panel.webview, message));
-    this.agents = { panel, controller };
+    const post = (message: unknown) => postSafely(panel.webview, message);
+    const skills = new SkillsController(this.skillPaths, post);
+    const agents = new AgentsController(this.agentPaths, post);
+    const settings = this.createSettings(post);
+    const tools = this.createTools?.(post);
+    const mcp = this.createMcp?.(post);
+    this.customize = { panel, tools, mcp, skills, agents, settings };
     panel.onDidChangeViewState(() => {
       if (panel.visible) {
-        controller.refresh();
+        skills.refresh();
+        agents.refresh();
+        void tools?.refresh();
       }
     });
     panel.onDidDispose(() => {
-      controller.dispose();
-      if (this.agents?.panel === panel) {
-        this.agents = undefined;
+      skills.dispose();
+      agents.dispose();
+      settings.dispose();
+      tools?.dispose();
+      mcp?.dispose();
+      if (this.customize?.panel === panel) {
+        this.customize = undefined;
       }
     });
-    await this.attach(panel.webview, 'agents');
-  }
-
-  /** The Skills page (one editor tab): skills of every project, or of this one. */
-  public async openSkills(): Promise<void> {
-    if (this.skills) {
-      this.skills.panel.reveal();
-      return;
-    }
-    await this.adoptSkillsPanel(window.createWebviewPanel(SKILLS_VIEW_TYPE, 'Nova Skills', ViewColumn.Active, {
-      enableScripts: true,
-      localResourceRoots: this.resourceRoots()
-    }));
-  }
-
-  /** Restores the Skills tab after a window reload. */
-  public readonly skillsSerializer: WebviewPanelSerializer = {
-    deserializeWebviewPanel: (panel) => this.adoptSkillsPanel(panel)
-  };
-
-  private async adoptSkillsPanel(panel: WebviewPanel): Promise<void> {
-    if (!this.skillPaths) {
-      panel.dispose();
-      return;
-    }
-    panel.iconPath = new ThemeIcon('book');
-    const controller = new SkillsController(this.skillPaths, (message) => postSafely(panel.webview, message));
-    this.skills = { panel, controller };
-    panel.onDidChangeViewState(() => {
-      if (panel.visible) {
-        controller.refresh();
-      }
-    });
-    panel.onDidDispose(() => {
-      controller.dispose();
-      if (this.skills?.panel === panel) {
-        this.skills = undefined;
-      }
-    });
-    await this.attach(panel.webview, 'skills');
+    await this.attach(panel.webview, 'customize');
   }
 
   /** The sidebar's chat. */
@@ -235,22 +209,56 @@ export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer
     }
     this.panels.clear();
     this.sidebarChat?.dispose();
-    this.skills?.controller.dispose();
-    this.agents?.controller.dispose();
-    this.settings?.controller.dispose();
+    this.customize?.skills.dispose();
+    this.customize?.agents.dispose();
+    this.customize?.settings.dispose();
+    this.customize?.tools?.dispose();
+    this.customize?.mcp?.dispose();
   }
 
   public async resolveWebviewView(view: WebviewView): Promise<void> {
+    this.views.add(view);
     this.view = view;
-    view.onDidDispose(() => (this.view = undefined));
+    view.onDidDispose(() => {
+      this.views.delete(view);
+      if (this.view === view) {
+        this.view = [...this.views][0];
+      }
+    });
     view.onDidChangeVisibility(() => {
       if (view.visible) {
+        this.view = view;
         void this.refresh();
         // The page may have been rebuilt while hidden: send the chat again.
         void this.sidebarChat?.handle({ command: 'chat/ready' });
       }
     });
     await this.attach(view.webview, 'sidebar');
+  }
+
+  /**
+   * Makes the sidebar view the user works in the one chat events go to.
+   * ponytail: only the view in use gets live chat events; the other catches up when used. Mirror both if they must stream at once.
+   */
+  private use(view: WebviewView): void {
+    if (this.view !== view) {
+      this.view = view;
+      void this.sidebarChat?.handle({ command: 'chat/ready' });
+    }
+  }
+
+  /** Shows a sidebar view, left or right (by default the one in use), and puts it in use. */
+  public async focusSidebar(viewId = this.view?.viewType ?? NOVA_SIDEBAR_VIEW_ID): Promise<void> {
+    try {
+      await commands.executeCommand(`${viewId}.focus`);
+    } catch {
+      await commands.executeCommand(`workbench.view.extension.${NOVA_VIEW_CONTAINER_ID}`);
+    }
+    // A view opened just now was put in use as VS Code resolved it.
+    const view = [...this.views].find((candidate) => candidate.viewType === viewId);
+    if (view) {
+      this.use(view);
+    }
   }
 
   /** Restores an editor tab after a window reload, with the chat it showed. */
@@ -290,8 +298,14 @@ export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer
     }
   }
 
-  public async openNewTab(sessionId: string | null): Promise<void> {
-    await this.adoptPanel(this.createPanel('New chat'), (post, options) => this.chatFactory()(post, { ...options, initialSessionId: sessionId }));
+  public async openNewTab(sessionId: string | null, column: ViewColumn = ViewColumn.Active): Promise<void> {
+    await this.adoptPanel(this.createPanel('New chat', column), (post, options) => this.chatFactory()(post, { ...options, initialSessionId: sessionId }));
+  }
+
+  /** The editor toolbar's Nova button: a new chat tab, split beside when a chat tab is in front. */
+  public async newChatTab(): Promise<void> {
+    const chatInFront = [...this.panels.keys()].some((panel) => panel.active);
+    await this.openNewTab(null, chatInFront ? ViewColumn.Beside : ViewColumn.Active);
   }
 
   /** Asks the sidebar webview to show a view (from the VS Code title bar buttons). */
@@ -300,13 +314,7 @@ export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer
   }
 
   public async revealSidebar(): Promise<void> {
-    for (const command of [`workbench.view.extension.${NOVA_VIEW_CONTAINER_ID}`, `${NOVA_SIDEBAR_VIEW_ID}.focus`]) {
-      try {
-        await commands.executeCommand(command);
-      } catch {
-        // older hosts without one of the commands
-      }
-    }
+    await this.focusSidebar();
     await this.showInSidebar('chat');
   }
 
@@ -335,8 +343,8 @@ export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer
     return [this.sidebarChat, ...this.panels.values()].find((controller) => controller?.currentSessionId === sessionId);
   }
 
-  private createPanel(title: string): WebviewPanel {
-    return window.createWebviewPanel(CHAT_PANEL_VIEW_TYPE, title || 'New chat', ViewColumn.Active, {
+  private createPanel(title: string, column: ViewColumn = ViewColumn.Active): WebviewPanel {
+    return window.createWebviewPanel(CHAT_PANEL_VIEW_TYPE, title || 'New chat', column, {
       enableScripts: true,
       localResourceRoots: this.resourceRoots()
     });
@@ -383,16 +391,14 @@ export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer
 
   private surfaces(): Array<{ webview: Webview; surface: Surface }> {
     return [
-      ...(this.view ? [{ webview: this.view.webview, surface: 'sidebar' as const }] : []),
+      ...[...this.views].map((view) => ({ webview: view.webview, surface: 'sidebar' as const })),
       ...[...this.panels.keys()].map((panel) => ({ webview: panel.webview, surface: 'editor' as const })),
-      ...(this.skills ? [{ webview: this.skills.panel.webview, surface: 'skills' as const }] : []),
-      ...(this.agents ? [{ webview: this.agents.panel.webview, surface: 'agents' as const }] : []),
-      ...(this.settings ? [{ webview: this.settings.panel.webview, surface: 'settings' as const }] : [])
+      ...(this.customize ? [{ webview: this.customize.panel.webview, surface: 'customize' as const }] : [])
     ];
   }
 
   private chatOf(webview: Webview): ChatController | undefined {
-    if (this.view?.webview === webview) {
+    if ([...this.views].some((view) => view.webview === webview)) {
       return this.sidebarChat;
     }
     for (const [panel, controller] of this.panels) {
@@ -420,41 +426,16 @@ export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer
   }
 
   private async handleMessage(message: SidebarMessage, source: Webview): Promise<void> {
-    if (message.command.startsWith('skills/')) {
-      if (this.skills?.panel.webview === source) {
-        try {
-          await this.skills.controller.handle(message as unknown as SkillsCommand);
-        } catch (error) {
-          this.diagnostics.error('Nova skills action failed.', error);
-          void window.showErrorMessage(toUserMessage(error));
-          this.skills?.controller.refresh();
-        }
-      }
+    if (this.customize?.panel.webview === source) {
+      await this.handleCustomize(message, this.customize);
       return;
     }
-    if (message.command.startsWith('settings/')) {
-      if (this.settings?.panel.webview === source) {
-        try {
-          await this.settings.controller.handle(message as unknown as SettingsCommand);
-        } catch (error) {
-          this.diagnostics.error('Nova settings action failed.', error);
-          void window.showErrorMessage(toUserMessage(error));
-          void this.settings?.controller.refresh();
-        }
-      }
+    if (/^(tools|mcp|skills|settings|agents|customize)\//.test(message.command)) {
       return;
     }
-    if (message.command.startsWith('agents/')) {
-      if (this.agents?.panel.webview === source) {
-        try {
-          await this.agents.controller.handle(message as unknown as AgentsCommand);
-        } catch (error) {
-          this.diagnostics.error('Nova agents action failed.', error);
-          void window.showErrorMessage(toUserMessage(error));
-          this.agents?.controller.refresh();
-        }
-      }
-      return;
+    const sidebarView = [...this.views].find((view) => view.webview === source);
+    if (sidebarView) {
+      this.use(sidebarView);
     }
     const panel = [...this.panels.keys()].find((candidate) => candidate.webview === source);
     this.lastActivePanel = panel;
@@ -525,6 +506,43 @@ export class ViewProvider implements WebviewViewProvider, WebviewPanelSerializer
       datalabLogoUri: resource('datalab-logo.svg'),
       syntaxColors: await loadSyntaxColors()
     };
+  }
+
+  /** Routes a message of the Customizations page to the controller of its section. */
+  private async handleCustomize(message: SidebarMessage, page: NonNullable<ViewProvider['customize']>): Promise<void> {
+    const [section] = message.command.split('/');
+    try {
+      switch (section) {
+        case 'mcp':
+          await page.mcp?.handle(message as unknown as McpCommand);
+          break;
+        case 'tools':
+          await page.tools?.handle(message as unknown as ToolsCommand);
+          break;
+        case 'skills':
+          await page.skills.handle(message as unknown as SkillsCommand);
+          break;
+        case 'agents':
+          await page.agents.handle(message as unknown as AgentsCommand);
+          break;
+        case 'settings':
+          await page.settings.handle(message as unknown as SettingsCommand);
+          break;
+        case 'customize':
+          if (message.command === 'customize/ready') {
+            this.showSection();
+          }
+          break;
+      }
+    } catch (error) {
+      this.diagnostics.error(`Nova ${section} action failed.`, error);
+      void window.showErrorMessage(toUserMessage(error));
+      page.skills.refresh();
+      page.agents.refresh();
+      void page.settings.refresh();
+      void page.tools?.refresh();
+      page.mcp?.refresh();
+    }
   }
 
   private async renderDocument(webview: Webview, surface: Surface): Promise<string> {

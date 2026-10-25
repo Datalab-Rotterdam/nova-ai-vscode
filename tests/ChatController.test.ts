@@ -286,7 +286,8 @@ describe('ChatController', () => {
     const rules: Record<string, 'allow' | 'deny'> = { 'rm -rf build': 'deny', 'echo allowed': 'allow' };
     const permissions = {
       decide: vi.fn(async (_tool: string, input: Record<string, unknown>) => rules[String(input.command ?? '')]),
-      allow: vi.fn(async () => '/home/.nova-ai/projects/repo-12345678/settings.json')
+      allow: vi.fn(async () => '/home/.nova-ai/projects/repo-12345678/settings.json'),
+      disabledTools: vi.fn(async () => new Set<string>())
     };
     const { controller, events } = setup([
       [

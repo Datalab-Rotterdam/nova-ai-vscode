@@ -20,19 +20,26 @@ import {
     COMMAND_DEV_TEST_LINKS,
     COMMAND_SEARCH_CHATS,
     COMMAND_SHOW_HISTORY,
+    COMMAND_SHOW_HISTORY_PRIMARY,
+    COMMAND_SHOW_HISTORY_SECONDARY,
     COMMAND_FOCUS_CHAT,
+    COMMAND_OPEN_SECONDARY,
+    NOVA_SECONDARY_VIEW_ID,
     COMMAND_MANAGE_MODELS,
     COMMAND_NEW_CHAT,
+    COMMAND_NEW_CHAT_IN_EDITOR,
+    COMMAND_NEW_CHAT_PRIMARY,
+    COMMAND_NEW_CHAT_SECONDARY,
     COMMAND_OPEN_CHAT,
     COMMAND_OPEN_CHAT_IN_EDITOR,
+    COMMAND_OPEN_CUSTOMIZATIONS,
     COMMAND_OPEN_SETTINGS,
     COMMAND_REFRESH_MODELS,
     COMMAND_SIGN_IN,
     COMMAND_SIGN_OUT,
     CONTEXT_SIGNED_IN,
     NOVA_SIDEBAR_VIEW_ID,
-    NOVA_VENDOR,
-    NOVA_VIEW_CONTAINER_ID
+    NOVA_VENDOR
 } from './core/constants';
 import {isProposalEnabled} from './core/apiSupport';
 import {Diagnostics} from './core/diagnostics';
@@ -41,7 +48,7 @@ import {SessionService} from './services/SessionService';
 import {toUserMessage} from './core/errors';
 import type {LanguageModelInfo} from './core/types';
 import {StatusBar} from './status/StatusBar';
-import {AGENTS_VIEW_TYPE, CHAT_PANEL_VIEW_TYPE, SETTINGS_VIEW_TYPE, SKILLS_VIEW_TYPE, ViewProvider, type SignInResult} from './views';
+import {AGENTS_VIEW_TYPE, CHAT_PANEL_VIEW_TYPE, CUSTOMIZE_VIEW_TYPE, SETTINGS_VIEW_TYPE, SKILLS_VIEW_TYPE, ViewProvider, type SignInResult} from './views';
 import {SettingsController} from './settings/SettingsController';
 import type {SkillPaths} from './skills/SkillService';
 import type {AgentPaths} from './agents/AgentService';
@@ -51,7 +58,8 @@ import {registerVsCodeTools} from './agent/tools/vscodeTools';
 import {registerBrowserSetup} from './browser/BrowserSetup';
 import {installSkills} from '@datalabrotterdam/nova-ai-skills';
 import {openHelp} from './core/help';
-import {ChatController} from './panel/ChatController';
+import {ChatController, listToolCatalog} from './panel/ChatController';
+import {ToolsController} from './tools/ToolsController';
 import {PROPOSED_SCHEME, ProposedContentProvider} from './panel/ProposedContentProvider';
 import {SessionStore} from './panel/SessionStore';
 import {confirmAndDeleteChats, promptRenameChat, searchChats} from './panel/chatSearch';
@@ -68,7 +76,8 @@ import {InlineCompletionProvider} from './inline/completionProvider';
 import type {InlineClient} from './inline/inlineModel';
 import {chooseModelSetting} from './model/modelSettings';
 import {git, repoRoot} from './git/git';
-import {manageMcpServers, signInWithBrowser} from './mcp/mcpCommand';
+import {signInWithBrowser} from './mcp/mcpCommand';
+import {McpController} from './mcp/McpController';
 import {setScratchRoot, toolRoot} from './agent/tools/workspacePaths';
 import {currentWorkspace, ensureDir, NovaHome, pruneOlderThan, type ProjectPaths, workspaceKey} from './storage/NovaHome';
 
@@ -165,6 +174,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         post,
         modelProvider.onDidChangeLanguageModelChatInformation
     ));
+    sidebarProvider.useTools((post) => new ToolsController(
+        () => listToolCatalog(memory, mcp),
+        permissions,
+        () => !!nova.project.settings,
+        post,
+        mcp.onDidChange
+    ));
+    sidebarProvider.useMcp((post) => new McpController(mcp, () => ({ user: nova.home.mcpConfig, project: projectMcpConfig(), projectOthers: workspaceRoot() ? [path.join(workspaceRoot()!, '.mcp.json')] : [] }), post));
     const chatHub = new ChatHub();
     // One controller per chat surface (the sidebar, each editor tab), all sharing the store.
     sidebarProvider.useChats((post, options) => {
@@ -222,11 +239,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         sidebarProvider,
         chatHub,
         vscode.workspace.registerTextDocumentContentProvider(PROPOSED_SCHEME, proposedContent),
-        vscode.commands.registerCommand(COMMAND_NEW_CHAT, async () => {
-            await focusSidebar(sidebarProvider);
-            await sidebarProvider.showInSidebar('chat');
-            await sidebarProvider.sidebar.newChat();
-        }),
+        // Palette and keybindings use the Nova view in use; each view's title bar names its own.
+        vscode.commands.registerCommand(COMMAND_NEW_CHAT, async () => newChat(sidebarProvider)),
+        vscode.commands.registerCommand(COMMAND_NEW_CHAT_PRIMARY, async () => newChat(sidebarProvider, NOVA_SIDEBAR_VIEW_ID)),
+        vscode.commands.registerCommand(COMMAND_NEW_CHAT_SECONDARY, async () => newChat(sidebarProvider, NOVA_SECONDARY_VIEW_ID)),
         vscode.commands.registerCommand(COMMAND_ADD_SELECTION, async () => {
             // Into the chat used last: an editor tab, or the sidebar.
             const target = sidebarProvider.activeChat();
@@ -234,13 +250,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             await target.reveal();
         }),
         vscode.window.registerWebviewPanelSerializer(CHAT_PANEL_VIEW_TYPE, sidebarProvider),
-        vscode.window.registerWebviewPanelSerializer(SKILLS_VIEW_TYPE, sidebarProvider.skillsSerializer),
-        vscode.window.registerWebviewPanelSerializer(AGENTS_VIEW_TYPE, sidebarProvider.agentsSerializer),
+        vscode.window.registerWebviewPanelSerializer(CUSTOMIZE_VIEW_TYPE, sidebarProvider.customizeSerializer),
+        vscode.window.registerWebviewPanelSerializer(SKILLS_VIEW_TYPE, sidebarProvider.customizeSerializer),
+        vscode.window.registerWebviewPanelSerializer(AGENTS_VIEW_TYPE, sidebarProvider.customizeSerializer),
         vscode.commands.registerCommand(COMMAND_MANAGE_AGENTS, async () => {
-            await sidebarProvider.openAgents();
+            await sidebarProvider.openCustomize('agents');
         }),
         vscode.commands.registerCommand(COMMAND_MANAGE_SKILLS, async () => {
-            await sidebarProvider.openSkills();
+            await sidebarProvider.openCustomize('skills');
         }),
         mcp,
         mcp.watch(),
@@ -257,7 +274,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         }),
         vscode.languages.registerInlineCompletionItemProvider({ pattern: '**' }, new InlineCompletionProvider(inlineClient)),
         vscode.commands.registerCommand(COMMAND_MANAGE_MCP, async () => {
-            await manageMcpServers(mcp, { user: nova.home.mcpConfig, project: projectMcpConfig() });
+            await sidebarProvider.openCustomize('mcp');
         }),
         vscode.commands.registerCommand(COMMAND_SHOW_HELP, async () => {
             await openHelp(context.extensionUri);
@@ -265,10 +282,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         vscode.commands.registerCommand(COMMAND_OPEN_CHAT_IN_EDITOR, async () => {
             await sidebarProvider.openInEditor();
         }),
-        vscode.commands.registerCommand(COMMAND_SHOW_HISTORY, async () => {
-            await focusSidebar(sidebarProvider);
-            await sidebarProvider.showInSidebar('history');
+        vscode.commands.registerCommand(COMMAND_NEW_CHAT_IN_EDITOR, async () => {
+            await sidebarProvider.newChatTab();
         }),
+        vscode.commands.registerCommand(COMMAND_SHOW_HISTORY, async () => showHistory(sidebarProvider)),
+        vscode.commands.registerCommand(COMMAND_SHOW_HISTORY_PRIMARY, async () => showHistory(sidebarProvider, NOVA_SIDEBAR_VIEW_ID)),
+        vscode.commands.registerCommand(COMMAND_SHOW_HISTORY_SECONDARY, async () => showHistory(sidebarProvider, NOVA_SECONDARY_VIEW_ID)),
         vscode.commands.registerCommand(COMMAND_SEARCH_CHATS, async () => {
             const target = sidebarProvider.activeChat();
             await searchChats(target.controller, target.reveal);
@@ -305,6 +324,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             await focusSidebar(sidebarProvider);
         }),
         vscode.window.registerWebviewViewProvider(NOVA_SIDEBAR_VIEW_ID, sidebarProvider, { webviewOptions: { retainContextWhenHidden: true } }),
+        vscode.window.registerWebviewViewProvider(NOVA_SECONDARY_VIEW_ID, sidebarProvider, { webviewOptions: { retainContextWhenHidden: true } }),
+        vscode.commands.registerCommand(COMMAND_OPEN_SECONDARY, async () => focusSidebar(sidebarProvider, NOVA_SECONDARY_VIEW_ID)),
         vscode.commands.registerCommand(COMMAND_MANAGE, async () => {
             await focusSidebar(sidebarProvider);
         }),
@@ -377,10 +398,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                 await vscode.commands.executeCommand(COMMAND_OPEN_SETTINGS);
             }
         }),
-        vscode.commands.registerCommand(COMMAND_OPEN_SETTINGS, async () => {
-            await sidebarProvider.openSettings();
+        vscode.commands.registerCommand(COMMAND_OPEN_CUSTOMIZATIONS, async () => {
+            await sidebarProvider.openCustomize();
         }),
-        vscode.window.registerWebviewPanelSerializer(SETTINGS_VIEW_TYPE, sidebarProvider.settingsSerializer),
+        vscode.commands.registerCommand(COMMAND_OPEN_SETTINGS, async () => {
+            await sidebarProvider.openCustomize('settings');
+        }),
+        vscode.window.registerWebviewPanelSerializer(SETTINGS_VIEW_TYPE, sidebarProvider.customizeSerializer),
         vscode.workspace.onDidChangeConfiguration(async (event) => {
             if (!['nova.developer.parseModelCapabilities', 'nova.models.editTools', 'nova.context.defaultContextWindow'].some((key) => event.affectsConfiguration(key))) {
                 return;
@@ -504,15 +528,21 @@ async function cleanUpProjects(home: NovaHome): Promise<void> {
     void vscode.window.showInformationMessage(`Nova AI: moved ${picked.length} project folder(s) to the trash.`);
 }
 
-async function focusSidebar(sidebarProvider: ViewProvider): Promise<void> {
-    for (const command of [`workbench.view.extension.${NOVA_VIEW_CONTAINER_ID}`, `${NOVA_SIDEBAR_VIEW_ID}.focus`]) {
-        try {
-            await vscode.commands.executeCommand(command);
-        } catch {
-        }
-    }
-
+/** Shows a Nova view: the one named, or else the one in use. */
+async function focusSidebar(sidebarProvider: ViewProvider, viewId?: string): Promise<void> {
+    await sidebarProvider.focusSidebar(viewId);
     await sidebarProvider.refresh();
+}
+
+async function newChat(sidebarProvider: ViewProvider, viewId?: string): Promise<void> {
+    await focusSidebar(sidebarProvider, viewId);
+    await sidebarProvider.showInSidebar('chat');
+    await sidebarProvider.sidebar.newChat();
+}
+
+async function showHistory(sidebarProvider: ViewProvider, viewId?: string): Promise<void> {
+    await focusSidebar(sidebarProvider, viewId);
+    await sidebarProvider.showInSidebar('history');
 }
 
 async function prepareChatModel(

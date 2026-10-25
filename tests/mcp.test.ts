@@ -188,6 +188,26 @@ describe('McpService', () => {
         mcp.dispose();
     });
 
+    it('reports why the first transport failed, not only the fallback', async () => {
+        const failing = (message: string) => ({
+            start: async () => { throw new Error(message); },
+            send: async () => undefined,
+            close: async () => undefined
+        });
+        const userFile = await writeConfig('user.json', { remote: { command: 'unused' } });
+        const mcp = new McpService({
+            userFile, projectFiles: () => [], settingsFile: () => path.join(dir, 'settings.json'), trusted: () => true, cwd: () => dir,
+            secrets: secretStore, timeoutMs: () => 5_000,
+            transports: () => [failing('HTTP 500 from the server'), failing('Invalid content type')]
+        });
+        await mcp.ensureStarted(5_000);
+        const [status] = mcp.statuses();
+        expect(status.status).toBe('error');
+        expect(status.error).toContain('HTTP 500 from the server');
+        expect(status.error).toContain('Invalid content type');
+        mcp.dispose();
+    });
+
     it('lists the prompts of servers that have them and fills one in', async () => {
         const mcp = await service();
         await mcp.ensureStarted(5_000);

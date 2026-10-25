@@ -53,6 +53,55 @@ export class PermissionService {
         return file;
     }
 
+    /**
+     * Tools switched off on the Tools page. The user's file and the private project file each
+     * hold `disabledTools` and `enabledTools`; the project's entries win over the user's.
+     */
+    public async disabledTools(): Promise<Set<string>> {
+        const user = await readSettings(this.globalSettings);
+        const projectFile = this.projectSettings();
+        const project = projectFile ? await readSettings(projectFile) : undefined;
+        const disabled = new Set(list(user?.disabledTools));
+        for (const name of list(project?.enabledTools)) {
+            disabled.delete(name);
+        }
+        for (const name of list(project?.disabledTools)) {
+            disabled.add(name);
+        }
+        return disabled;
+    }
+
+    /** What one scope says about tools: names it switches off and names it switches back on. */
+    public async toolSwitches(scope: 'user' | 'project'): Promise<{ disabled: string[]; enabled: string[] }> {
+        const file = scope === 'user' ? this.globalSettings : this.projectSettings();
+        const settings = file ? await readSettings(file) : undefined;
+        return { disabled: list(settings?.disabledTools), enabled: list(settings?.enabledTools) };
+    }
+
+    public async setToolsEnabled(names: readonly string[], enabled: boolean, scope: 'user' | 'project'): Promise<void> {
+        const file = scope === 'user' ? this.globalSettings : this.projectSettings();
+        if (!file) {
+            throw new Error('Open a folder to change the tools of a project.');
+        }
+        const settings = await readSettings(file) ?? {};
+        const disabled = new Set(list(settings.disabledTools));
+        const enabledHere = new Set(list(settings.enabledTools));
+        const userDisabled = scope === 'project' ? new Set(list((await readSettings(this.globalSettings))?.disabledTools)) : new Set<string>();
+        for (const name of names) {
+            if (enabled) {
+                disabled.delete(name);
+                // A project can switch on what the user switched off.
+                userDisabled.has(name) ? enabledHere.add(name) : enabledHere.delete(name);
+            } else {
+                enabledHere.delete(name);
+                disabled.add(name);
+            }
+        }
+        settings.disabledTools = [...disabled];
+        settings.enabledTools = [...enabledHere];
+        await writePrivateFile(file, `${JSON.stringify(settings, null, 2)}\n`);
+    }
+
     public async rules(): Promise<{ allow: string[]; deny: string[] }> {
         const sources = await this.sources();
         const trusted = this.isTrusted();
